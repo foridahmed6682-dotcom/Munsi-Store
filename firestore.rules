@@ -1,0 +1,172 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default-deny global safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isMainAdmin() {
+      return isSignedIn() && request.auth.token.email.lower() == 'foridahmed6682@gmail.com';
+    }
+
+    function isBootstrappedAdmin() {
+      return isSignedIn() &&
+        (isMainAdmin() || request.auth.token.email.lower() == 'ahmedmdforid39@gmail.com');
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        isMainAdmin() ||
+        isBootstrappedAdmin() ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isSR() {
+      return isAdmin() || (
+        isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        getUserRole() in ['sr', 'admin']
+      );
+    }
+
+    function isDSR() {
+      return isAdmin() || (
+        isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        getUserRole() in ['dsr', 'sr', 'admin']
+      );
+    }
+
+    // Entity Validations
+    function isValidUser(data) {
+      return data.uid is string && data.uid.size() > 0 && data.uid.size() <= 128 &&
+             data.email is string && data.email.size() > 0 && data.email.size() <= 256 &&
+             data.role in ['admin', 'sr', 'dsr'];
+    }
+
+    function isValidShop(data) {
+      return data.id is string && isValidId(data.id) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+             data.phone is string && data.phone.size() >= 7 && data.phone.size() <= 20 &&
+             data.routeArea is string && data.routeArea.size() > 0 && data.routeArea.size() <= 100 &&
+             data.previousDue is number && data.previousDue >= 0;
+    }
+
+    function isValidProduct(data) {
+      return data.id is string && isValidId(data.id) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+             data.banglaName is string && data.banglaName.size() > 0 && data.banglaName.size() <= 200 &&
+             data.sku is string && data.sku.size() > 0 && data.sku.size() <= 64 &&
+             data.unit is string && data.unit.size() > 0 && data.unit.size() <= 32 &&
+             data.unitPrice is number && data.unitPrice >= 0 &&
+             data.stock is number && data.stock >= 0;
+    }
+
+    function isValidOrder(data) {
+      return data.id is string && isValidId(data.id) &&
+             data.memoNumber is string && data.memoNumber.size() > 0 && data.memoNumber.size() <= 64 &&
+             data.shopId is string && isValidId(data.shopId) &&
+             data.shopName is string && data.shopName.size() > 0 && data.shopName.size() <= 200 &&
+             data.netTotal is number && data.netTotal >= 0 &&
+             data.paidAmount is number && data.paidAmount >= 0 &&
+             data.dueAmount is number && data.dueAmount >= 0 &&
+             data.paymentMethod in ['CASH', 'DUE', 'PARTIAL', 'BKASH', 'NAGAD'] &&
+             data.deliveryStatus in ['PENDING', 'DELIVERED', 'CANCELLED'] &&
+             data.orderDate is string;
+    }
+
+    function isValidDueCollection(data) {
+      return data.id is string && isValidId(data.id) &&
+             data.shopId is string && isValidId(data.shopId) &&
+             data.amount is number && data.amount > 0 &&
+             data.paymentMethod in ['CASH', 'BKASH', 'NAGAD'] &&
+             data.date is string;
+    }
+
+    function isValidCategory(data) {
+      return data.id is string && isValidId(data.id) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.banglaName is string && data.banglaName.size() > 0 && data.banglaName.size() <= 100;
+    }
+
+    // 1. Users Collection
+    match /users/{userId} {
+      allow get, list: if true;
+      allow create: if isValidUser(request.resource.data);
+      allow update: if isValidUser(request.resource.data) && (isAdmin() || (isSignedIn() && request.auth.uid == userId));
+      allow delete: if isAdmin();
+    }
+
+    // 2. Admins Whitelist Collection
+    match /admins/{adminId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 3. Authorized Staff Emails by Admin
+    match /authorizedEmails/{authId} {
+      allow get, list: if true;
+      allow create, update, delete: if isAdmin() || isSignedIn();
+    }
+
+    // 4. Product Categories
+    match /categories/{categoryId} {
+      allow get, list: if true;
+      allow create, update, delete: if isAdmin() || isSignedIn();
+    }
+
+    // 5. Shops Collection
+    match /shops/{shopId} {
+      allow get, list: if true;
+      allow create: if isValidShop(request.resource.data);
+      allow update: if isValidShop(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // 6. Products Collection
+    match /products/{productId} {
+      allow get, list: if true;
+      allow create: if isValidProduct(request.resource.data) && (isAdmin() || isSignedIn());
+      allow update: if isValidProduct(request.resource.data) && (
+        isAdmin() || isSignedIn() ||
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock']))
+      );
+      allow delete: if isAdmin() || isSignedIn();
+    }
+
+    // 7. Orders Collection
+    match /orders/{orderId} {
+      allow get, list: if true;
+      allow create: if isValidOrder(request.resource.data);
+      allow update: if isValidOrder(request.resource.data) && (
+        isAdmin() ||
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deliveryStatus', 'syncedWithSheets', 'notes']))
+      );
+      allow delete: if isAdmin();
+    }
+
+    // 8. Due Collections
+    match /dueCollections/{collectionId} {
+      allow get, list: if true;
+      allow create: if isValidDueCollection(request.resource.data);
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+  }
+}

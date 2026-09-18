@@ -1,0 +1,433 @@
+import React, { useState, useMemo } from 'react';
+import {
+  Store,
+  Phone,
+  MapPin,
+  Search,
+  Plus,
+  DollarSign,
+  AlertCircle,
+  Calendar,
+  CheckCircle,
+  ShoppingBag,
+  ArrowRight
+} from 'lucide-react';
+import { Shop, PaymentMethod } from '../types';
+
+interface ShopsListViewProps {
+  shops: Shop[];
+  onAddShop: (shop: Shop) => void;
+  onRecordDuePayment: (shopId: string, amount: number, method: PaymentMethod, notes?: string) => void;
+  onSelectShopForOrder: (shopId: string) => void;
+  onOpenMapForShop?: (shopId: string) => void;
+}
+
+export const ShopsListView: React.FC<ShopsListViewProps> = ({
+  shops,
+  onAddShop,
+  onRecordDuePayment,
+  onSelectShopForOrder,
+  onOpenMapForShop,
+}) => {
+  const [search, setSearch] = useState('');
+  const [selectedRoute, setSelectedRoute] = useState('all');
+
+  // Due collection modal
+  const [collectingShop, setCollectingShop] = useState<Shop | null>(null);
+  const [collectAmount, setCollectAmount] = useState('');
+  const [collectMethod, setCollectMethod] = useState<PaymentMethod>('CASH');
+  const [collectNotes, setCollectNotes] = useState('');
+
+  // Add shop modal
+  const [isAddOpen, setIsAddOpen] = useState(false);
+  const [newShopName, setNewShopName] = useState('');
+  const [newOwner, setNewOwner] = useState('');
+  const [newPhone, setNewPhone] = useState('');
+  const [newAddress, setNewAddress] = useState('');
+  const [newRoute, setNewRoute] = useState('চকবাজার রুট');
+
+  // Distinct routes
+  const routes = useMemo(() => {
+    const set = new Set<string>();
+    shops.forEach((s) => set.add(s.routeArea));
+    return Array.from(set);
+  }, [shops]);
+
+  const filteredShops = useMemo(() => {
+    return shops.filter((s) => {
+      const matchRoute = selectedRoute === 'all' || s.routeArea === selectedRoute;
+      const matchText =
+        s.name.toLowerCase().includes(search.toLowerCase()) ||
+        s.ownerName.toLowerCase().includes(search.toLowerCase()) ||
+        s.phone.includes(search) ||
+        s.address.toLowerCase().includes(search.toLowerCase());
+      return matchRoute && matchText;
+    });
+  }, [shops, selectedRoute, search]);
+
+  const totalMarketDue = useMemo(() => {
+    return shops.reduce((sum, s) => sum + s.previousDue, 0);
+  }, [shops]);
+
+  const handleDueSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!collectingShop) return;
+    const amount = parseFloat(collectAmount);
+    if (isNaN(amount) || amount <= 0) {
+      alert('সঠিক টাকার অংক লিখুন');
+      return;
+    }
+
+    onRecordDuePayment(collectingShop.id, amount, collectMethod, collectNotes);
+    setCollectingShop(null);
+    setCollectAmount('');
+    setCollectNotes('');
+  };
+
+  const handleCreateShop = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newShopName || !newPhone) return;
+
+    const created: Shop = {
+      id: `shop-${Date.now()}`,
+      name: newShopName,
+      ownerName: newOwner || 'প্রোপ্রাইটর',
+      phone: newPhone,
+      address: newAddress || 'ঠিকানা দেওয়া নেই',
+      routeArea: newRoute,
+      previousDue: 0,
+      category: 'সাধারণ মুদি শপ',
+      lastVisitDate: new Date().toISOString().split('T')[0],
+    };
+
+    onAddShop(created);
+    setIsAddOpen(false);
+    setNewShopName('');
+    setNewOwner('');
+    setNewPhone('');
+    setNewAddress('');
+  };
+
+  return (
+    <div className="max-w-7xl mx-auto px-3 sm:px-4 py-4 space-y-4">
+      {/* Top Banner & Stats */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="bg-white rounded-2xl p-4 border border-neutral-200 shadow-xs flex items-center justify-between">
+          <div>
+            <p className="text-xs text-neutral-500 font-medium">রেজিস্টার্ড দোকান</p>
+            <p className="text-2xl font-black text-neutral-900 mt-1">{shops.length}টি</p>
+            <p className="text-[11px] text-emerald-600 mt-0.5">{routes.length}টি সক্রিয় রুটে</p>
+          </div>
+          <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-700">
+            <Store className="w-6 h-6" />
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl p-4 border border-neutral-200 shadow-xs flex items-center justify-between sm:col-span-2">
+          <div>
+            <p className="text-xs text-neutral-500 font-medium">মার্কেটে মোট বকেয়া (Total Market Dues)</p>
+            <p className="text-2xl sm:text-3xl font-black text-rose-600 mt-1">
+              ৳{totalMarketDue.toLocaleString()}
+            </p>
+            <p className="text-[11px] text-neutral-500 mt-0.5">
+              দোকানদারদের কাছ থেকে আদায়যোগ্য মোট বাকি টাকা
+            </p>
+          </div>
+          <button
+            onClick={() => setIsAddOpen(true)}
+            className="flex items-center gap-1.5 px-4 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl font-bold text-xs shadow-md transition-all shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+            <span>+ নতুন দোকান</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Filter & Search */}
+      <div className="bg-white rounded-2xl p-3 border border-neutral-200 shadow-xs flex flex-col sm:flex-row gap-2">
+        <div className="relative flex-1">
+          <Search className="w-4 h-4 absolute left-3 top-2.5 text-neutral-400" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="দোকানের নাম, মালিক বা ফোন নম্বর দিয়ে খুঁজুন..."
+            className="w-full text-xs pl-9 pr-3 py-2 border border-neutral-300 rounded-xl focus:ring-2 focus:ring-emerald-600"
+          />
+        </div>
+
+        <select
+          value={selectedRoute}
+          onChange={(e) => setSelectedRoute(e.target.value)}
+          className="text-xs py-2 px-3 border border-neutral-300 rounded-xl bg-neutral-50 font-medium text-neutral-800 focus:ring-2 focus:ring-emerald-600"
+        >
+          <option value="all">সকল রুট / মার্কেট ({shops.length} দোকান)</option>
+          {routes.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Shops Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        {filteredShops.map((shop) => {
+          const hasHighDue = shop.previousDue >= 8000;
+
+          return (
+            <div
+              key={shop.id}
+              className={`bg-white rounded-2xl p-4 border transition-all flex flex-col justify-between ${
+                hasHighDue ? 'border-rose-200 shadow-xs' : 'border-neutral-200 hover:border-neutral-300'
+              }`}
+            >
+              <div>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800">
+                    {shop.routeArea}
+                  </span>
+                  <span className="text-[10px] text-neutral-500 font-medium">{shop.category}</span>
+                </div>
+
+                <h4 className="font-extrabold text-base text-neutral-900 mt-2">{shop.name}</h4>
+                <p className="text-xs text-neutral-600 font-medium mt-0.5">মালিক: {shop.ownerName}</p>
+
+                <div className="mt-2 space-y-1 text-xs text-neutral-500">
+                  <a
+                    href={`tel:${shop.phone}`}
+                    className="flex items-center gap-1.5 text-neutral-700 hover:text-emerald-700 font-medium"
+                  >
+                    <Phone className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>{shop.phone}</span>
+                  </a>
+                  <p className="flex items-start gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-neutral-400 shrink-0 mt-0.5" />
+                    <span className="truncate">{shop.address}</span>
+                  </p>
+                  {shop.lastVisitDate && (
+                    <p className="flex items-center gap-1.5 text-[11px] text-neutral-400">
+                      <Calendar className="w-3.5 h-3.5" />
+                      <span>সর্বশেষ ভিজিট: {shop.lastVisitDate}</span>
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Outstanding Due & Actions */}
+              <div className="mt-4 pt-3 border-t border-neutral-100">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-neutral-500">বর্তমান বকেয়া:</span>
+                  <span
+                    className={`text-sm sm:text-base font-black ${
+                      hasHighDue
+                        ? 'text-rose-600'
+                        : shop.previousDue > 0
+                        ? 'text-amber-700'
+                        : 'text-emerald-700'
+                    }`}
+                  >
+                    ৳{shop.previousDue.toLocaleString()}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setCollectingShop(shop)}
+                    className="py-2 px-2 rounded-xl text-xs font-bold bg-neutral-100 hover:bg-neutral-200 text-neutral-800 transition-colors flex items-center justify-center gap-1"
+                  >
+                    <DollarSign className="w-3.5 h-3.5 text-emerald-700" />
+                    <span>বকেয়া আদায়</span>
+                  </button>
+
+                  <button
+                    onClick={() => onSelectShopForOrder(shop.id)}
+                    className="py-2 px-2 rounded-xl text-xs font-bold bg-emerald-700 hover:bg-emerald-600 text-white transition-colors flex items-center justify-center gap-1 shadow-xs"
+                  >
+                    <ShoppingBag className="w-3.5 h-3.5" />
+                    <span>অর্ডার কাটুন</span>
+                  </button>
+                </div>
+
+                {onOpenMapForShop && (
+                  <button
+                    onClick={() => onOpenMapForShop(shop.id)}
+                    className="mt-2 w-full py-1.5 px-2 rounded-xl text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200/80 transition-colors flex items-center justify-center gap-1.5"
+                  >
+                    <MapPin className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>ম্যাপে অবস্থান ও নেভিগেশন দেখুন</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Due Collection Modal */}
+      {collectingShop && (
+        <div className="fixed inset-0 z-50 bg-neutral-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-5 shadow-2xl border border-neutral-200">
+            <h3 className="font-bold text-base text-neutral-900 mb-1">বকেয়া টাকা জমা / আদায়</h3>
+            <p className="text-xs text-neutral-500 mb-3">{collectingShop.name}</p>
+
+            <div className="bg-rose-50 p-2.5 rounded-xl border border-rose-200 mb-3 text-xs flex justify-between items-center">
+              <span className="text-neutral-600 font-medium">বর্তমান মোট বকেয়া:</span>
+              <span className="font-bold text-rose-700 text-sm">
+                ৳{collectingShop.previousDue.toLocaleString()}
+              </span>
+            </div>
+
+            <form onSubmit={handleDueSubmit} className="space-y-3 text-xs">
+              <div>
+                <label className="font-bold text-neutral-700 block mb-1">আদায়কৃত টাকার পরিমাণ (৳) *</label>
+                <input
+                  type="number"
+                  required
+                  value={collectAmount}
+                  onChange={(e) => setCollectAmount(e.target.value)}
+                  placeholder="যেমন: ২০০০"
+                  className="w-full p-2.5 border border-neutral-300 rounded-xl text-sm font-bold text-neutral-900"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-neutral-700 block mb-1">পেমেন্ট মাধ্যম</label>
+                <div className="grid grid-cols-3 gap-1">
+                  {(['CASH', 'BKASH', 'NAGAD'] as PaymentMethod[]).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setCollectMethod(m)}
+                      className={`py-1.5 rounded-lg font-bold text-[11px] border ${
+                        collectMethod === m
+                          ? 'bg-neutral-900 text-white border-neutral-900'
+                          : 'bg-neutral-50 text-neutral-700 border-neutral-200'
+                      }`}
+                    >
+                      {m === 'CASH' ? 'নগদ' : m}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-neutral-700 block mb-1">মন্তব্য (ঐচ্ছিক)</label>
+                <input
+                  type="text"
+                  value={collectNotes}
+                  onChange={(e) => setCollectNotes(e.target.value)}
+                  placeholder="যেমন: কিস্তির টাকা / চেক নং"
+                  className="w-full p-2 border border-neutral-300 rounded-xl"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setCollectingShop(null)}
+                  className="px-4 py-2 text-neutral-600 hover:bg-neutral-100 rounded-xl font-semibold"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl font-bold shadow"
+                >
+                  জমা নিশ্চিত করুন
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add New Shop Modal */}
+      {isAddOpen && (
+        <div className="fixed inset-0 z-50 bg-neutral-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in">
+          <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl border border-neutral-200">
+            <h3 className="font-bold text-base text-neutral-900 mb-3 flex items-center gap-2">
+              <Store className="w-5 h-5 text-emerald-700" />
+              নতুন দোকান যুক্ত করুন
+            </h3>
+            <form onSubmit={handleCreateShop} className="space-y-3 text-xs">
+              <div>
+                <label className="font-bold text-neutral-700 block mb-1">দোকানের নাম *</label>
+                <input
+                  type="text"
+                  required
+                  value={newShopName}
+                  onChange={(e) => setNewShopName(e.target.value)}
+                  placeholder="যেমন: মেসার্স জনতা স্টোর"
+                  className="w-full p-2 border border-neutral-300 rounded-xl"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-neutral-700 block mb-1">প্রোপ্রাইটরের নাম</label>
+                <input
+                  type="text"
+                  value={newOwner}
+                  onChange={(e) => setNewOwner(e.target.value)}
+                  placeholder="যেমন: হাজী সাইফুল ইসলাম"
+                  className="w-full p-2 border border-neutral-300 rounded-xl"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-neutral-700 block mb-1">মোবাইল নম্বর *</label>
+                <input
+                  type="tel"
+                  required
+                  value={newPhone}
+                  onChange={(e) => setNewPhone(e.target.value)}
+                  placeholder="০১৭xxxxxxxx"
+                  className="w-full p-2 border border-neutral-300 rounded-xl"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-neutral-700 block mb-1">রুট / এলাকা *</label>
+                <input
+                  type="text"
+                  required
+                  value={newRoute}
+                  onChange={(e) => setNewRoute(e.target.value)}
+                  placeholder="যেমন: চকবাজার রুট"
+                  className="w-full p-2 border border-neutral-300 rounded-xl"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-neutral-700 block mb-1">দোকানের ঠিকানা</label>
+                <input
+                  type="text"
+                  value={newAddress}
+                  onChange={(e) => setNewAddress(e.target.value)}
+                  placeholder="রোড নং ৪, মার্কেট চত্বর"
+                  className="w-full p-2 border border-neutral-300 rounded-xl"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setIsAddOpen(false)}
+                  className="px-4 py-2 text-neutral-600 hover:bg-neutral-100 rounded-xl font-semibold"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl font-bold shadow"
+                >
+                  সংরক্ষণ করুন
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

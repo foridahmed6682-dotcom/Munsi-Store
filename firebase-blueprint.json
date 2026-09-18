@@ -1,0 +1,185 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Application user profile with designated role (admin, sr, or dsr)",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique Firebase Authentication UID" },
+        "email": { "type": "string", "description": "User email address" },
+        "displayName": { "type": "string", "description": "User full name" },
+        "role": { "type": "string", "enum": ["admin", "sr", "dsr"], "description": "Role in the organization" },
+        "assignedRoute": { "type": "string", "description": "Assigned geographical sales route (optional for admin)" },
+        "phone": { "type": "string", "description": "Contact telephone number" },
+        "photoURL": { "type": "string", "description": "Avatar image URL" },
+        "status": { "type": "string", "enum": ["active", "inactive"], "description": "Account status" },
+        "createdAt": { "type": "string", "description": "ISO timestamp of account creation" },
+        "updatedAt": { "type": "string", "description": "ISO timestamp of last update" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Admin": {
+      "title": "Admin",
+      "description": "Trusted admin whitelist document determining administrative privileges",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Admin UID" },
+        "email": { "type": "string", "description": "Admin email address" },
+        "addedAt": { "type": "string", "description": "ISO timestamp when admin was whitelisted" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Shop": {
+      "title": "Shop",
+      "description": "Registered retail grocery shop or store in the distribution territory",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique shop ID" },
+        "name": { "type": "string", "description": "Shop commercial trade name in Bengali or English" },
+        "ownerName": { "type": "string", "description": "Proprietor / owner name" },
+        "phone": { "type": "string", "description": "Contact mobile phone number" },
+        "address": { "type": "string", "description": "Physical shop address location" },
+        "routeArea": { "type": "string", "description": "Assigned sales beat or route territory" },
+        "previousDue": { "type": "number", "description": "Current outstanding balance / credit due in BDT" },
+        "category": { "type": "string", "description": "Store classification category" },
+        "notes": { "type": "string", "description": "Sales or delivery instructions" },
+        "lastVisitDate": { "type": "string", "description": "ISO date of latest agent visit" },
+        "createdByUid": { "type": "string", "description": "UID of SR or Admin who registered the shop" }
+      },
+      "required": ["id", "name", "phone", "routeArea", "previousDue"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "FMCG inventory catalog item with pricing, trade offer, and warehouse stock",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique product ID" },
+        "name": { "type": "string", "description": "English product trade name" },
+        "banglaName": { "type": "string", "description": "Bengali product trade name" },
+        "sku": { "type": "string", "description": "Unique Stock Keeping Unit" },
+        "category": { "type": "string", "description": "Product category classification" },
+        "unit": { "type": "string", "description": "Packaging unit (Carton, Dozen, Bag, Kg, Piece)" },
+        "unitPrice": { "type": "number", "description": "Wholesale distributor selling price in BDT" },
+        "costPrice": { "type": "number", "description": "Distributor purchase cost price in BDT" },
+        "stock": { "type": "number", "description": "Current physical stock quantity" },
+        "minStockAlert": { "type": "number", "description": "Threshold for low-stock warning" },
+        "tradeOfferDesc": { "type": "string", "description": "Promotional trade offer description" }
+      },
+      "required": ["id", "name", "banglaName", "sku", "unit", "unitPrice", "stock"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Sales memo order booked by DSR, SR, or Admin at a retailer shop",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique order ID" },
+        "memoNumber": { "type": "string", "description": "Official invoice memo number (MEMO-YYYY-XXXX)" },
+        "shopId": { "type": "string", "description": "Target retail shop identifier" },
+        "shopName": { "type": "string", "description": "Target retail shop name" },
+        "shopPhone": { "type": "string", "description": "Shop phone number" },
+        "shopAddress": { "type": "string", "description": "Shop location" },
+        "shopRoute": { "type": "string", "description": "Route territory" },
+        "bookedByUid": { "type": "string", "description": "UID of the agent who booked the order" },
+        "bookedByRole": { "type": "string", "enum": ["admin", "sr", "dsr"], "description": "Role of the booking agent" },
+        "bookedByName": { "type": "string", "description": "Name of booking agent" },
+        "subTotal": { "type": "number", "description": "Gross total order amount in BDT" },
+        "discountPercent": { "type": "number", "description": "Discount percentage applied" },
+        "discountAmount": { "type": "number", "description": "Total discount amount in BDT" },
+        "netTotal": { "type": "number", "description": "Net payable amount in BDT" },
+        "paidAmount": { "type": "number", "description": "Cash/digital amount collected at booking" },
+        "dueAmount": { "type": "number", "description": "New unpaid due incurred from this order in BDT" },
+        "previousDueAtBooking": { "type": "number", "description": "Prior balance at time of booking" },
+        "totalOutstandingAfterOrder": { "type": "number", "description": "Total cumulative balance owed" },
+        "paymentMethod": { "type": "string", "enum": ["CASH", "DUE", "PARTIAL", "BKASH", "NAGAD"], "description": "Payment mode" },
+        "deliveryStatus": { "type": "string", "enum": ["PENDING", "DELIVERED", "CANCELLED"], "description": "Fulfillment status" },
+        "orderDate": { "type": "string", "description": "ISO timestamp of order booking" },
+        "syncedWithSheets": { "type": "boolean", "description": "Whether exported to Google Sheets" },
+        "notes": { "type": "string", "description": "Agent delivery remarks" }
+      },
+      "required": ["id", "memoNumber", "shopId", "shopName", "netTotal", "paymentMethod", "deliveryStatus", "orderDate"]
+    },
+    "DueCollection": {
+      "title": "DueCollection",
+      "description": "Cash or digital credit recovery collected from a shop",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique payment collection ID" },
+        "shopId": { "type": "string", "description": "Shop identifier" },
+        "shopName": { "type": "string", "description": "Shop name" },
+        "amount": { "type": "number", "description": "Amount collected in BDT" },
+        "date": { "type": "string", "description": "ISO timestamp of collection" },
+        "collectedByUid": { "type": "string", "description": "UID of collector" },
+        "collectedByName": { "type": "string", "description": "Name of collector" },
+        "collectorRole": { "type": "string", "enum": ["admin", "sr", "dsr"], "description": "Role of collector" },
+        "paymentMethod": { "type": "string", "enum": ["CASH", "BKASH", "NAGAD"], "description": "Payment mode used" },
+        "notes": { "type": "string", "description": "Additional receipt notes" }
+      },
+      "required": ["id", "shopId", "amount", "date", "paymentMethod"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Product classification category with name, bangla name, icon, and description",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Category slug or unique ID" },
+        "name": { "type": "string", "description": "Category name in English" },
+        "banglaName": { "type": "string", "description": "Category name in Bengali" },
+        "description": { "type": "string", "description": "Optional category description" },
+        "icon": { "type": "string", "description": "Lucide icon key or emoji" },
+        "color": { "type": "string", "description": "Badge color code" },
+        "createdAt": { "type": "string", "description": "ISO timestamp" }
+      },
+      "required": ["id", "name", "banglaName"]
+    },
+    "AuthorizedEmail": {
+      "title": "AuthorizedEmail",
+      "description": "Pre-authorized user email configured by admin to grant specific role and route access upon authentication",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Sanitized email key or ID" },
+        "email": { "type": "string", "description": "User Google or login email address" },
+        "role": { "type": "string", "enum": ["admin", "sr", "dsr"], "description": "Granted role" },
+        "assignedRoute": { "type": "string", "description": "Assigned route territory" },
+        "fullName": { "type": "string", "description": "Staff member full name" },
+        "phone": { "type": "string", "description": "Contact number" },
+        "addedAt": { "type": "string", "description": "ISO timestamp when permission was granted" },
+        "addedBy": { "type": "string", "description": "Email of admin who authorized" }
+      },
+      "required": ["id", "email", "role"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "User" },
+      "description": "User profiles storing user contact, role (admin, sr, dsr), and assigned routes"
+    },
+    "/admins/{adminId}": {
+      "schema": { "$ref": "Admin" },
+      "description": "Secure admin whitelist documents. Existence gives full administrative override."
+    },
+    "/shops/{shopId}": {
+      "schema": { "$ref": "Shop" },
+      "description": "Retailer shops and accounts receivable ledger records"
+    },
+    "/products/{productId}": {
+      "schema": { "$ref": "Product" },
+      "description": "Warehouse and distributor products inventory catalog"
+    },
+    "/categories/{categoryId}": {
+      "schema": { "$ref": "Category" },
+      "description": "Product classification categories managed from Admin Panel"
+    },
+    "/authorizedEmails/{authId}": {
+      "schema": { "$ref": "AuthorizedEmail" },
+      "description": "Admin-configured role whitelist mapping user emails to Admin, SR, or DSR access"
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "Order" },
+      "description": "Sales booking orders created by field agents"
+    },
+    "/dueCollections/{collectionId}": {
+      "schema": { "$ref": "DueCollection" },
+      "description": "Credit and due collection transaction logs"
+    }
+  }
+}
