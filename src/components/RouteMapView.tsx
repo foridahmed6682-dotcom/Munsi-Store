@@ -59,6 +59,7 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [isLocating, setIsLocating] = useState<boolean>(false);
   const [locationError, setLocationError] = useState<string | null>(null);
+  const [isUpdatingGPS, setIsUpdatingGPS] = useState<boolean>(false);
 
   // Due collection modal inside map
   const [isDueModalOpen, setIsDueModalOpen] = useState<boolean>(false);
@@ -277,7 +278,51 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
         setIsLocating(false);
         setLocationError('লোকেশন পাওয়া যায়নি। অনুগ্রহ করে ডিভাইসের GPS অন করুন।');
       },
-      { enableHighAccuracy: true, timeout: 10000 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  };
+
+  // High Accuracy Shop GPS Position Updater
+  const handleUpdateShopGPS = (shopId: string) => {
+    if (!navigator.geolocation) {
+      alert('আপনার ডিভাইসে জিপিএস সাপোর্ট নেই');
+      return;
+    }
+
+    setIsUpdatingGPS(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setIsUpdatingGPS(false);
+        const { latitude, longitude, accuracy } = pos.coords;
+        const preciseLat = Number(latitude.toFixed(6));
+        const preciseLng = Number(longitude.toFixed(6));
+        
+        if (onUpdateShopCoordinates) {
+          onUpdateShopCoordinates(shopId, preciseLat, preciseLng);
+          setSelectedShop((prev) => 
+            prev && prev.id === shopId ? { ...prev, lat: preciseLat, lng: preciseLng } : prev
+          );
+          
+          setUserLocation({ lat: preciseLat, lng: preciseLng });
+          
+          if (mapInstanceRef.current) {
+            mapInstanceRef.current.setView([preciseLat, preciseLng], 17);
+          }
+        }
+      },
+      (err) => {
+        setIsUpdatingGPS(false);
+        let msg = 'জিপিএস লোকেশন রিড করা যায়নি।';
+        if (err.code === 1) {
+          msg = 'লোকেশন পারমিশন ডিনাই করা হয়েছে। অনুগ্রহ করে ব্রাউজার সেটিংসে জিপিএস অনুমতি দিন।';
+        } else if (err.code === 2) {
+          msg = 'ফোনের জিপিএস সিগন্যাল পাওয়া যাচ্ছে না।';
+        } else if (err.code === 3) {
+          msg = 'জিপিএস রিকোয়েস্ট টাইমআউট হয়েছে। খোলা জায়গায় গিয়ে আবার চেষ্টা করুন।';
+        }
+        alert(msg);
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
   };
 
@@ -491,34 +536,47 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
               </div>
 
               {/* Action Buttons */}
-              <div className="grid grid-cols-3 gap-2 mt-3 pt-2.5 border-t border-neutral-100">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 pt-2.5 border-t border-neutral-100">
                 {/* 1. Book Order */}
                 <button
                   onClick={() => onSelectShopForOrder(selectedShop.id)}
-                  className="flex items-center justify-center gap-1 py-2 px-2 bg-emerald-700 hover:bg-emerald-600 text-white font-bold rounded-xl text-xs shadow-xs transition-colors"
+                  className="flex items-center justify-center gap-1 py-2 px-1 bg-emerald-700 hover:bg-emerald-600 text-white font-bold rounded-xl text-[11px] shadow-xs transition-colors"
                 >
-                  <Store className="w-3.5 h-3.5" />
-                  <span>অর্ডার বুকিং</span>
+                  <Store className="w-3.5 h-3.5 shrink-0" />
+                  <span>অর্ডার</span>
                 </button>
 
                 {/* 2. Collect Due */}
                 <button
                   onClick={() => setIsDueModalOpen(true)}
-                  className="flex items-center justify-center gap-1 py-2 px-2 bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold rounded-xl text-xs shadow-xs transition-colors"
+                  className="flex items-center justify-center gap-1 py-2 px-1 bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold rounded-xl text-[11px] shadow-xs transition-colors"
                 >
-                  <DollarSign className="w-3.5 h-3.5" />
+                  <DollarSign className="w-3.5 h-3.5 shrink-0" />
                   <span>বকেয়া আদায়</span>
                 </button>
 
                 {/* 3. Google Maps Directions */}
                 <button
                   onClick={() => handleOpenGoogleMapsDirections(selectedShop)}
-                  className="flex items-center justify-center gap-1 py-2 px-2 bg-neutral-800 hover:bg-neutral-700 text-white font-bold rounded-xl text-xs shadow-xs transition-colors"
+                  className="flex items-center justify-center gap-1 py-2 px-1 bg-neutral-800 hover:bg-neutral-700 text-white font-bold rounded-xl text-[11px] shadow-xs transition-colors"
                   title="গুগল ম্যাপে দিকনির্দেশনা দেখুন"
                 >
-                  <NavIcon className="w-3.5 h-3.5 text-blue-400" />
+                  <NavIcon className="w-3.5 h-3.5 text-blue-400 shrink-0" />
                   <span>ডিরেকশন</span>
                 </button>
+
+                {/* 4. Update Current GPS Location */}
+                {onUpdateShopCoordinates && (
+                  <button
+                    onClick={() => handleUpdateShopGPS(selectedShop.id)}
+                    disabled={isUpdatingGPS}
+                    className="flex items-center justify-center gap-1 py-2 px-1 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl text-[11px] shadow-xs transition-colors disabled:opacity-50"
+                    title="দোকানের সামনে দাঁড়িয়ে লাইভ জিপিএস লোকেশন আপডেট করুন"
+                  >
+                    <LocateFixed className={`w-3.5 h-3.5 text-blue-200 shrink-0 ${isUpdatingGPS ? 'animate-spin' : ''}`} />
+                    <span>{isUpdatingGPS ? 'সেট হচ্ছে...' : 'জিপিএস সেট'}</span>
+                  </button>
+                )}
               </div>
             </div>
           )}
