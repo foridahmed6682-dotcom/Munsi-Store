@@ -32,7 +32,8 @@ import {
   MapPin,
   Eye,
   SlidersHorizontal,
-  Crown
+  Crown,
+  Compass
 } from 'lucide-react';
 import {
   Product,
@@ -42,7 +43,8 @@ import {
   UserRole,
   Category,
   AuthorizedUserEmail,
-  AppUser
+  AppUser,
+  Route
 } from '../types';
 import { fetchAllUsers, updateUserRoleAndRoute } from '../lib/firebase';
 
@@ -52,6 +54,7 @@ interface AdminDashboardViewProps {
   orders: Order[];
   categories: Category[];
   authorizedEmails: AuthorizedUserEmail[];
+  routes: Route[];
   currentUser: UserProfile | null;
   activeSimulatedRole: UserRole;
   onAddProduct: (product: Product) => void;
@@ -64,6 +67,9 @@ interface AdminDashboardViewProps {
   onAddAuthorizedEmail: (authEmail: AuthorizedUserEmail) => void;
   onUpdateAuthorizedEmail: (authEmail: AuthorizedUserEmail) => void;
   onDeleteAuthorizedEmail: (email: string) => void;
+  onAddRoute: (route: Route) => void;
+  onUpdateRoute: (route: Route) => void;
+  onDeleteRoute: (routeId: string) => void;
   onSimulatedRoleChange: (role: UserRole) => void;
   onSyncWithSheets: () => void;
   onBackupToDrive: () => void;
@@ -73,7 +79,7 @@ interface AdminDashboardViewProps {
   onNavigateTab: (tab: any) => void;
 }
 
-type AdminSubTab = 'overview' | 'categories' | 'products' | 'access' | 'analytics';
+type AdminSubTab = 'overview' | 'categories' | 'products' | 'routes' | 'access' | 'analytics';
 
 const AVAILABLE_ROUTES = [
   'সব রুট (All Routes)',
@@ -104,6 +110,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   orders,
   categories,
   authorizedEmails,
+  routes,
   currentUser,
   activeSimulatedRole,
   onAddProduct,
@@ -113,6 +120,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   onAddCategory,
   onUpdateCategory,
   onDeleteCategory,
+  onAddRoute,
+  onUpdateRoute,
+  onDeleteRoute,
   onAddAuthorizedEmail,
   onUpdateAuthorizedEmail,
   onDeleteAuthorizedEmail,
@@ -125,6 +135,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   onNavigateTab,
 }) => {
   const [subTab, setSubTab] = useState<AdminSubTab>('overview');
+
+  const allAvailableRouteNames = useMemo(() => {
+    const set = new Set<string>();
+    set.add('সব রুট (All Routes)');
+    routes.forEach(r => set.add(r.banglaName));
+    return Array.from(set);
+  }, [routes]);
+
   const [feedback, setFeedback] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null);
 
   // Users from Firebase
@@ -165,6 +183,13 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [authNameInput, setAuthNameInput] = useState('');
   const [authPhoneInput, setAuthPhoneInput] = useState('');
   const [authRouteInput, setAuthRouteInput] = useState('সব রুট (All Routes)');
+
+  // Route Modal State
+  const [isRouteModalOpen, setIsRouteModalOpen] = useState(false);
+  const [editingRoute, setEditingRoute] = useState<Route | null>(null);
+  const [routeName, setRouteName] = useState('');
+  const [routeBanglaName, setRouteBanglaName] = useState('');
+  const [routeDescription, setRouteDescription] = useState('');
 
   // Product Filter State
   const [productSearch, setProductSearch] = useState('');
@@ -455,6 +480,58 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     }
   };
 
+  // Route Submit
+  const handleRouteSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!routeBanglaName.trim()) {
+      showToast('রুটের বাংলা নাম আবশ্যক', 'error');
+      return;
+    }
+
+    if (editingRoute) {
+      const updated: Route = {
+        ...editingRoute,
+        name: routeName.trim() || routeBanglaName.trim(),
+        banglaName: routeBanglaName.trim(),
+        description: routeDescription.trim(),
+      };
+      onUpdateRoute(updated);
+      showToast(`'${routeBanglaName}' রুট আপডেট করা হয়েছে`, 'success');
+    } else {
+      const newRoute: Route = {
+        id: `route-${Date.now()}`,
+        name: routeName.trim() || routeBanglaName.trim(),
+        banglaName: routeBanglaName.trim(),
+        description: routeDescription.trim(),
+        createdAt: new Date().toISOString(),
+      };
+      onAddRoute(newRoute);
+      showToast(`নতুন রুট '${routeBanglaName}' তৈরি করা হয়েছে`, 'success');
+    }
+
+    setIsRouteModalOpen(false);
+    setEditingRoute(null);
+    setRouteName('');
+    setRouteBanglaName('');
+    setRouteDescription('');
+  };
+
+  const openCreateRouteModal = () => {
+    setEditingRoute(null);
+    setRouteName('');
+    setRouteBanglaName('');
+    setRouteDescription('');
+    setIsRouteModalOpen(true);
+  };
+
+  const openEditRouteModal = (route: Route) => {
+    setEditingRoute(route);
+    setRouteName(route.name);
+    setRouteBanglaName(route.banglaName);
+    setRouteDescription(route.description || '');
+    setIsRouteModalOpen(true);
+  };
+
   return (
     <div className="space-y-5 pb-16 animate-fadeIn">
       {/* Toast Feedback */}
@@ -520,6 +597,13 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               <span>ক্যাটাগরি তৈরি</span>
             </button>
             <button
+              onClick={openCreateRouteModal}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-blue-800/80 hover:bg-blue-700 text-white font-semibold text-xs border border-blue-600/50 shadow-sm transition-all"
+            >
+              <Compass className="w-3.5 h-3.5 text-blue-300" />
+              <span>রুট তৈরি</span>
+            </button>
+            <button
               onClick={() => setIsAuthEmailModalOpen(true)}
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-purple-700/80 hover:bg-purple-600 text-white font-semibold text-xs border border-purple-500/50 shadow-sm transition-all"
             >
@@ -566,6 +650,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         >
           <Package className="w-4 h-4" />
           <span>প্রোডাক্ট আপলোড ও স্টক ({products.length})</span>
+        </button>
+
+        <button
+          onClick={() => setSubTab('routes')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+            subTab === 'routes'
+              ? 'bg-emerald-800 text-white shadow-sm'
+              : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100'
+          }`}
+        >
+          <Compass className="w-4 h-4" />
+          <span>রুট প্ল্যান ও জোন ({routes.length})</span>
         </button>
 
         <button
@@ -671,6 +767,19 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   <div>
                     <span className="font-bold text-xs text-neutral-900 block">নতুন ক্যাটাগরি তৈরি</span>
                     <span className="text-[11px] text-neutral-500">গ্রুপিং ও ডিসপ্লে</span>
+                  </div>
+                </button>
+
+                <button
+                  onClick={openCreateRouteModal}
+                  className="p-3 rounded-xl border border-rose-200 bg-rose-50/60 hover:bg-rose-100/80 text-left transition-colors flex flex-col justify-between"
+                >
+                  <div className="w-8 h-8 rounded-lg bg-rose-600 text-white flex items-center justify-center font-bold mb-2">
+                    <Compass className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="font-bold text-xs text-neutral-900 block">নতুন সেলস রুট তৈরি</span>
+                    <span className="text-[11px] text-neutral-500">এরিয়া ও ডেলিভারি জোন</span>
                   </div>
                 </button>
 
@@ -1276,6 +1385,163 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         </div>
       )}
 
+      {/* SUB-TAB 4: ROUTE MANAGEMENT */}
+      {subTab === 'routes' && (
+        <div className="space-y-4 animate-fadeIn">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-neutral-200">
+            <div>
+              <h2 className="text-base font-bold text-neutral-900 flex items-center gap-2">
+                <Compass className="w-4 h-4 text-emerald-600" />
+                <span>সেলস রুট ও জোন পরিচালনা</span>
+              </h2>
+              <p className="text-xs text-neutral-500">
+                SR ও DSR দের জন্য নির্দিষ্ট বিক্রয় এলাকা বা রুট তৈরি করুন
+              </p>
+            </div>
+            <button
+              onClick={openCreateRouteModal}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-sm transition-all"
+            >
+              <Plus className="w-4 h-4" />
+              <span>নতুন রুট যোগ করুন</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {routes.map((route) => {
+              const shopCount = shops.filter(s => s.routeArea === route.banglaName || s.routeArea === route.name).length;
+              return (
+                <div
+                  key={route.id}
+                  className="bg-white rounded-2xl border border-neutral-200 p-4 shadow-xs hover:border-neutral-300 transition-all flex flex-col justify-between"
+                >
+                  <div>
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0 shadow-xs">
+                          <Compass className="w-4 h-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <h4 className="font-bold text-sm text-neutral-900 truncate">{route.banglaName}</h4>
+                          <span className="text-[11px] text-neutral-500 font-medium block truncate">
+                            {route.name}
+                          </span>
+                        </div>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-neutral-100 text-neutral-700 shrink-0">
+                        {shopCount} দোকান
+                      </span>
+                    </div>
+
+                    {route.description && (
+                      <p className="text-xs text-neutral-600 line-clamp-2 mt-1">
+                        {route.description}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="mt-4 pt-3 border-t border-neutral-100 flex items-center justify-between">
+                    <span className="text-[11px] text-neutral-400 font-mono">
+                      ID: {route.id}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => openEditRouteModal(route)}
+                        className="p-1.5 rounded-lg hover:bg-neutral-100 text-neutral-600 hover:text-neutral-900"
+                        title="রুট এডিট করুন"
+                      >
+                        <Edit3 className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (confirm(`আপনি কি '${route.banglaName}' রুটটি মুছে ফেলতে চান?`)) {
+                            onDeleteRoute(route.id);
+                            showToast(`'${route.banglaName}' মুছে ফেলা হয়েছে`, 'info');
+                          }
+                        }}
+                        className="p-1.5 rounded-lg hover:bg-rose-50 text-neutral-400 hover:text-rose-600"
+                        title="রুট মুছুন"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Route Modal */}
+      {isRouteModalOpen && (
+        <div className="fixed inset-0 z-50 bg-neutral-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-in fade-in">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-neutral-200 my-auto">
+            <div className="flex items-center justify-between mb-4 pb-3 border-b border-neutral-100">
+              <h3 className="font-bold text-neutral-900 flex items-center gap-2 text-sm">
+                <Compass className="w-5 h-5 text-emerald-600" />
+                <span>{editingRoute ? 'রুট এডিট করুন' : 'নতুন রুট তৈরি করুন'}</span>
+              </h3>
+              <button onClick={() => setIsRouteModalOpen(false)} className="text-neutral-400 hover:text-neutral-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleRouteSubmit} className="space-y-4">
+              <div>
+                <label className="text-xs font-bold text-neutral-700 block mb-1">রুটের নাম (বাংলা) *</label>
+                <input
+                  type="text"
+                  required
+                  value={routeBanglaName}
+                  onChange={(e) => setRouteBanglaName(e.target.value)}
+                  placeholder="যেমন: চকবাজার রুট"
+                  className="w-full p-2.5 border border-neutral-300 rounded-xl focus:ring-2 focus:ring-emerald-500 font-medium text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-neutral-700 block mb-1">রুটের নাম (English)</label>
+                <input
+                  type="text"
+                  value={routeName}
+                  onChange={(e) => setRouteName(e.target.value)}
+                  placeholder="যেমন: Chawkbazar"
+                  className="w-full p-2.5 border border-neutral-300 rounded-xl focus:ring-2 focus:ring-emerald-500 font-medium text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-neutral-700 block mb-1">বর্ণনা (ঐচ্ছিক)</label>
+                <textarea
+                  rows={2}
+                  value={routeDescription}
+                  onChange={(e) => setRouteDescription(e.target.value)}
+                  placeholder="রুটের আওতাভুক্ত এলাকাগুলো লিখুন..."
+                  className="w-full p-2.5 border border-neutral-300 rounded-xl focus:ring-2 focus:ring-emerald-500 font-medium text-xs"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsRouteModalOpen(false)}
+                  className="px-4 py-2 text-neutral-600 hover:bg-neutral-100 rounded-xl font-bold text-xs"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  className="px-6 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl font-bold text-xs shadow-md"
+                >
+                  {editingRoute ? 'আপডেট করুন' : 'তৈরি করুন'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* MODAL 1: ADD / EDIT CATEGORY */}
       {isCategoryModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 animate-in fade-in">
@@ -1699,7 +1965,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                     onChange={(e) => setAuthRouteInput(e.target.value)}
                     className="w-full px-2.5 py-2 rounded-xl border border-neutral-300 text-xs bg-white font-medium text-neutral-800"
                   >
-                    {AVAILABLE_ROUTES.map((r) => (
+                    {allAvailableRouteNames.map((r) => (
                       <option key={r} value={r}>
                         {r}
                       </option>

@@ -2,6 +2,14 @@ export type PaymentMethod = 'CASH' | 'DUE' | 'PARTIAL' | 'BKASH' | 'NAGAD';
 export type DeliveryStatus = 'PENDING' | 'DELIVERED' | 'CANCELLED';
 export type UserRole = 'admin' | 'sr' | 'dsr';
 
+export interface Route {
+  id: string;
+  name: string;
+  banglaName: string;
+  description?: string;
+  createdAt?: string;
+}
+
 export interface Category {
   id: string;
   name: string;

@@ -18,6 +18,9 @@ import {
   getCategories,
   addOrUpdateCategory,
   deleteCategory,
+  getRoutes,
+  addOrUpdateRoute as addOrUpdateRouteLocal,
+  deleteRoute as deleteRouteLocal,
   getAuthorizedEmails,
   addOrUpdateAuthorizedEmail,
   deleteAuthorizedEmail
@@ -36,6 +39,9 @@ import {
   deleteCategoryFromCloud,
   saveAuthorizedEmailToCloud,
   deleteAuthorizedEmailFromCloud,
+  subscribeToCloudRoutes,
+  saveRouteToCloud,
+  deleteRouteFromCloud,
   saveDueCollectionToCloud,
   seedInitialCloudDataIfEmpty
 } from './lib/firebase';
@@ -48,9 +54,10 @@ import { ShopsListView } from './components/ShopsListView';
 import { InventoryView } from './components/InventoryView';
 import { RouteMapView } from './components/RouteMapView';
 import { AdminDashboardView } from './components/AdminDashboardView';
+import { AdminLoginGuard } from './components/AdminLoginGuard';
 import { MemoModal } from './components/MemoModal';
-import { Product, Shop, Order, UserProfile, PaymentMethod, UserRole, DueCollectionRecord, Category, AuthorizedUserEmail } from './types';
-import { CheckCircle2, AlertCircle, ExternalLink } from 'lucide-react';
+import { Product, Shop, Order, UserProfile, PaymentMethod, UserRole, DueCollectionRecord, Category, AuthorizedUserEmail, Route } from './types';
+import { CheckCircle2, AlertCircle, ExternalLink, LogIn, Lock } from 'lucide-react';
 import { usePWAInstall } from './hooks/usePWAInstall';
 
 export default function App() {
@@ -66,13 +73,14 @@ export default function App() {
   const [shops, setShops] = useState<Shop[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [routes, setRoutes] = useState<Route[]>([]);
   const [authorizedEmails, setAuthorizedEmails] = useState<AuthorizedUserEmail[]>([]);
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
 
   // Network & Auth & RBAC
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
   const [userProfile, setUserProfileState] = useState<UserProfile | null>(null);
-  const [activeSimulatedRole, setActiveSimulatedRole] = useState<UserRole>('admin');
+  const [activeSimulatedRole, setActiveSimulatedRole] = useState<UserRole>('dsr');
 
   // Sync state
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
@@ -102,6 +110,7 @@ export default function App() {
     const shps = getShops();
     const ords = getOrders();
     const cats = getCategories();
+    const rts = getRoutes();
     const auths = getAuthorizedEmails();
     const pending = getPendingSyncOrders();
     const user = getUserProfile();
@@ -110,6 +119,7 @@ export default function App() {
     setShops(shps);
     setOrders(ords);
     setCategories(cats);
+    setRoutes(rts);
     setAuthorizedEmails(auths);
     setPendingSyncCount(pending.length);
     setUserProfileState(user);
@@ -142,6 +152,7 @@ export default function App() {
     let unsubscribeProducts: (() => void) | undefined;
     let unsubscribeOrders: (() => void) | undefined;
     let unsubscribeCategories: (() => void) | undefined;
+    let unsubscribeRoutes: (() => void) | undefined;
     let unsubscribeAuthEmails: (() => void) | undefined;
 
     try {
@@ -173,6 +184,13 @@ export default function App() {
         }
       });
 
+      unsubscribeRoutes = subscribeToCloudRoutes((cloudRoutes) => {
+        if (cloudRoutes && cloudRoutes.length > 0) {
+          setRoutes(cloudRoutes);
+          cloudRoutes.forEach((r) => addOrUpdateRouteLocal(r));
+        }
+      });
+
       unsubscribeAuthEmails = subscribeToAuthorizedEmails((cloudAuths) => {
         if (cloudAuths && cloudAuths.length > 0) {
           setAuthorizedEmails(cloudAuths);
@@ -190,6 +208,7 @@ export default function App() {
       if (unsubscribeProducts) unsubscribeProducts();
       if (unsubscribeOrders) unsubscribeOrders();
       if (unsubscribeCategories) unsubscribeCategories();
+      if (unsubscribeRoutes) unsubscribeRoutes();
       if (unsubscribeAuthEmails) unsubscribeAuthEmails();
     };
   }, [reloadData]);
@@ -361,6 +380,28 @@ export default function App() {
     deleteCategoryFromCloud(categoryId).catch(() => {});
     reloadData();
     showToast('ক্যাটাগরি মুছে ফেলা হয়েছে', 'info');
+  };
+
+  // Route Handlers
+  const handleAddRoute = (route: Route) => {
+    addOrUpdateRouteLocal(route);
+    saveRouteToCloud(route).catch(() => {});
+    reloadData();
+    showToast(`রুট "${route.banglaName}" তৈরি হয়েছে!`, 'success');
+  };
+
+  const handleUpdateRoute = (route: Route) => {
+    addOrUpdateRouteLocal(route);
+    saveRouteToCloud(route).catch(() => {});
+    reloadData();
+    showToast(`রুট "${route.banglaName}" আপডেট হয়েছে!`, 'success');
+  };
+
+  const handleDeleteRoute = (routeId: string) => {
+    deleteRouteLocal(routeId);
+    deleteRouteFromCloud(routeId).catch(() => {});
+    reloadData();
+    showToast('রুট মুছে ফেলা হয়েছে', 'info');
   };
 
   // Authorized Staff Emails (Email-based RBAC) Handlers
@@ -541,112 +582,163 @@ export default function App() {
         setActiveTab={setActiveTab}
         cartCount={cartCount}
         userRole={activeSimulatedRole}
+        isLoggedIn={!!userProfile}
       />
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl mx-auto w-full px-3 sm:px-4 pt-4">
-        {activeTab === 'order' && (
-          <OrderBookingView
-            products={products}
-            shops={shops}
-            selectedShopIdProp={targetOrderShopId}
-            onOrderCreated={handleOrderCreated}
-            onAddShop={handleAddShop}
-          />
-        )}
+        {!userProfile ? (
+          <div className="max-w-md mx-auto my-12 p-8 bg-white rounded-3xl shadow-xl border border-neutral-200 text-center animate-in fade-in slide-in-from-bottom-4">
+            <div className="w-20 h-20 bg-emerald-50 text-emerald-600 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-inner">
+              <Lock className="w-10 h-10" />
+            </div>
+            <h2 className="text-2xl font-bold text-neutral-900 mb-2">স্বাগতম!</h2>
+            <p className="text-sm text-neutral-600 mb-8 leading-relaxed">
+              মুন্সী স্টোর ডিএসআর অর্ডার বুকার অ্যাপের সব ফিচার ও ডেটা সিঙ্ক ব্যবহার করতে অনুগ্রহ করে আপনার গুগল অ্যাকাউন্ট দিয়ে লগইন করুন।
+            </p>
+            <button
+              onClick={() => {
+                const btn = document.getElementById('btn-google-signin');
+                if (btn) btn.click();
+              }}
+              className="w-full py-3.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-2xl font-bold text-sm shadow-lg hover:shadow-emerald-900/20 transition-all flex items-center justify-center gap-3 cursor-pointer"
+            >
+              <LogIn className="w-5 h-5" />
+              <span>লগইন করে এগিয়ে যান</span>
+            </button>
+            <p className="mt-6 text-[11px] text-neutral-400 font-medium italic">
+              * সঠিক রোল অনুযায়ী প্যানেল দেখতে লগইন বাধ্যতামূলক
+            </p>
+          </div>
+        ) : (
+          <>
+            {activeTab === 'order' && (
+              <OrderBookingView
+                products={products}
+                shops={shops}
+                routes={routes}
+                selectedShopIdProp={targetOrderShopId}
+                onOrderCreated={handleOrderCreated}
+                onAddShop={handleAddShop}
+                onCartCountChange={(count) => setCartCount(count)}
+              />
+            )}
 
-        {activeTab === 'orders' && (
-          <OrdersListView
-            orders={orders}
-            onViewMemo={(order) => {
-              setSelectedMemoOrder(order);
-              setIsMemoOpen(true);
-            }}
-            onUpdateDeliveryStatus={handleUpdateDeliveryStatus}
-            onSyncWithSheets={handleSyncWithSheets}
-            onBackupToDrive={handleBackupToDrive}
-            isSyncing={isSyncing}
-            spreadsheetUrl={spreadsheetUrl}
-            lastDriveBackupLink={lastDriveBackupLink}
-          />
-        )}
+            {activeTab === 'orders' && (
+              <OrdersListView
+                orders={orders}
+                onViewMemo={(order) => {
+                  setSelectedMemoOrder(order);
+                  setIsMemoOpen(true);
+                }}
+                onUpdateDeliveryStatus={handleUpdateDeliveryStatus}
+                onSyncWithSheets={handleSyncWithSheets}
+                onBackupToDrive={handleBackupToDrive}
+                isSyncing={isSyncing}
+                spreadsheetUrl={spreadsheetUrl}
+                lastDriveBackupLink={lastDriveBackupLink}
+              />
+            )}
 
-        {activeTab === 'shops' && (
-          <ShopsListView
-            shops={shops}
-            onAddShop={handleAddShop}
-            onRecordDuePayment={handleRecordDuePayment}
-            onSelectShopForOrder={(shopId) => {
-              setTargetOrderShopId(shopId);
-              setActiveTab('order');
-            }}
-            onOpenMapForShop={(shopId) => {
-              setActiveTab('map');
-            }}
-          />
-        )}
+            {activeTab === 'shops' && (
+              <ShopsListView
+                shops={shops}
+                onAddShop={handleAddShop}
+                onRecordDuePayment={handleRecordDuePayment}
+                onSelectShopForOrder={(shopId) => {
+                  setTargetOrderShopId(shopId);
+                  setActiveTab('order');
+                }}
+                onOpenMapForShop={(shopId) => {
+                  setActiveTab('map');
+                }}
+              />
+            )}
 
-        {activeTab === 'map' && (
-          <RouteMapView
-            shops={shops}
-            onSelectShopForOrder={(shopId) => {
-              setTargetOrderShopId(shopId);
-              setActiveTab('order');
-            }}
-            onRecordDuePayment={handleRecordDuePayment}
-            onUpdateShopCoordinates={(shopId, lat, lng) => {
-              const targetShop = shops.find((s) => s.id === shopId);
-              if (targetShop) {
-                const updatedShop = { ...targetShop, lat, lng };
-                saveShop(updatedShop);
-                saveShopToCloud(updatedShop);
-                setShops((prev) => prev.map((s) => (s.id === shopId ? updatedShop : s)));
-                showToast(`'${targetShop.name}' এর বর্তমান জিপিএস লোকেশন আপডেট করা হয়েছে`, 'success');
-              }
-            }}
-          />
-        )}
+            {activeTab === 'map' && (
+              <RouteMapView
+                shops={shops}
+                onSelectShopForOrder={(shopId) => {
+                  setTargetOrderShopId(shopId);
+                  setActiveTab('order');
+                }}
+                onRecordDuePayment={handleRecordDuePayment}
+                onUpdateShopCoordinates={(shopId, lat, lng) => {
+                  const targetShop = shops.find((s) => s.id === shopId);
+                  if (targetShop) {
+                    const updatedShop = { ...targetShop, lat, lng };
+                    saveShop(updatedShop);
+                    saveShopToCloud(updatedShop);
+                    setShops((prev) => prev.map((s) => (s.id === shopId ? updatedShop : s)));
+                    showToast(`'${targetShop.name}' এর বর্তমান জিপিএস লোকেশন আপডেট করা হয়েছে`, 'success');
+                  }
+                }}
+              />
+            )}
 
-        {activeTab === 'inventory' && (
-          <InventoryView
-            products={products}
-            categoriesList={categories}
-            onAddProduct={handleAddProduct}
-            onAdjustStock={handleAdjustStock}
-            onOpenAdmin={() => setActiveTab('admin')}
-          />
-        )}
+            {activeTab === 'inventory' && (
+              <InventoryView
+                products={products}
+                categoriesList={categories}
+                onAddProduct={handleAddProduct}
+                onAdjustStock={handleAdjustStock}
+                onOpenAdmin={() => setActiveTab('admin')}
+              />
+            )}
 
-        {activeTab === 'admin' && (
-          <AdminDashboardView
-            products={products}
-            shops={shops}
-            orders={orders}
-            categories={categories}
-            authorizedEmails={authorizedEmails}
-            currentUser={userProfile}
-            activeSimulatedRole={activeSimulatedRole}
-            onAddProduct={handleAddProduct}
-            onUpdateProduct={handleUpdateProduct}
-            onDeleteProduct={handleDeleteProduct}
-            onAdjustStock={handleAdjustStock}
-            onAddCategory={handleAddCategory}
-            onUpdateCategory={handleUpdateCategory}
-            onDeleteCategory={handleDeleteCategory}
-            onAddAuthorizedEmail={handleAddAuthorizedEmail}
-            onUpdateAuthorizedEmail={handleUpdateAuthorizedEmail}
-            onDeleteAuthorizedEmail={handleDeleteAuthorizedEmail}
-            onSimulatedRoleChange={(role) => {
-              setActiveSimulatedRole(role);
-              showToast(`${role === 'admin' ? 'এডমিন' : role === 'sr' ? 'এসআর' : 'ডিএসআর'} রোল ভিউ সক্রিয়`, 'info');
-            }}
-            onSyncWithSheets={handleSyncWithSheets}
-            onBackupToDrive={handleBackupToDrive}
-            isSyncing={isSyncing}
-            spreadsheetUrl={spreadsheetUrl}
-            lastDriveBackupLink={lastDriveBackupLink}
-            onNavigateTab={(tab) => setActiveTab(tab)}
-          />
+            {activeTab === 'admin' && (
+              <AdminLoginGuard
+                currentUser={userProfile}
+                activeSimulatedRole={activeSimulatedRole}
+                onLoginSuccess={(user) => {
+                  setUserProfileState(user);
+                  saveUserProfile(user);
+                  if (user?.role) {
+                    setActiveSimulatedRole(user.role);
+                  }
+                  showToast(`এ্যাডমিন '${user.displayName || user.email}' হিসেবে সফলভাবে লগইন হয়েছে!`, 'success');
+                }}
+                onSwitchToAdminRole={() => {
+                  setActiveSimulatedRole('admin');
+                  showToast('এ্যাডমিন রোলে রূপান্তর করা হয়েছে', 'info');
+                }}
+              >
+                <AdminDashboardView
+                  products={products}
+                  shops={shops}
+                  orders={orders}
+                  categories={categories}
+                  authorizedEmails={authorizedEmails}
+                  routes={routes}
+                  currentUser={userProfile}
+                  activeSimulatedRole={activeSimulatedRole}
+                  onAddProduct={handleAddProduct}
+                  onUpdateProduct={handleUpdateProduct}
+                  onDeleteProduct={handleDeleteProduct}
+                  onAdjustStock={handleAdjustStock}
+                  onAddCategory={handleAddCategory}
+                  onUpdateCategory={handleUpdateCategory}
+                  onDeleteCategory={handleDeleteCategory}
+                  onAddRoute={handleAddRoute}
+                  onUpdateRoute={handleUpdateRoute}
+                  onDeleteRoute={handleDeleteRoute}
+                  onAddAuthorizedEmail={handleAddAuthorizedEmail}
+                  onUpdateAuthorizedEmail={handleUpdateAuthorizedEmail}
+                  onDeleteAuthorizedEmail={handleDeleteAuthorizedEmail}
+                  onSimulatedRoleChange={(role) => {
+                    setActiveSimulatedRole(role);
+                    showToast(`${role === 'admin' ? 'এডমিন' : role === 'sr' ? 'এসআর' : 'ডিএসআর'} রোল ভিউ সক্রিয়`, 'info');
+                  }}
+                  onSyncWithSheets={handleSyncWithSheets}
+                  onBackupToDrive={handleBackupToDrive}
+                  isSyncing={isSyncing}
+                  spreadsheetUrl={spreadsheetUrl}
+                  lastDriveBackupLink={lastDriveBackupLink}
+                  onNavigateTab={(tab) => setActiveTab(tab)}
+                />
+              </AdminLoginGuard>
+            )}
+          </>
         )}
       </main>
 

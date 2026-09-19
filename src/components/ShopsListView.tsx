@@ -10,9 +10,11 @@ import {
   Calendar,
   CheckCircle,
   ShoppingBag,
-  ArrowRight
+  ArrowRight,
+  ExternalLink
 } from 'lucide-react';
 import { Shop, PaymentMethod } from '../types';
+import { AddShopModal } from './AddShopModal';
 
 interface ShopsListViewProps {
   shops: Shop[];
@@ -40,11 +42,6 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
 
   // Add shop modal
   const [isAddOpen, setIsAddOpen] = useState(false);
-  const [newShopName, setNewShopName] = useState('');
-  const [newOwner, setNewOwner] = useState('');
-  const [newPhone, setNewPhone] = useState('');
-  const [newAddress, setNewAddress] = useState('');
-  const [newRoute, setNewRoute] = useState('চকবাজার রুট');
 
   // Distinct routes
   const routes = useMemo(() => {
@@ -82,30 +79,6 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
     setCollectingShop(null);
     setCollectAmount('');
     setCollectNotes('');
-  };
-
-  const handleCreateShop = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newShopName || !newPhone) return;
-
-    const created: Shop = {
-      id: `shop-${Date.now()}`,
-      name: newShopName,
-      ownerName: newOwner || 'প্রোপ্রাইটর',
-      phone: newPhone,
-      address: newAddress || 'ঠিকানা দেওয়া নেই',
-      routeArea: newRoute,
-      previousDue: 0,
-      category: 'সাধারণ মুদি শপ',
-      lastVisitDate: new Date().toISOString().split('T')[0],
-    };
-
-    onAddShop(created);
-    setIsAddOpen(false);
-    setNewShopName('');
-    setNewOwner('');
-    setNewPhone('');
-    setNewAddress('');
   };
 
   return (
@@ -210,6 +183,23 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
                       <Calendar className="w-3.5 h-3.5" />
                       <span>সর্বশেষ ভিজিট: {shop.lastVisitDate}</span>
                     </p>
+                  )}
+                  {shop.lat !== undefined && shop.lng !== undefined && (
+                    <div className="flex items-center justify-between gap-1 pt-1 mt-1 border-t border-dashed border-neutral-200 text-[10px]">
+                      <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                        <MapPin className="w-3 h-3 text-emerald-600" />
+                        জিপিএস: {shop.lat.toFixed(4)}, {shop.lng.toFixed(4)}
+                      </span>
+                      <a
+                        href={`https://www.google.com/maps?q=${shop.lat},${shop.lng}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-emerald-800 hover:underline font-bold flex items-center gap-0.5"
+                      >
+                        <span>গুগল ম্যাপ</span>
+                        <ExternalLink className="w-2.5 h-2.5" />
+                      </a>
+                    </div>
                   )}
                 </div>
               </div>
@@ -342,92 +332,14 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
         </div>
       )}
 
-      {/* Add New Shop Modal */}
-      {isAddOpen && (
-        <div className="fixed inset-0 z-50 bg-neutral-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in">
-          <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl border border-neutral-200">
-            <h3 className="font-bold text-base text-neutral-900 mb-3 flex items-center gap-2">
-              <Store className="w-5 h-5 text-emerald-700" />
-              নতুন দোকান যুক্ত করুন
-            </h3>
-            <form onSubmit={handleCreateShop} className="space-y-3 text-xs">
-              <div>
-                <label className="font-bold text-neutral-700 block mb-1">দোকানের নাম *</label>
-                <input
-                  type="text"
-                  required
-                  value={newShopName}
-                  onChange={(e) => setNewShopName(e.target.value)}
-                  placeholder="যেমন: মেসার্স জনতা স্টোর"
-                  className="w-full p-2 border border-neutral-300 rounded-xl"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-neutral-700 block mb-1">প্রোপ্রাইটরের নাম</label>
-                <input
-                  type="text"
-                  value={newOwner}
-                  onChange={(e) => setNewOwner(e.target.value)}
-                  placeholder="যেমন: হাজী সাইফুল ইসলাম"
-                  className="w-full p-2 border border-neutral-300 rounded-xl"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-neutral-700 block mb-1">মোবাইল নম্বর *</label>
-                <input
-                  type="tel"
-                  required
-                  value={newPhone}
-                  onChange={(e) => setNewPhone(e.target.value)}
-                  placeholder="০১৭xxxxxxxx"
-                  className="w-full p-2 border border-neutral-300 rounded-xl"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-neutral-700 block mb-1">রুট / এলাকা *</label>
-                <input
-                  type="text"
-                  required
-                  value={newRoute}
-                  onChange={(e) => setNewRoute(e.target.value)}
-                  placeholder="যেমন: চকবাজার রুট"
-                  className="w-full p-2 border border-neutral-300 rounded-xl"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-neutral-700 block mb-1">দোকানের ঠিকানা</label>
-                <input
-                  type="text"
-                  value={newAddress}
-                  onChange={(e) => setNewAddress(e.target.value)}
-                  placeholder="রোড নং ৪, মার্কেট চত্বর"
-                  className="w-full p-2 border border-neutral-300 rounded-xl"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setIsAddOpen(false)}
-                  className="px-4 py-2 text-neutral-600 hover:bg-neutral-100 rounded-xl font-semibold"
-                >
-                  বাতিল
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl font-bold shadow"
-                >
-                  সংরক্ষণ করুন
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {/* Add New Shop Modal with Map Location & Route Name */}
+      <AddShopModal
+        isOpen={isAddOpen}
+        onClose={() => setIsAddOpen(false)}
+        onSaveShop={onAddShop}
+        existingShops={shops}
+        initialRoute={selectedRoute !== 'all' ? selectedRoute : undefined}
+      />
     </div>
   );
 };

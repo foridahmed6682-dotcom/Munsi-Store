@@ -47,7 +47,7 @@ export const Header: React.FC<HeaderProps> = ({
   installPrompt = null,
   onInstallApp = () => {},
   isAppInstalled = false,
-  activeRole = 'admin',
+  activeRole = 'dsr',
   onSwitchRole,
   onOpenAdmin,
 }) => {
@@ -208,8 +208,8 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </button>
 
-          {/* Admin Panel Quick Access Button */}
-          {onOpenAdmin && (
+          {/* Admin Panel Quick Access Button (Only for Admins) */}
+          {onOpenAdmin && currentRole === 'admin' && (
             <button
               id="btn-admin-panel-header"
               onClick={onOpenAdmin}

@@ -105,6 +105,12 @@ service cloud.firestore {
              data.banglaName is string && data.banglaName.size() > 0 && data.banglaName.size() <= 100;
     }
 
+    function isValidRoute(data) {
+      return data.id is string && isValidId(data.id) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+             data.banglaName is string && data.banglaName.size() > 0 && data.banglaName.size() <= 200;
+    }
+
     // 1. Users Collection
     match /users/{userId} {
       allow get, list: if true;
@@ -167,6 +173,12 @@ service cloud.firestore {
       allow create: if isValidDueCollection(request.resource.data);
       allow update: if isAdmin();
       allow delete: if isAdmin();
+    }
+
+    // 9. Routes Collection
+    match /routes/{routeId} {
+      allow get, list: if true;
+      allow create, update, delete: if isAdmin() || isSignedIn();
     }
   }
 }

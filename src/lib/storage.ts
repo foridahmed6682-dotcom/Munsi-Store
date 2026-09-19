@@ -1,14 +1,23 @@
-import { Product, Shop, Order, DueCollectionRecord, DailyMetrics, Category, AuthorizedUserEmail } from '../types';
+import { Product, Shop, Order, DueCollectionRecord, DailyMetrics, Category, AuthorizedUserEmail, Route } from '../types';
 
 const STORAGE_KEYS = {
   SHOPS: 'dsr_shops_v1',
   PRODUCTS: 'dsr_products_v1',
   CATEGORIES: 'dsr_categories_v1',
+  ROUTES: 'dsr_routes_v1',
   AUTHORIZED_EMAILS: 'dsr_authorized_emails_v1',
   ORDERS: 'dsr_orders_v1',
   COLLECTIONS: 'dsr_collections_v1',
   LAST_MEMO_NUM: 'dsr_last_memo_v1',
 };
+
+export const DEFAULT_ROUTES: Route[] = [
+  { id: 'route-1', name: 'Chawkbazar', banglaName: 'চকবাজার রুট', createdAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'route-2', name: 'Mirpur-10', banglaName: 'মিরপুর-১০ রুট', createdAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'route-3', name: 'Gulistan', banglaName: 'গুলিস্তান রুট', createdAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'route-4', name: 'Dhanmondi', banglaName: 'ধানমন্ডি রুট', createdAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'route-5', name: 'Uttara', banglaName: 'উত্তরা রুট', createdAt: '2026-01-01T00:00:00.000Z' },
+];
 
 export const DEFAULT_CATEGORIES: Category[] = [
   { id: 'cat-oil', name: 'Edible Oil & Ghee', banglaName: 'তেল ও ঘি', description: 'সয়াবিন তেল, সরিষার তেল ও ঘি', color: '#f59e0b', icon: 'Droplet' },
@@ -265,6 +274,42 @@ export function deleteCategory(categoryId: string) {
   const categories = getCategories();
   const filtered = categories.filter((c) => c.id !== categoryId);
   saveCategories(filtered);
+}
+
+// Routes Management
+export function getRoutes(): Route[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.ROUTES);
+    if (!raw) {
+      localStorage.setItem(STORAGE_KEYS.ROUTES, JSON.stringify(DEFAULT_ROUTES));
+      return DEFAULT_ROUTES;
+    }
+    return JSON.parse(raw);
+  } catch {
+    return DEFAULT_ROUTES;
+  }
+}
+
+export function saveRoutes(routes: Route[]) {
+  localStorage.setItem(STORAGE_KEYS.ROUTES, JSON.stringify(routes));
+}
+
+export function addOrUpdateRoute(route: Route): Route {
+  const routes = getRoutes();
+  const idx = routes.findIndex((r) => r.id === route.id || r.name.toLowerCase() === route.name.toLowerCase() || r.banglaName === route.banglaName);
+  if (idx >= 0) {
+    routes[idx] = { ...routes[idx], ...route };
+  } else {
+    routes.push(route);
+  }
+  saveRoutes(routes);
+  return route;
+}
+
+export function deleteRoute(routeId: string) {
+  const routes = getRoutes();
+  const filtered = routes.filter((r) => r.id !== routeId);
+  saveRoutes(filtered);
 }
 
 // Authorized Staff Emails Management

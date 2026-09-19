@@ -22,8 +22,8 @@ import {
   getDocFromServer
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { AppUser, UserRole, Shop, Product, Order, DueCollectionRecord, Category, AuthorizedUserEmail } from '../types';
-import { DEFAULT_CATEGORIES, DEFAULT_AUTHORIZED_EMAILS, DEFAULT_PRODUCTS, DEFAULT_SHOPS } from './storage';
+import { AppUser, UserRole, Shop, Product, Order, DueCollectionRecord, Category, AuthorizedUserEmail, Route } from '../types';
+import { DEFAULT_CATEGORIES, DEFAULT_AUTHORIZED_EMAILS, DEFAULT_PRODUCTS, DEFAULT_SHOPS, DEFAULT_ROUTES } from './storage';
 
 export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
@@ -468,6 +468,40 @@ export async function deleteCategoryFromCloud(categoryId: string) {
   }
 }
 
+// Route Cloud Methods
+export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
+  const path = 'routes';
+  return onSnapshot(
+    collection(db, path),
+    (snapshot) => {
+      const list: Route[] = [];
+      snapshot.forEach((d) => list.push(d.data() as Route));
+      onData(list);
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, path);
+    }
+  );
+}
+
+export async function saveRouteToCloud(route: Route) {
+  const path = `routes/${route.id}`;
+  try {
+    await setDoc(doc(db, 'routes', route.id), route);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function deleteRouteFromCloud(routeId: string) {
+  const path = `routes/${routeId}`;
+  try {
+    await deleteDoc(doc(db, 'routes', routeId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
 // Authorized Email Whitelist Cloud Methods
 export function subscribeToAuthorizedEmails(onData: (emails: AuthorizedUserEmail[]) => void) {
   const path = 'authorizedEmails';
@@ -549,6 +583,14 @@ export async function seedInitialCloudDataIfEmpty() {
     if (shopSnap.empty) {
       for (const shop of DEFAULT_SHOPS) {
         await setDoc(doc(db, 'shops', shop.id), shop);
+      }
+    }
+
+    // 5. Routes
+    const routeSnap = await getDocs(collection(db, 'routes'));
+    if (routeSnap.empty) {
+      for (const route of DEFAULT_ROUTES) {
+        await setDoc(doc(db, 'routes', route.id), route);
       }
     }
   } catch (err) {
