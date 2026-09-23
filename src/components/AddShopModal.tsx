@@ -10,7 +10,10 @@ import {
   ExternalLink,
   Plus,
   Compass,
-  AlertCircle
+  AlertCircle,
+  Loader2,
+  RotateCw,
+  Sparkles
 } from 'lucide-react';
 import { Shop, Route } from '../types';
 
@@ -22,6 +25,64 @@ interface AddShopModalProps {
   routes?: Route[];
   initialRoute?: string;
   editShop?: Shop | null;
+}
+
+// Helper to format reverse geocoded address nicely for Bangladesh context
+function formatReverseGeocode(data: any): string {
+  if (!data) return '';
+  const addr = data.address;
+  if (!addr) {
+    if (data.display_name) {
+      return data.display_name.split(', ').slice(0, 4).join(', ');
+    }
+    return '';
+  }
+
+  const parts: string[] = [];
+
+  // 1. Point of interest / shop / landmark / building / market
+  const landmark = addr.shop || addr.amenity || addr.building || addr.retail || addr.commercial || addr.office;
+  if (landmark && typeof landmark === 'string' && !parts.includes(landmark)) {
+    parts.push(landmark);
+  }
+
+  // 2. Road / Street / Lane
+  const road = addr.road || addr.street || addr.footway || addr.path;
+  if (road && typeof road === 'string' && !parts.includes(road)) {
+    parts.push(road);
+  }
+
+  // 3. Mohalla / Neighbourhood / Quarter / Village / Residential
+  const area = addr.neighbourhood || addr.quarter || addr.suburb || addr.residential || addr.village;
+  if (area && typeof area === 'string' && !parts.includes(area)) {
+    parts.push(area);
+  }
+
+  // 4. City District / Police Station / Thana / Ward / Sub-district
+  const district = addr.city_district || addr.subdistrict || addr.borough || addr.ward;
+  if (district && typeof district === 'string' && !parts.includes(district)) {
+    parts.push(district);
+  }
+
+  // 5. City / Municipality / Town
+  const city = addr.city || addr.town || addr.municipality || addr.county;
+  if (city && typeof city === 'string' && !parts.includes(city)) {
+    parts.push(city);
+  }
+
+  if (parts.length > 0) {
+    return parts.join(', ');
+  }
+
+  if (data.display_name) {
+    const rawParts = data.display_name.split(', ');
+    const filtered = rawParts.filter(
+      (p: string) => !['বাংলাদেশ', 'Bangladesh'].includes(p.trim()) && !/^\d{4,5}$/.test(p.trim())
+    );
+    return filtered.slice(0, 4).join(', ');
+  }
+
+  return '';
 }
 
 export const AddShopModal: React.FC<AddShopModalProps> = ({
@@ -40,6 +101,8 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
   const [isCustomRoute, setIsCustomRoute] = useState(false);
   const [customRouteInput, setCustomRouteInput] = useState('');
   const [address, setAddress] = useState('');
+  const [isFetchingAddress, setIsFetchingAddress] = useState(false);
+  const [addressAutoFilled, setAddressAutoFilled] = useState(false);
   const [category, setCategory] = useState('জেনারেল স্টোর / মুদি');
 
   // Location State
@@ -97,6 +160,8 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
           setRouteArea(existingRoute || availableRouteNames[0] || 'চকবাজার রুট');
         }
         setAddress(editShop.address || '');
+        setAddressAutoFilled(false);
+        setIsFetchingAddress(false);
         setCategory(editShop.category || 'জেনারেল স্টোর / মুদি');
         setLat(editShop.lat);
         setLng(editShop.lng);
@@ -112,6 +177,8 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
         setIsCustomRoute(false);
         setCustomRouteInput('');
         setAddress('');
+        setAddressAutoFilled(false);
+        setIsFetchingAddress(false);
         setCategory('জেনারেল স্টোর / মুদি');
         setLat(undefined);
         setLng(undefined);
@@ -131,6 +198,41 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
       }
     };
   }, []);
+
+  // Reverse geocode latitude and longitude to human-readable address in Bengali
+  const fetchAddressFromCoords = async (latitude: number, longitude: number, overwrite = true) => {
+    setIsFetchingAddress(true);
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6500);
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1&accept-language=bn,en`,
+        {
+          signal: controller.signal,
+          headers: {
+            'Accept-Language': 'bn,en',
+          },
+        }
+      );
+      clearTimeout(timeoutId);
+
+      if (res.ok) {
+        const data = await res.json();
+        const formatted = formatReverseGeocode(data);
+        if (formatted) {
+          if (overwrite || !address.trim()) {
+            setAddress(formatted);
+            setAddressAutoFilled(true);
+            setLocationSuccessText(`ম্যাপ লোকেশন ও ঠিকানা অটোমেটিক সেট হয়েছে: ${formatted}`);
+          }
+        }
+      }
+    } catch (err) {
+      console.log('Reverse geocoding error or timeout:', err);
+    } finally {
+      setIsFetchingAddress(false);
+    }
+  };
 
   // Initialize or update Map when showMapPicker becomes true
   useEffect(() => {
@@ -217,7 +319,7 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
           map.invalidateSize();
         }, 300);
 
-        // On map click, move marker
+        // On map click, move marker and auto-fill address
         map.on('click', (e: L.LeafletMouseEvent) => {
           const clickLat = Number(e.latlng.lat.toFixed(6));
           const clickLng = Number(e.latlng.lng.toFixed(6));
@@ -226,9 +328,11 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
           setLng(clickLng);
           setLocationSuccessText(`ম্যাপে লোকেশন পয়েন্টার নির্ধারিত হয়েছে (${clickLat}, ${clickLng})`);
           setLocationError(null);
+          // Auto-fetch address from clicked coordinates
+          fetchAddressFromCoords(clickLat, clickLng, true);
         });
 
-        // On marker drag
+        // On marker drag, move marker and auto-fill address
         initialMarker.on('dragend', () => {
           const pos = initialMarker.getLatLng();
           const dragLat = Number(pos.lat.toFixed(6));
@@ -237,6 +341,8 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
           setLng(dragLng);
           setLocationSuccessText(`ম্যাপে লোকেশন পয়েন্টার নির্ধারিত হয়েছে (${dragLat}, ${dragLng})`);
           setLocationError(null);
+          // Auto-fetch address from dragged coordinates
+          fetchAddressFromCoords(dragLat, dragLng, true);
         });
       } else {
         mapInstanceRef.current.invalidateSize();
@@ -271,6 +377,9 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
         setLng(detectedLng);
         setLocationSuccessText(`জিপিএস লোকেশন সংরক্ষিত হয়েছে (নির্ভুলতা: ±${accuracy} মি.)`);
         setIsLocating(false);
+
+        // Auto-fetch address from detected GPS location
+        fetchAddressFromCoords(detectedLat, detectedLng, true);
 
         // Update map if opened
         if (mapInstanceRef.current && markerRef.current) {
@@ -513,18 +622,67 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
             )}
           </div>
 
-          {/* Address */}
+          {/* Address with Automatic Map Location Reverse Geocode Autofill */}
           <div>
-            <label className="font-bold text-neutral-800 block mb-1">
-              দোকানের ঠিকানা / ল্যান্ডমার্ক
-            </label>
-            <input
-              type="text"
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-              placeholder="রোড নং ৪, বাজার চত্বর, ঢাকা"
-              className="w-full p-2.5 border border-neutral-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-medium text-neutral-900"
-            />
+            <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
+              <label className="font-bold text-neutral-800 flex items-center gap-1.5 text-xs sm:text-sm">
+                <MapPin className="w-3.5 h-3.5 text-emerald-700" />
+                <span>দোকানের ঠিকানা / ল্যান্ডমার্ক</span>
+              </label>
+
+              {isFetchingAddress ? (
+                <span className="text-[10px] text-blue-700 font-bold flex items-center gap-1 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200 animate-pulse">
+                  <Loader2 className="w-3 h-3 animate-spin text-blue-600" />
+                  <span>ম্যাপ থেকে ঠিকানা লোড হচ্ছে...</span>
+                </span>
+              ) : addressAutoFilled ? (
+                <span className="text-[10px] text-emerald-800 font-bold flex items-center gap-1 bg-emerald-100 px-2 py-0.5 rounded-full border border-emerald-300">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                  <span>ম্যাপ অনুযায়ী অটো-ইনপুট হয়েছে</span>
+                </span>
+              ) : (
+                <span className="text-[10px] text-neutral-500 font-medium">
+                  ম্যাপে ক্লিক করলে ঠিকানা অটো বসবে
+                </span>
+              )}
+            </div>
+
+            <div className="relative">
+              <input
+                type="text"
+                value={address}
+                onChange={(e) => {
+                  setAddress(e.target.value);
+                  setAddressAutoFilled(false);
+                }}
+                placeholder="ম্যাপে ক্লিক করলে বা জিপিএস অন করলে ঠিকানা নিজে থেকেই বসে যাবে..."
+                className={`w-full p-2.5 sm:p-3 border rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-medium text-neutral-900 pr-26 text-xs sm:text-sm transition-all ${
+                  addressAutoFilled
+                    ? 'bg-emerald-50/50 border-emerald-400 font-bold'
+                    : 'border-neutral-300 bg-white'
+                }`}
+              />
+
+              {lat && lng && (
+                <button
+                  type="button"
+                  onClick={() => fetchAddressFromCoords(lat, lng, true)}
+                  disabled={isFetchingAddress}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 px-2 py-1 bg-neutral-100 hover:bg-emerald-100 active:bg-emerald-200 text-neutral-700 hover:text-emerald-800 rounded-lg text-[10px] font-bold border border-neutral-300 transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                  title="ম্যাপের পয়েন্টার অনুযায়ী ঠিকানা রিফ্রেশ করুন"
+                >
+                  <RotateCw className={`w-3 h-3 ${isFetchingAddress ? 'animate-spin text-emerald-700' : ''}`} />
+                  <span>ম্যাপের ঠিকানা</span>
+                </button>
+              )}
+            </div>
+
+            {addressAutoFilled && (
+              <p className="text-[10px] text-emerald-700 mt-1 font-medium flex items-center gap-1">
+                <Sparkles className="w-3 h-3 text-emerald-600 shrink-0" />
+                <span>ম্যাপ লোকেশন থেকে স্বয়ংক্রিয়ভাবে সংগৃহীত। প্রয়োজনে সম্পাদনা করতে পারেন।</span>
+              </p>
+            )}
           </div>
 
           {/* MAPS LOCATION INTEGRATION (User requested: "দোকানের নাম লেখার সময় লোকেশন সেভ করা যাবে ম্যাপসের মাধ্যমে") */}
