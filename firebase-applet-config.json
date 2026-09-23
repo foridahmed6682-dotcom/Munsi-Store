@@ -1,12 +1,12 @@
 {
-  "projectId": "pragmatic-semiotics-x8gvj",
-  "appId": "1:82976979442:web:7ef6c7b7d0e370afde536b",
-  "apiKey": "AIzaSyD1YYpn5cboC2hDLWWmuxFqenaA6w0Nn6g",
-  "authDomain": "pragmatic-semiotics-x8gvj.firebaseapp.com",
+  "projectId": "munsi-store",
+  "appId": "1:568646225139:web:44c5095e438863d8fb7b86",
+  "apiKey": "AIzaSyCc8vUJdYT2BBPZaI4ylIy61mWT5MvBZNI",
+  "authDomain": "munsi-store.firebaseapp.com",
   "firestoreDatabaseId": "ai-studio-shoporderbookeri-a050f7ec-14f6-48a4-a13f-2a1a58a6df8b",
-  "storageBucket": "pragmatic-semiotics-x8gvj.firebasestorage.app",
-  "messagingSenderId": "82976979442",
+  "storageBucket": "munsi-store.firebasestorage.app",
+  "messagingSenderId": "568646225139",
   "measurementId": "",
-  "oAuthClientId": "82976979442-v6j41l8joif08a5678mem405p7nbhgc6.apps.googleusercontent.com",
+  "oAuthClientId": "568646225139-h2dgf1boasggiidh175qkogh9a64oc2f.apps.googleusercontent.com",
   "recaptchaSiteKey": ""
 }

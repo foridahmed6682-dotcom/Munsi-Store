@@ -180,5 +180,12 @@ service cloud.firestore {
       allow get, list: if true;
       allow create, update, delete: if isAdmin() || isSignedIn();
     }
+
+    // 10. Settings Collection (Business Settings)
+    match /settings/{settingId} {
+      allow get, list: if true;
+      allow create, update: if isAdmin() || isSignedIn();
+      allow delete: if isAdmin();
+    }
   }
 }
