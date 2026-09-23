@@ -226,114 +226,116 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
-          {/* PWA Install Button (Always visible if not yet installed, hides completely once installed) */}
+          {/* PWA Install Button: strictly in top navigation bar, always visible if not installed, completely hidden once installed */}
           {!isAppInstalled && (
             <button
               id="btn-pwa-install-header"
               type="button"
               onClick={() => {
-                if (installPrompt) {
+                const promptEvent = installPrompt || (window as any).__pwaInstallPrompt;
+                if (promptEvent && typeof promptEvent.prompt === 'function') {
                   onInstallApp();
                 } else {
-                  // Fallback: If browser already consumed prompt or on iOS/Safari, show quick guidance
                   setShowIOSModal(true);
                 }
               }}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-neutral-950 text-xs font-bold shadow-sm transition-all animate-pulse"
-              title="ফোনে বা কম্পিউটারে অ্যাপ ইনস্টল করুন"
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-lg bg-linear-to-r from-amber-400 via-amber-300 to-yellow-400 hover:from-amber-300 hover:to-yellow-300 text-neutral-950 text-xs font-black shadow-md border border-amber-300/80 transition-all active:scale-95 cursor-pointer shrink-0 animate-pulse"
+              title="আপনার মোবাইলে সরাসরি অ্যান্ড্রয়েড অ্যাপ হিসেবে ইনস্টল করুন"
             >
-              <Download className="w-3.5 h-3.5 text-neutral-950" />
-              <span className="text-[11px] font-bold">ইনস্টল অ্যাপ</span>
+              <Download className="w-3.5 h-3.5 text-neutral-950 stroke-[2.5]" />
+              <span className="text-xs font-black tracking-tight">অ্যাপ ইনস্টল</span>
             </button>
           )}
 
-          {/* iOS / Browser Install Help Modal */}
+          {/* Android / Browser Install Help Modal (when browser prompt is delayed or in iframe) */}
           {showIOSModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 animate-in fade-in backdrop-blur-xs">
-              <div className="w-full max-w-sm rounded-3xl bg-neutral-900 text-white p-6 shadow-2xl border border-neutral-800">
-                <div className="flex items-center justify-between pb-3.5 border-b border-neutral-800">
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 animate-in fade-in backdrop-blur-xs">
+              <div className="w-full max-w-sm rounded-3xl bg-neutral-900 text-white p-5 shadow-2xl border border-neutral-800">
+                <div className="flex items-center justify-between pb-3 border-b border-neutral-800">
                   <div className="flex items-center gap-2.5">
-                    <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 flex items-center justify-center">
-                      <Download className="w-5 h-5 text-emerald-400" />
+                    <div className="w-9 h-9 rounded-2xl bg-amber-400/20 flex items-center justify-center">
+                      <Download className="w-5 h-5 text-amber-400" />
                     </div>
                     <div>
-                      <h3 className="text-sm font-black text-neutral-100">অ্যান্ড্রয়েড ফোন ডাউনলোড ও ইনস্টল</h3>
-                      <p className="text-[10px] text-neutral-400">সহজ ১-মিনিট গাইড</p>
+                      <h3 className="text-sm font-black text-neutral-100">অ্যান্ড্রয়েড ফোনে অ্যাপ ইনস্টল</h3>
+                      <p className="text-[10px] text-neutral-400">প্লে স্টোরের মতো সরাসরি ইনস্টল</p>
                     </div>
                   </div>
                   <button
                     onClick={() => setShowIOSModal(false)}
-                    className="p-1.5 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-xl text-sm transition-colors"
+                    className="p-1 text-neutral-400 hover:text-white rounded-lg text-sm cursor-pointer"
                   >
                     ✕
                   </button>
                 </div>
 
-                <div className="mt-4 space-y-3 text-xs">
-                  {/* Step 1 */}
-                  <div className="flex gap-3 p-3 bg-neutral-800/40 rounded-2xl border border-neutral-800">
-                    <div className="w-6 h-6 rounded-full bg-emerald-500 text-neutral-950 font-black flex items-center justify-center text-xs shrink-0">
+                <div className="mt-3.5 space-y-2.5 text-xs">
+                  <div className="flex gap-2.5 p-2.5 bg-neutral-800/60 rounded-xl border border-neutral-800">
+                    <div className="w-5 h-5 rounded-full bg-amber-400 text-neutral-950 font-black flex items-center justify-center text-[10px] shrink-0">
                       ১
                     </div>
                     <div className="space-y-0.5">
                       <p className="font-extrabold text-neutral-200">ক্রোম ব্রাউজার মেনু</p>
                       <p className="text-neutral-400 text-[11px]">
-                        আপনার মোবাইলের একদম উপরে ডান কোণায় থাকা থ্রি-ডট (<strong className="text-emerald-400 text-sm">⋮</strong>) মেনুতে ক্লিক করুন।
+                        ব্রাউজারের একদম উপরে ডান কোণায় থাকা থ্রি-ডট (<strong className="text-amber-400 text-sm">⋮</strong>) মেনুতে চাপ দিন।
                       </p>
                     </div>
                   </div>
 
-                  {/* Step 2 */}
-                  <div className="flex gap-3 p-3 bg-neutral-800/40 rounded-2xl border border-neutral-800">
-                    <div className="w-6 h-6 rounded-full bg-emerald-500 text-neutral-950 font-black flex items-center justify-center text-xs shrink-0">
+                  <div className="flex gap-2.5 p-2.5 bg-neutral-800/60 rounded-xl border border-neutral-800">
+                    <div className="w-5 h-5 rounded-full bg-amber-400 text-neutral-950 font-black flex items-center justify-center text-[10px] shrink-0">
                       ২
                     </div>
                     <div className="space-y-0.5">
-                      <p className="font-extrabold text-neutral-200">ইনস্টল বাটনে ক্লিক</p>
+                      <p className="font-extrabold text-neutral-200">"Install app" বা "ইনস্টল করুন"</p>
                       <p className="text-neutral-400 text-[11px]">
-                        মেনু থেকে নিচের দিকে স্ক্রোল করে <strong className="text-emerald-400">"Install app"</strong> অথবা <strong className="text-emerald-400">"Add to Home screen"</strong> (হোম স্ক্রিনে যোগ করুন) এ ক্লিক করুন।
+                        মেনু থেকে <strong className="text-amber-400 font-bold">"Install app"</strong> অথবা <strong className="text-amber-400 font-bold">"Add to Home screen"</strong> এ চাপ দিন।
                       </p>
                     </div>
                   </div>
 
-                  {/* Step 3 */}
-                  <div className="flex gap-3 p-3 bg-neutral-800/40 rounded-2xl border border-neutral-800">
-                    <div className="w-6 h-6 rounded-full bg-emerald-500 text-neutral-950 font-black flex items-center justify-center text-xs shrink-0">
+                  <div className="flex gap-2.5 p-2.5 bg-neutral-800/60 rounded-xl border border-neutral-800">
+                    <div className="w-5 h-5 rounded-full bg-amber-400 text-neutral-950 font-black flex items-center justify-center text-[10px] shrink-0">
                       ৩
                     </div>
                     <div className="space-y-0.5">
-                      <p className="font-extrabold text-neutral-200">স্বয়ংক্রিয় ইনস্টল</p>
+                      <p className="font-extrabold text-neutral-200">স্বয়ংক্রিয় ডাউনলোড ও ইনস্টল</p>
                       <p className="text-neutral-400 text-[11px]">
-                        কনফার্মেশনে ক্লিক করলেই অ্যাপটি অ্যান্ড্রয়েড অ্যাপের মতো সরাসরি আপনার ফোনের স্ক্রিনে ডাউনলোড ও ইনস্টল হয়ে যাবে!
+                        "Install" চাপলেই এটি সরাসরি আপনার অ্যান্ড্রয়েড অ্যাপ ড্রয়ার ও স্ক্রিনে ডাউনলোড হয়ে যাবে এবং প্লে স্টোর অ্যাপের মতো ফুলস্ক্রিন চলবে।
                       </p>
                     </div>
                   </div>
 
-                  {/* Note about iOS */}
-                  <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-2xl text-[11px] text-amber-200">
-                    <strong>🍎 আইফোন ইউজারদের জন্য:</strong> সাফারি ব্রাউজারে নিচে থাকা Share আইকনে (শেয়ার বাটন ⎋) ক্লিক করে <strong>"Add to Home Screen"</strong> এ ক্লিক করুন।
-                  </div>
+                  {typeof window !== 'undefined' && window.self !== window.top && (
+                    <div className="p-2.5 bg-blue-500/10 border border-blue-500/30 rounded-xl text-[11px] text-blue-200 flex items-center justify-between gap-2">
+                      <span>ব্রাউজারে সরাসরি নতুন উইন্ডোতে খুলুন:</span>
+                      <a
+                        href={window.location.href}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-2 py-1 bg-blue-500 text-neutral-950 font-bold rounded-lg text-[10px] shrink-0"
+                      >
+                        নতুন ট্যাবে ওপেন
+                      </a>
+                    </div>
+                  )}
                 </div>
 
-                <div className="mt-5 flex gap-2">
+                <div className="mt-4 flex gap-2">
                   <button
                     type="button"
-                    onClick={() => {
-                      if (installPrompt) {
-                        onInstallApp();
-                      } else {
-                        alert("অনুগ্রহ করে আপনার ব্রাউজারের ডানদিকের ৩-ডট (⋮) মেনু থেকে 'Install App' অথবা 'Add to Home Screen' এ ক্লিক করে ইনস্টল করুন।");
-                      }
+                    onClick={async () => {
                       setShowIOSModal(false);
+                      onInstallApp();
                     }}
-                    className="flex-1 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 text-xs font-black rounded-xl transition-all shadow-lg hover:shadow-emerald-500/10 active:scale-95"
+                    className="flex-1 py-2 bg-amber-400 hover:bg-amber-300 text-neutral-950 text-xs font-black rounded-xl transition-all shadow active:scale-95 cursor-pointer"
                   >
                     সরাসরি ইনস্টল করুন
                   </button>
                   <button
                     type="button"
                     onClick={() => setShowIOSModal(false)}
-                    className="px-4 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-extrabold rounded-xl transition-colors"
+                    className="px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-bold rounded-xl transition-colors cursor-pointer"
                   >
                     বন্ধ করুন
                   </button>

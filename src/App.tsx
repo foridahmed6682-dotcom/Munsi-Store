@@ -67,14 +67,12 @@ import { AdminDashboardView } from './components/AdminDashboardView';
 import { AdminLoginGuard } from './components/AdminLoginGuard';
 import { MemoModal } from './components/MemoModal';
 import { Product, Shop, Order, UserProfile, PaymentMethod, UserRole, DueCollectionRecord, Category, AuthorizedUserEmail, Route } from './types';
-import { CheckCircle2, AlertCircle, ExternalLink, LogIn, Lock, Download, Smartphone, X } from 'lucide-react';
+import { CheckCircle2, AlertCircle, ExternalLink, LogIn, Lock } from 'lucide-react';
 import { usePWAInstall } from './hooks/usePWAInstall';
 
 export default function App() {
   // PWA Install Hook
   const { deferredPrompt, isInstalled: isAppInstalled, install: installPWA } = usePWAInstall();
-  const [hideInstallBanner, setHideInstallBanner] = useState(false);
-  const [showInstallGuideModal, setShowInstallGuideModal] = useState(false);
 
   // Navigation
   const [activeTab, setActiveTab] = useState<NavTab>('order');
@@ -613,61 +611,6 @@ export default function App() {
         isLoggedIn={!!userProfile}
       />
 
-      {/* PWA Prominent Install Banner */}
-      {!isAppInstalled && !hideInstallBanner && (
-        <div className="max-w-7xl mx-auto w-full px-3 sm:px-4 pt-3">
-          <div className="bg-linear-to-r from-emerald-900 via-emerald-800 to-teal-900 text-white p-3.5 rounded-2xl shadow-lg border border-emerald-600/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-emerald-500 flex items-center justify-center text-neutral-950 font-black shadow-md shrink-0">
-                <Smartphone className="w-5 h-5 text-neutral-950" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h4 className="font-extrabold text-xs sm:text-sm text-white">
-                    প্লে-স্টোরের মতো সরাসরি অ্যাপ ইনস্টল করুন
-                  </h4>
-                  <span className="bg-emerald-400/20 border border-emerald-400/40 text-emerald-300 text-[10px] px-2 py-0.5 rounded-full font-bold">
-                    PWA App
-                  </span>
-                </div>
-                <p className="text-[11px] text-emerald-100/80 mt-0.5">
-                  হোম স্ক্রিন ও অ্যাপ ড্রয়ারে আলাদা আইকন, ফুলস্ক্রিন ও অফলাইনে সুপারফাস্ট কাজ করবে।
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-              <button
-                type="button"
-                onClick={async () => {
-                  if (deferredPrompt) {
-                    const res = await installPWA();
-                    if (res) {
-                      showToast('অ্যাপ সফলভাবে ফোনে ইনস্টল হয়েছে!', 'success');
-                    }
-                  } else {
-                    setShowInstallGuideModal(true);
-                  }
-                }}
-                className="px-4 py-2 bg-emerald-400 hover:bg-emerald-300 text-neutral-950 font-black text-xs rounded-xl shadow-md transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>সরাসরি ইনস্টল করুন</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setHideInstallBanner(true)}
-                className="p-1.5 text-emerald-300/70 hover:text-white hover:bg-emerald-700/40 rounded-lg text-xs cursor-pointer"
-                title="লুকিয়ে রাখুন"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl mx-auto w-full px-3 sm:px-4 pt-4">
         {activeTab === 'order' && (
@@ -809,79 +752,6 @@ export default function App() {
         isOpen={isMemoOpen}
         onClose={() => setIsMemoOpen(false)}
       />
-
-      {/* PWA Install Guide Modal */}
-      {showInstallGuideModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 animate-in fade-in backdrop-blur-xs">
-          <div className="w-full max-w-sm rounded-3xl bg-neutral-900 text-white p-6 shadow-2xl border border-neutral-800">
-            <div className="flex items-center justify-between pb-3.5 border-b border-neutral-800">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 flex items-center justify-center">
-                  <Download className="w-5 h-5 text-emerald-400" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-black text-neutral-100">প্লে স্টোরের মতো অ্যাপ ইনস্টল</h3>
-                  <p className="text-[10px] text-neutral-400">অ্যান্ড্রয়েড ফোন সহজ ৩-স্টেপ গাইড</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowInstallGuideModal(false)}
-                className="p-1.5 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-xl text-sm transition-colors cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="mt-4 space-y-3 text-xs">
-              <div className="flex gap-3 p-3 bg-neutral-800/40 rounded-2xl border border-neutral-800">
-                <div className="w-6 h-6 rounded-full bg-emerald-500 text-neutral-950 font-black flex items-center justify-center text-xs shrink-0">
-                  ১
-                </div>
-                <div className="space-y-0.5">
-                  <p className="font-extrabold text-neutral-200">ক্রোম ব্রাউজার মেনু</p>
-                  <p className="text-neutral-400 text-[11px]">
-                    আপনার মোবাইলের উপরে ডান কোণায় থাকা থ্রি-ডট (<strong className="text-emerald-400 text-sm">⋮</strong>) আইকনে চাপ দিন।
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex gap-3 p-3 bg-neutral-800/40 rounded-2xl border border-neutral-800">
-                <div className="w-6 h-6 rounded-full bg-emerald-500 text-neutral-950 font-black flex items-center justify-center text-xs shrink-0">
-                  ২
-                </div>
-                <div className="space-y-0.5">
-                  <p className="font-extrabold text-neutral-200">"Install app" বা "ইনস্টল করুন"</p>
-                  <p className="text-neutral-400 text-[11px]">
-                    মেনু থেকে <strong className="text-emerald-400 font-bold">"Install app"</strong> (বা ইনস্টল করুন) অপশনটিতে ট্যাপ করুন।
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex gap-3 p-3 bg-neutral-800/40 rounded-2xl border border-neutral-800">
-                <div className="w-6 h-6 rounded-full bg-emerald-500 text-neutral-950 font-black flex items-center justify-center text-xs shrink-0">
-                  ৩
-                </div>
-                <div className="space-y-0.5">
-                  <p className="font-extrabold text-neutral-200">ইনস্টল নিশ্চিত করুন</p>
-                  <p className="text-neutral-400 text-[11px]">
-                    "Install" চাপলেই এটি সরাসরি আপনার অ্যান্ড্রয়েড অ্যাপ ড্রয়ার ও স্ক্রিনে ডাউনলোড হয়ে যাবে এবং সাধারণ প্লে স্টোর অ্যাপের মতো ফুলস্ক্রিন চলবে।
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-5">
-              <button
-                type="button"
-                onClick={() => setShowInstallGuideModal(false)}
-                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow transition-all cursor-pointer"
-              >
-                ঠিক আছে, বুঝতে পেরেছি
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
