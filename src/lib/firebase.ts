@@ -22,7 +22,7 @@ import {
   getDocFromServer
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { AppUser, UserRole, Shop, Product, Order, DueCollectionRecord, Category, AuthorizedUserEmail, Route } from '../types';
+import { AppUser, UserRole, Shop, Product, Order, DueCollectionRecord, Category, AuthorizedUserEmail, Route, BusinessInfo } from '../types';
 import { DEFAULT_CATEGORIES, DEFAULT_AUTHORIZED_EMAILS, DEFAULT_PRODUCTS, DEFAULT_SHOPS, DEFAULT_ROUTES } from './storage';
 
 export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
@@ -189,16 +189,12 @@ export async function syncUserWithFirestore(user: User): Promise<AppUser> {
 
     if (docSnap.exists()) {
       const existing = docSnap.data() as AppUser;
-      let effectiveRole = existing.role || 'dsr';
+      let effectiveRole: UserRole = 'customer';
 
-      // 1. If Main Admin, always enforce admin
-      if (isMainAdminUser) {
+      if (isMainAdminUser || isBootstrappedAdmin) {
         effectiveRole = 'admin';
       } else if (backendAuthorizedRole) {
-        // 2. If configured in backend authorizedEmails by Admin, enforce backend role
         effectiveRole = backendAuthorizedRole;
-      } else if (isBootstrappedAdmin) {
-        effectiveRole = 'admin';
       }
 
       // Update user doc in Firestore
@@ -243,7 +239,7 @@ export async function syncUserWithFirestore(user: User): Promise<AppUser> {
         ? 'admin'
         : backendAuthorizedRole
         ? backendAuthorizedRole
-        : 'dsr';
+        : 'customer';
 
       const newAppUser: AppUser = {
         uid: user.uid,
@@ -598,7 +594,68 @@ export async function seedInitialCloudDataIfEmpty() {
         await setDoc(doc(db, 'routes', route.id), route);
       }
     }
+
+    // 6. Business Info Seeding
+    try {
+      const bizSnap = await getDocs(collection(db, 'settings'));
+      if (bizSnap.empty) {
+        await setDoc(doc(db, 'settings', 'businessInfo'), DEFAULT_BUSINESS_INFO);
+      }
+    } catch {
+      // ignore
+    }
   } catch (err) {
     console.warn('Initial cloud seed skipped or already present:', err);
   }
+}
+
+// 7. Business Info Configuration & Persistence
+export const DEFAULT_BUSINESS_INFO: BusinessInfo = {
+  name: "Munsi Store",
+  banglaName: "মুন্সী স্টোর",
+  tagline: "ডিস্ট্রিবিউশন ও হোলসেল অর্ডার বুকিং মেমো",
+  address: "চকবাজার / ঢাকা",
+  hotline: "০১৭১১-২২৩৩৪৪"
+};
+
+export function getBusinessInfo(): BusinessInfo {
+  const stored = localStorage.getItem('munsi_business_info');
+  if (stored) {
+    try {
+      return JSON.parse(stored);
+    } catch {
+      return DEFAULT_BUSINESS_INFO;
+    }
+  }
+  return DEFAULT_BUSINESS_INFO;
+}
+
+export function saveBusinessInfoLocal(info: BusinessInfo) {
+  localStorage.setItem('munsi_business_info', JSON.stringify(info));
+}
+
+export async function saveBusinessInfoToCloud(info: BusinessInfo) {
+  const path = 'settings/businessInfo';
+  try {
+    await setDoc(doc(db, 'settings', 'businessInfo'), info);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export function subscribeToCloudBusinessInfo(onData: (info: BusinessInfo) => void) {
+  const path = 'settings/businessInfo';
+  return onSnapshot(
+    doc(db, 'settings', 'businessInfo'),
+    (snap) => {
+      if (snap.exists()) {
+        const info = snap.data() as BusinessInfo;
+        saveBusinessInfoLocal(info);
+        onData(info);
+      }
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, path);
+    }
+  );
 }

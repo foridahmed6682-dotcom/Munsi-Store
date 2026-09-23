@@ -1,6 +1,7 @@
 import React from 'react';
-import { Printer, Share2, Copy, Check, X, Store, Calendar, Phone, MapPin } from 'lucide-react';
+import { Download, Printer, Share2, Copy, Check, X, Store, Calendar, Phone, MapPin } from 'lucide-react';
 import { Order } from '../types';
+import { getBusinessInfo } from '../lib/firebase';
 
 interface MemoModalProps {
   order: Order | null;
@@ -13,13 +14,15 @@ export const MemoModal: React.FC<MemoModalProps> = ({ order, isOpen, onClose }) 
 
   if (!isOpen || !order) return null;
 
+  const biz = getBusinessInfo();
+
   const handlePrint = () => {
     window.print();
   };
 
   const getMemoShareText = () => {
     const lines = [
-      `*মুন্সী স্টোর - সেলস অর্ডার মেমো*`,
+      `*${biz.banglaName} - সেলস অর্ডার মেমো*`,
       `মেমো নং: ${order.memoNumber}`,
       `তারিখ: ${new Date(order.orderDate).toLocaleString('en-GB')}`,
       `---------------------------------`,
@@ -41,7 +44,7 @@ export const MemoModal: React.FC<MemoModalProps> = ({ order, isOpen, onClose }) 
       `*মোট বকেয়া জের: ৳${order.totalOutstandingAfterOrder}*`,
       `পেমেন্ট ধরন: ${order.paymentMethod}`,
       `---------------------------------`,
-      `মুন্সী স্টোরের সাথে থাকার জন্য ধন্যবাদ!`,
+      `${biz.banglaName} এর সাথে থাকার জন্য ধন্যবাদ!`,
     ].filter(Boolean);
 
     return lines.join('\n');
@@ -75,7 +78,7 @@ export const MemoModal: React.FC<MemoModalProps> = ({ order, isOpen, onClose }) 
             </span>
             <span className="text-sm font-semibold text-neutral-200">{order.memoNumber}</span>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             <button
               onClick={handleCopyText}
               className="p-1.5 rounded-lg hover:bg-neutral-700 text-neutral-300 hover:text-white text-xs flex items-center gap-1"
@@ -85,7 +88,7 @@ export const MemoModal: React.FC<MemoModalProps> = ({ order, isOpen, onClose }) 
             </button>
             <button
               onClick={handleShareWhatsApp}
-              className="p-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs flex items-center gap-1 font-medium"
+              className="p-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs flex items-center gap-1 font-bold shadow-xs shrink-0"
               title="দোকানদারের হোয়াটসঅ্যাপে পাঠান"
             >
               <Share2 className="w-4 h-4" />
@@ -93,15 +96,23 @@ export const MemoModal: React.FC<MemoModalProps> = ({ order, isOpen, onClose }) 
             </button>
             <button
               onClick={handlePrint}
-              className="p-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs flex items-center gap-1 font-medium"
-              title="মেমো প্রিন্ট করুন"
+              className="p-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs flex items-center gap-1 font-bold shadow-xs shrink-0"
+              title="মেমো পিডিএফ হিসেবে ডাউনলোড করুন"
+            >
+              <Download className="w-4 h-4" />
+              <span>পিডিএফ ডাউনলোড</span>
+            </button>
+            <button
+              onClick={handlePrint}
+              className="p-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs flex items-center gap-1 font-bold shadow-xs shrink-0"
+              title="সরাসরি প্রিন্ট করুন"
             >
               <Printer className="w-4 h-4" />
-              <span className="hidden sm:inline">প্রিন্ট</span>
+              <span>সরাসরি প্রিন্ট</span>
             </button>
             <button
               onClick={onClose}
-              className="p-1.5 rounded-lg hover:bg-neutral-700 text-neutral-400 hover:text-white"
+              className="p-1.5 rounded-lg hover:bg-neutral-700 text-neutral-400 hover:text-white shrink-0"
             >
               <X className="w-5 h-5" />
             </button>
@@ -112,9 +123,9 @@ export const MemoModal: React.FC<MemoModalProps> = ({ order, isOpen, onClose }) 
         <div id="printable-memo" className="p-4 sm:p-6 overflow-y-auto font-sans text-neutral-800">
           {/* Slip Header */}
           <div className="text-center pb-3 border-b border-dashed border-neutral-300">
-            <h2 className="text-xl font-bold tracking-tight text-neutral-900">মুন্সী স্টোর</h2>
-            <p className="text-xs text-neutral-600 font-medium">ডিস্ট্রিবিউশন ও হোলসেল অর্ডার বুকিং মেমো</p>
-            <p className="text-[11px] text-neutral-500">চকবাজার / ঢাকা | হটলাইন: ০১৭১১-২২৩৩৪৪</p>
+            <h2 className="text-xl font-bold tracking-tight text-neutral-900">{biz.banglaName}</h2>
+            <p className="text-xs text-neutral-600 font-medium">{biz.tagline}</p>
+            <p className="text-[11px] text-neutral-500">{biz.address} | হটলাইন: {biz.hotline}</p>
           </div>
 
           {/* Metadata Grid */}

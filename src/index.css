@@ -31,10 +31,11 @@
   body * {
     visibility: hidden;
   }
-  #printable-memo, #printable-memo * {
+  #printable-memo, #printable-memo *,
+  #bulk-printable-memos, #bulk-printable-memos * {
     visibility: visible;
   }
-  #printable-memo {
+  #printable-memo, #bulk-printable-memos {
     position: absolute;
     left: 0;
     top: 0;
@@ -43,5 +44,9 @@
     padding: 12px;
     background: white;
     color: black;
+  }
+  .page-break-after {
+    page-break-after: always;
+    break-after: page;
   }
 }

@@ -1,6 +1,6 @@
 export type PaymentMethod = 'CASH' | 'DUE' | 'PARTIAL' | 'BKASH' | 'NAGAD';
 export type DeliveryStatus = 'PENDING' | 'DELIVERED' | 'CANCELLED';
-export type UserRole = 'admin' | 'sr' | 'dsr';
+export type UserRole = 'admin' | 'sr' | 'dsr' | 'customer';
 
 export interface Route {
   id: string;
@@ -145,5 +145,13 @@ export interface UserProfile {
   role?: UserRole;
   assignedRoute?: string;
   accessToken?: string;
+}
+
+export interface BusinessInfo {
+  name: string;
+  banglaName: string;
+  tagline: string;
+  address: string;
+  hotline: string;
 }
 

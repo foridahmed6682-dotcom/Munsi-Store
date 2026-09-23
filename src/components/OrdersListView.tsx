@@ -13,9 +13,11 @@ import {
   DollarSign,
   Truck,
   RotateCw,
-  Share2
+  Share2,
+  Printer
 } from 'lucide-react';
 import { Order } from '../types';
+import { getBusinessInfo } from '../lib/firebase';
 
 interface OrdersListViewProps {
   orders: Order[];
@@ -271,6 +273,30 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
         </div>
       </div>
 
+      {/* Bulk Actions Ribbon */}
+      {filteredOrders.length > 0 && (
+        <div className="bg-blue-50 border border-blue-200 p-3 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+          <div>
+            <p className="text-xs font-bold text-blue-900 flex items-center gap-1.5">
+              <Printer className="w-4 h-4 text-blue-600" />
+              <span>১-ক্লিকে বাল্ক মেমো প্রিন্ট করুন ({filteredOrders.length} টি অর্ডার)</span>
+            </p>
+            <p className="text-[11px] text-blue-600">
+              নির্বাচিত ফিল্টারের আওতাভুক্ত সকল মেমো একসাথে প্রিন্ট বা পিডিএফ সেভ করুন (প্রতিটি মেমো আলাদা পৃষ্ঠায় প্রিন্ট হবে)।
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              window.print();
+            }}
+            className="w-full sm:w-auto px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs rounded-xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5"
+          >
+            <Printer className="w-3.5 h-3.5" />
+            <span>বাল্ক প্রিন্ট শুরু করুন</span>
+          </button>
+        </div>
+      )}
+
       {/* Orders List */}
       <div className="space-y-2.5">
         {filteredOrders.length === 0 ? (
@@ -375,6 +401,120 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
             );
           })
         )}
+      </div>
+
+      {/* Hidden container specifically for bulk printing */}
+      <div id="bulk-printable-memos" className="hidden">
+        {filteredOrders.map((order, orderIdx) => {
+          const biz = getBusinessInfo();
+          return (
+            <div
+              key={order.id}
+              className={`p-6 bg-white text-neutral-900 font-sans ${
+                orderIdx < filteredOrders.length - 1 ? 'page-break-after' : ''
+              }`}
+              style={{ minHeight: '100vh', width: '100%', boxSizing: 'border-box' }}
+            >
+              {/* Slip Header */}
+              <div className="text-center pb-3 border-b border-dashed border-neutral-300">
+                <h2 className="text-xl font-bold tracking-tight text-neutral-900">{biz.banglaName}</h2>
+                <p className="text-xs text-neutral-600 font-medium">{biz.tagline}</p>
+                <p className="text-[11px] text-neutral-500">{biz.address} | হটলাইন: {biz.hotline}</p>
+              </div>
+
+              {/* Metadata Grid */}
+              <div className="grid grid-cols-2 gap-2 py-3 text-xs border-b border-neutral-200">
+                <div>
+                  <p className="font-bold text-neutral-900 text-sm">{order.shopName}</p>
+                  <p className="text-neutral-600 flex items-center gap-1 mt-0.5">
+                    মোবাইল: {order.shopPhone}
+                  </p>
+                  <p className="text-neutral-600 flex items-center gap-1 mt-0.5">
+                    ঠিকানা: {order.shopAddress} ({order.shopRoute})
+                  </p>
+                </div>
+                <div className="text-right space-y-0.5">
+                  <p className="font-semibold text-neutral-900">মেমো: {order.memoNumber}</p>
+                  <p className="text-neutral-500">
+                    {new Date(order.orderDate).toLocaleDateString('en-GB')}{' '}
+                    {new Date(order.orderDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </p>
+                  <p className="text-[11px]">
+                    স্ট্যাটাস:{' '}
+                    <span className="font-semibold text-neutral-800">
+                      {order.deliveryStatus === 'DELIVERED' ? 'ডেলিভারি সম্পন্ন' : 'ডেলিভারি অপেক্ষমান'}
+                    </span>
+                  </p>
+                </div>
+              </div>
+
+              {/* Items Table */}
+              <table className="w-full text-left border-collapse text-[11px] mt-3">
+                <thead>
+                  <tr className="border-b border-neutral-300 bg-neutral-50 font-bold text-neutral-700">
+                    <th className="py-1.5 px-2">পণ্য বিবরণ</th>
+                    <th className="py-1.5 px-2 text-center">পরিমাণ</th>
+                    <th className="py-1.5 px-2 text-right">দর</th>
+                    <th className="py-1.5 px-2 text-right">মোট (৳)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {order.items.map((item, idx) => (
+                    <tr key={idx} className="border-b border-neutral-100 text-neutral-700">
+                      <td className="py-1.5 px-2 font-medium">{item.productName}</td>
+                      <td className="py-1.5 px-2 text-center">
+                        {item.quantity} {item.unit}
+                      </td>
+                      <td className="py-1.5 px-2 text-right">৳{item.unitPrice}</td>
+                      <td className="py-1.5 px-2 text-right font-mono">৳{item.lineTotal}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* Summary */}
+              <div className="mt-4 flex justify-end">
+                <div className="w-64 space-y-1 text-[11px] text-neutral-700">
+                  <div className="flex justify-between">
+                    <span>উপমোট (Subtotal):</span>
+                    <span className="font-mono">৳{order.subTotal}</span>
+                  </div>
+                  {order.discountAmount > 0 && (
+                    <div className="flex justify-between text-emerald-700">
+                      <span>ছাড় (Discount):</span>
+                      <span className="font-mono">-৳{order.discountAmount}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between border-t border-neutral-200 pt-1 text-xs font-bold text-neutral-900">
+                    <span>নিট মোট (Net Total):</span>
+                    <span className="font-mono">৳{order.netTotal}</span>
+                  </div>
+                  <div className="flex justify-between text-emerald-800 font-medium">
+                    <span>জমা/নগদ আদায়:</span>
+                    <span className="font-mono">৳{order.paidAmount}</span>
+                  </div>
+                  <div className="flex justify-between text-rose-700 font-medium">
+                    <span>বাকী/বকেয়া (Due):</span>
+                    <span className="font-mono">৳{order.dueAmount}</span>
+                  </div>
+                  <div className="flex justify-between text-neutral-500 border-t border-dashed border-neutral-200 pt-1">
+                    <span>পূর্বের বকেয়া:</span>
+                    <span className="font-mono">৳{order.previousDueAtBooking}</span>
+                  </div>
+                  <div className="flex justify-between text-xs font-black text-neutral-900 border-t border-neutral-300 pt-1">
+                    <span>মোট বকেয়া জের:</span>
+                    <span className="font-mono">৳{order.totalOutstandingAfterOrder}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer Note */}
+              <div className="text-center mt-6 pt-4 border-t border-neutral-200 text-[10px] text-neutral-500">
+                <p>{biz.banglaName} এর সাথে থাকার জন্য ধন্যবাদ!</p>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

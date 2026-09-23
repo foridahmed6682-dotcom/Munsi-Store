@@ -33,7 +33,8 @@ import {
   Eye,
   SlidersHorizontal,
   Crown,
-  Compass
+  Compass,
+  Settings
 } from 'lucide-react';
 import {
   Product,
@@ -44,9 +45,10 @@ import {
   Category,
   AuthorizedUserEmail,
   AppUser,
-  Route
+  Route,
+  BusinessInfo
 } from '../types';
-import { fetchAllUsers, updateUserRoleAndRoute } from '../lib/firebase';
+import { fetchAllUsers, updateUserRoleAndRoute, getBusinessInfo, saveBusinessInfoToCloud, subscribeToCloudBusinessInfo } from '../lib/firebase';
 
 interface AdminDashboardViewProps {
   products: Product[];
@@ -79,7 +81,7 @@ interface AdminDashboardViewProps {
   onNavigateTab: (tab: any) => void;
 }
 
-type AdminSubTab = 'overview' | 'categories' | 'products' | 'routes' | 'access' | 'analytics';
+type AdminSubTab = 'overview' | 'categories' | 'products' | 'routes' | 'access' | 'analytics' | 'settings';
 
 const AVAILABLE_ROUTES = [
   'সব রুট (All Routes)',
@@ -172,6 +174,24 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [prodTradeOffer, setProdTradeOffer] = useState('');
   const [prodImageUrl, setProdImageUrl] = useState('');
 
+  const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 2 * 1024 * 1024) {
+        showToast('छবির সাইজ ২ মেগাবাইটের (2MB) নিচে হতে হবে', 'error');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (typeof reader.result === 'string') {
+          setProdImageUrl(reader.result);
+          showToast('ছবি সফলভাবে লোড হয়েছে!', 'success');
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   // Stock-in Quick Modal
   const [stockInProduct, setStockInProduct] = useState<Product | null>(null);
   const [stockInDelta, setStockInDelta] = useState('');
@@ -195,6 +215,10 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [productSearch, setProductSearch] = useState('');
   const [productCategoryFilter, setProductCategoryFilter] = useState('all');
 
+  // Business Info Settings State
+  const [bizInfo, setBizInfo] = useState<BusinessInfo>(getBusinessInfo());
+  const [isSavingBiz, setIsSavingBiz] = useState(false);
+
   const showToast = (text: string, type: 'success' | 'info' | 'error' = 'success') => {
     setFeedback({ text, type });
     setTimeout(() => setFeedback(null), 3500);
@@ -217,6 +241,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
   React.useEffect(() => {
     loadFirebaseUsers();
+    
+    // Subscribe to cloud business info sync
+    const unsub = subscribeToCloudBusinessInfo((cloudInfo) => {
+      setBizInfo(cloudInfo);
+    });
+    return () => {
+      unsub();
+    };
   }, []);
 
   // Compute Metrics
@@ -674,6 +706,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         >
           <ShieldCheck className="w-4 h-4" />
           <span>মেইল ভিত্তিক এক্সেস কন্ট্রোল (RBAC)</span>
+        </button>
+
+        <button
+          onClick={() => setSubTab('settings')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+            subTab === 'settings'
+              ? 'bg-emerald-800 text-white shadow-sm'
+              : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100'
+          }`}
+        >
+          <Settings className="w-4 h-4" />
+          <span>দোকান ও মেমো সেটিংস</span>
         </button>
       </div>
 
@@ -1473,6 +1517,134 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         </div>
       )}
 
+      {/* SUB-TAB 5: SHOP & MEMO CONFIGURATION */}
+      {subTab === 'settings' && (
+        <div className="space-y-4 animate-fadeIn">
+          <div className="bg-white p-5 rounded-2xl border border-neutral-200 shadow-xs space-y-4">
+            <div>
+              <h2 className="text-base font-bold text-neutral-900 flex items-center gap-2">
+                <Settings className="w-5 h-5 text-emerald-600" />
+                <span>কোম্পানি, দোকান ও মেমো সেটিংস</span>
+              </h2>
+              <p className="text-xs text-neutral-500">
+                এখানে আপনার ব্যবসা বা ডিস্ট্রিবিউটর হাউসের নাম ও লোকেশন সেট করুন। এই বিবরণটি প্রতিটি মেমোর উপরে প্রিন্ট ও ডাউনলোড ফাইলে স্বয়ংক্রিয়ভাবে জেনারেট হবে।
+              </p>
+            </div>
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                try {
+                  setIsSavingBiz(true);
+                  await saveBusinessInfoToCloud(bizInfo);
+                  saveBusinessInfoLocal(bizInfo);
+                  showToast('মেমো ও বিজনেস সেটিংস সফলভাবে সেভ হয়েছে!', 'success');
+                } catch (err) {
+                  showToast('সেটিংস সেভ করতে ব্যর্থ হয়েছে', 'error');
+                } finally {
+                  setIsSavingBiz(false);
+                }
+              }}
+              className="space-y-4"
+            >
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    প্রতিষ্ঠানের নাম (বাংলা) *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={bizInfo.banglaName}
+                    onChange={(e) => setBizInfo({ ...bizInfo, banglaName: e.target.value })}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600"
+                    placeholder="যেমন: মুন্সী স্টোর"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    প্রতিষ্ঠানের নাম (ইংরেজি) *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={bizInfo.name}
+                    onChange={(e) => setBizInfo({ ...bizInfo, name: e.target.value })}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600"
+                    placeholder="যেমন: Munsi Store"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    মেমো সাবটাইটেল / স্লোগান *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={bizInfo.tagline}
+                    onChange={(e) => setBizInfo({ ...bizInfo, tagline: e.target.value })}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600"
+                    placeholder="যেমন: ডিস্ট্রিবিউশন ও হোলসেল অর্ডার বুকিং মেমো"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    হটলাইন / মোবাইল নম্বর *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={bizInfo.hotline}
+                    onChange={(e) => setBizInfo({ ...bizInfo, hotline: e.target.value })}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600 font-mono"
+                    placeholder="যেমন: ০১৭১১-২২৩৩৪৪"
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    ব্যবসার ঠিকানা বা লোকেশন বিবরণ *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={bizInfo.address}
+                    onChange={(e) => setBizInfo({ ...bizInfo, address: e.target.value })}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600"
+                    placeholder="যেমন: চকবাজার / ঢাকা"
+                  />
+                </div>
+              </div>
+
+              {/* Live Preview Card */}
+              <div className="p-4 bg-neutral-50 rounded-2xl border border-neutral-200">
+                <span className="text-[10px] uppercase tracking-wider font-extrabold text-neutral-400 block mb-2">
+                  লাইভ মেমো স্লিপ হেডার প্রিভিউ (Live Preview)
+                </span>
+                <div className="text-center p-4 bg-white rounded-xl border border-neutral-300/60 max-w-sm mx-auto shadow-xs">
+                  <h3 className="text-base font-extrabold text-neutral-900">{bizInfo.banglaName || '---'}</h3>
+                  <p className="text-[10px] text-neutral-500 font-medium mt-0.5">{bizInfo.tagline || '---'}</p>
+                  <p className="text-[9px] text-neutral-400 mt-0.5">{bizInfo.address || '---'} | হটলাইন: {bizInfo.hotline || '---'}</p>
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="submit"
+                  disabled={isSavingBiz}
+                  className="px-6 py-2.5 bg-emerald-800 hover:bg-emerald-700 disabled:bg-neutral-300 text-white font-bold text-xs rounded-xl shadow-md transition-all active:scale-95"
+                >
+                  {isSavingBiz ? 'সেভ হচ্ছে...' : 'সেটিংস সংরক্ষণ করুন'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Route Modal */}
       {isRouteModalOpen && (
         <div className="fixed inset-0 z-50 bg-neutral-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-in fade-in">
@@ -1804,20 +1976,59 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-neutral-700 mb-1">
-                  প্রোডাক্ট ছবি লিংক (Image URL)
+                  প্রোডাক্ট ছবি লিংক (Image URL) অথবা ডিভাইস থেকে সরাসরি আপলোড
                 </label>
-                <input
-                  type="url"
-                  placeholder="https://images.unsplash.com/..."
-                  value={prodImageUrl}
-                  onChange={(e) => setProdImageUrl(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600 font-mono"
-                />
+                <div className="flex flex-col sm:flex-row gap-2 items-stretch">
+                  <input
+                    type="url"
+                    placeholder="https://images.unsplash.com/..."
+                    value={prodImageUrl}
+                    onChange={(e) => setProdImageUrl(e.target.value)}
+                    className="flex-1 px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600 font-mono"
+                  />
+                  
+                  {/* File Upload Button */}
+                  <div className="relative shrink-0 flex items-stretch">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      id="product-image-upload-file"
+                      onChange={handleImageFileChange}
+                      className="hidden"
+                    />
+                    <label
+                      htmlFor="product-image-upload-file"
+                      className="flex items-center justify-center gap-1 px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl text-xs font-bold cursor-pointer transition-colors"
+                    >
+                      <span>📸 ছবি আপলোড</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Live Base64 Preview */}
+                {prodImageUrl && (
+                  <div className="mt-2 p-1.5 bg-neutral-50 rounded-xl border border-neutral-200 flex items-center gap-2">
+                    <img src={prodImageUrl} alt="Preview" className="w-10 h-10 object-cover rounded-lg border border-neutral-300 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <span className="text-[10px] text-neutral-500 font-bold block truncate">প্রিভিউ ইমেজ সোর্স:</span>
+                      <span className="text-[9px] text-neutral-400 font-mono block truncate">
+                        {prodImageUrl.startsWith('data:') ? 'ডিভাইস থেকে আপলোড করা ছবি' : prodImageUrl}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setProdImageUrl('')}
+                      className="text-[10px] text-rose-600 hover:text-rose-800 font-bold p-1 shrink-0"
+                    >
+                      রিমুভ
+                    </button>
+                  </div>
+                )}
 
                 {/* Quick Presets */}
                 <div className="mt-2">
                   <span className="text-[10px] text-neutral-500 font-medium block mb-1">
-                    কুইক ছবি প্রিসেট নির্বাচন করুন:
+                    অথবা কুইক ছবি প্রিসেট নির্বাচন করুন:
                   </span>
                   <div className="flex flex-wrap gap-1.5">
                     {PRESET_PRODUCT_IMAGES.map((preset) => (

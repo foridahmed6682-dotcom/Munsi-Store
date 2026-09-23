@@ -11,7 +11,9 @@ import {
   HardDrive,
   ShieldCheck,
   UserCheck,
-  Truck
+  Truck,
+  User,
+  LogOut
 } from 'lucide-react';
 import { googleSignIn, logout } from '../lib/firebase';
 import { UserProfile, UserRole } from '../types';
@@ -90,13 +92,14 @@ export const Header: React.FC<HeaderProps> = ({
 
   const triggerSync = onSyncClick || onSyncTrigger || (() => {});
 
-  const currentRole: UserRole = (activeUser?.role as UserRole) || activeRole || 'admin';
+  const currentRole: UserRole = (activeUser?.role as UserRole) || activeRole || 'customer';
   const roleBadgeMap: Record<UserRole, { label: string; bg: string; icon: React.ComponentType<{ className?: string }> }> = {
     admin: { label: 'এডমিন', bg: 'bg-purple-600 text-white', icon: ShieldCheck },
     sr: { label: 'এসআর', bg: 'bg-blue-600 text-white', icon: UserCheck },
     dsr: { label: 'ডিএসআর', bg: 'bg-emerald-600 text-white', icon: Truck },
+    customer: { label: 'ক্রেতা (Guest)', bg: 'bg-indigo-600 text-white', icon: User },
   };
-  const roleBadgeConfig = roleBadgeMap[currentRole] || roleBadgeMap.admin;
+  const roleBadgeConfig = roleBadgeMap[currentRole] || roleBadgeMap.customer;
 
   const RoleIcon = roleBadgeConfig.icon;
 
@@ -113,20 +116,22 @@ export const Header: React.FC<HeaderProps> = ({
               <h1 className="font-bold text-base sm:text-lg tracking-tight leading-tight truncate">
                 মুন্সী স্টোর <span className="text-emerald-300 font-normal text-xs sm:text-sm">| DSR অর্ডার বুকার</span>
               </h1>
-              {/* Interactive Role Switch Badge */}
-              <button
-                type="button"
-                onClick={() => setShowRoleSelector(!showRoleSelector)}
-                className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full shadow-xs cursor-pointer hover:opacity-90 transition-opacity ${roleBadgeConfig.bg}`}
-                title="রোল পরিবর্তন করতে ক্লিক করুন"
-              >
-                <RoleIcon className="w-3 h-3" />
-                <span>{roleBadgeConfig.label}</span>
-                <span className="text-[9px] opacity-80">▼</span>
-              </button>
+              {/* Interactive Role Switch Badge - strictly hidden from guests/customers */}
+              {activeUser && currentRole !== 'customer' && (
+                <button
+                  type="button"
+                  onClick={() => setShowRoleSelector(!showRoleSelector)}
+                  className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full shadow-xs cursor-pointer hover:opacity-90 transition-opacity ${roleBadgeConfig.bg}`}
+                  title="রোল পরিবর্তন করতে ক্লিক করুন"
+                >
+                  <RoleIcon className="w-3 h-3" />
+                  <span>{roleBadgeConfig.label}</span>
+                  <span className="text-[9px] opacity-80">▼</span>
+                </button>
+              )}
 
               {/* Role Dropdown */}
-              {showRoleSelector && (
+              {showRoleSelector && activeUser && currentRole !== 'customer' && (
                 <div className="absolute top-7 left-24 z-50 bg-white text-neutral-900 rounded-2xl p-2 shadow-2xl border border-neutral-200 w-44 animate-in fade-in zoom-in-95">
                   <p className="text-[10px] font-bold text-neutral-400 px-2 py-1 uppercase">
                     রোল সুইচ করুন
@@ -302,7 +307,7 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 onClick={handleSignOut}
                 className="flex items-center gap-1.5 p-1 sm:px-2 sm:py-1 rounded-lg hover:bg-emerald-700/60 text-xs text-emerald-100"
-                title={`${activeUser.displayName || activeUser.email} (${currentRole.toUpperCase()} - সাইন-আউট করতে ক্লিক করুন)`}
+                title={`${activeUser.displayName || activeUser.email} (${currentRole.toUpperCase()})`}
               >
                 {activeUser.photoURL ? (
                   <img
@@ -319,6 +324,16 @@ export const Header: React.FC<HeaderProps> = ({
                 <span className="hidden lg:inline text-xs font-medium max-w-[100px] truncate">
                   {activeUser.displayName?.split(' ')[0] || 'ইউজার'}
                 </span>
+              </button>
+
+              {/* Distinctive Logout Button */}
+              <button
+                onClick={handleSignOut}
+                className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-rose-700/95 hover:bg-rose-600 text-white text-[11px] font-bold transition-all shadow-xs border border-rose-500/40 shrink-0"
+                title="লগআউট করুন"
+              >
+                <LogOut className="w-3 h-3" />
+                <span>লগআউট</span>
               </button>
             </div>
           ) : (
