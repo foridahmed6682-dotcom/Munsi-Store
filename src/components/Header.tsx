@@ -249,42 +249,95 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* iOS / Browser Install Help Modal */}
           {showIOSModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 animate-in fade-in">
-              <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl text-neutral-900 border border-neutral-200">
-                <div className="flex items-center justify-between pb-3 border-b border-neutral-100">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-xl bg-emerald-100 flex items-center justify-center">
-                      <Download className="w-4 h-4 text-emerald-700" />
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 animate-in fade-in backdrop-blur-xs">
+              <div className="w-full max-w-sm rounded-3xl bg-neutral-900 text-white p-6 shadow-2xl border border-neutral-800">
+                <div className="flex items-center justify-between pb-3.5 border-b border-neutral-800">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 flex items-center justify-center">
+                      <Download className="w-5 h-5 text-emerald-400" />
                     </div>
-                    <h3 className="text-sm font-bold text-neutral-900">ফোনে অ্যাপ ইনস্টল করুন</h3>
+                    <div>
+                      <h3 className="text-sm font-black text-neutral-100">অ্যান্ড্রয়েড ফোন ডাউনলোড ও ইনস্টল</h3>
+                      <p className="text-[10px] text-neutral-400">সহজ ১-মিনিট গাইড</p>
+                    </div>
                   </div>
                   <button
                     onClick={() => setShowIOSModal(false)}
-                    className="p-1 text-neutral-400 hover:text-neutral-700 text-lg leading-none"
+                    className="p-1.5 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-xl text-sm transition-colors"
                   >
                     ✕
                   </button>
                 </div>
 
-                <div className="mt-3 space-y-2.5 text-xs text-neutral-600 leading-relaxed">
-                  <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200">
-                    <p className="font-bold text-neutral-800 mb-1">📱 অ্যান্ড্রয়েড / গুগল ক্রোম (Android Chrome):</p>
-                    <p>ব্রাউজারের উপরে বা নিচে ডানদিকের <strong>তিনটি ডট (⋮)</strong> মেনুতে চাপ দিন এবং <strong>"Install app"</strong> বা <strong>"Add to Home screen"</strong> এ চাপ দিন।</p>
+                <div className="mt-4 space-y-3 text-xs">
+                  {/* Step 1 */}
+                  <div className="flex gap-3 p-3 bg-neutral-800/40 rounded-2xl border border-neutral-800">
+                    <div className="w-6 h-6 rounded-full bg-emerald-500 text-neutral-950 font-black flex items-center justify-center text-xs shrink-0">
+                      ১
+                    </div>
+                    <div className="space-y-0.5">
+                      <p className="font-extrabold text-neutral-200">ক্রোম ব্রাউজার মেনু</p>
+                      <p className="text-neutral-400 text-[11px]">
+                        আপনার মোবাইলের একদম উপরে ডান কোণায় থাকা থ্রি-ডট (<strong className="text-emerald-400 text-sm">⋮</strong>) মেনুতে ক্লিক করুন।
+                      </p>
+                    </div>
                   </div>
 
-                  <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200">
-                    <p className="font-bold text-neutral-800 mb-1">🍎 আইফোন / সাফারি (iPhone / Safari):</p>
-                    <p>সাফারি ব্রাউজারের নিচে <strong>Share বাটনে (শেয়ার আইকন ⎋)</strong> চাপ দিন এবং নিচে স্ক্রোল করে <strong>"Add to Home Screen"</strong> অপশনে চাপ দিন।</p>
+                  {/* Step 2 */}
+                  <div className="flex gap-3 p-3 bg-neutral-800/40 rounded-2xl border border-neutral-800">
+                    <div className="w-6 h-6 rounded-full bg-emerald-500 text-neutral-950 font-black flex items-center justify-center text-xs shrink-0">
+                      ২
+                    </div>
+                    <div className="space-y-0.5">
+                      <p className="font-extrabold text-neutral-200">ইনস্টল বাটনে ক্লিক</p>
+                      <p className="text-neutral-400 text-[11px]">
+                        মেনু থেকে নিচের দিকে স্ক্রোল করে <strong className="text-emerald-400">"Install app"</strong> অথবা <strong className="text-emerald-400">"Add to Home screen"</strong> (হোম স্ক্রিনে যোগ করুন) এ ক্লিক করুন।
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Step 3 */}
+                  <div className="flex gap-3 p-3 bg-neutral-800/40 rounded-2xl border border-neutral-800">
+                    <div className="w-6 h-6 rounded-full bg-emerald-500 text-neutral-950 font-black flex items-center justify-center text-xs shrink-0">
+                      ৩
+                    </div>
+                    <div className="space-y-0.5">
+                      <p className="font-extrabold text-neutral-200">স্বয়ংক্রিয় ইনস্টল</p>
+                      <p className="text-neutral-400 text-[11px]">
+                        কনফার্মেশনে ক্লিক করলেই অ্যাপটি অ্যান্ড্রয়েড অ্যাপের মতো সরাসরি আপনার ফোনের স্ক্রিনে ডাউনলোড ও ইনস্টল হয়ে যাবে!
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Note about iOS */}
+                  <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-2xl text-[11px] text-amber-200">
+                    <strong>🍎 আইফোন ইউজারদের জন্য:</strong> সাফারি ব্রাউজারে নিচে থাকা Share আইকনে (শেয়ার বাটন ⎋) ক্লিক করে <strong>"Add to Home Screen"</strong> এ ক্লিক করুন।
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => setShowIOSModal(false)}
-                  className="mt-4 w-full py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl transition-colors"
-                >
-                  ঠিক আছে, বুঝেছি
-                </button>
+                <div className="mt-5 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (installPrompt) {
+                        onInstallApp();
+                      } else {
+                        alert("অনুগ্রহ করে আপনার ব্রাউজারের ডানদিকের ৩-ডট (⋮) মেনু থেকে 'Install App' অথবা 'Add to Home Screen' এ ক্লিক করে ইনস্টল করুন।");
+                      }
+                      setShowIOSModal(false);
+                    }}
+                    className="flex-1 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 text-xs font-black rounded-xl transition-all shadow-lg hover:shadow-emerald-500/10 active:scale-95"
+                  >
+                    সরাসরি ইনস্টল করুন
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowIOSModal(false)}
+                    className="px-4 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-extrabold rounded-xl transition-colors"
+                  >
+                    বন্ধ করুন
+                  </button>
+                </div>
               </div>
             </div>
           )}

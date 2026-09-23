@@ -11,7 +11,9 @@ import {
   CheckCircle,
   ShoppingBag,
   ArrowRight,
-  ExternalLink
+  ExternalLink,
+  Edit3,
+  Trash2
 } from 'lucide-react';
 import { Shop, PaymentMethod } from '../types';
 import { AddShopModal } from './AddShopModal';
@@ -22,6 +24,9 @@ interface ShopsListViewProps {
   onRecordDuePayment: (shopId: string, amount: number, method: PaymentMethod, notes?: string) => void;
   onSelectShopForOrder: (shopId: string) => void;
   onOpenMapForShop?: (shopId: string) => void;
+  isAdmin?: boolean;
+  onUpdateShop?: (shop: Shop) => void;
+  onDeleteShop?: (shopId: string) => void;
 }
 
 export const ShopsListView: React.FC<ShopsListViewProps> = ({
@@ -30,10 +35,14 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
   onRecordDuePayment,
   onSelectShopForOrder,
   onOpenMapForShop,
+  isAdmin = false,
+  onUpdateShop,
+  onDeleteShop,
 }) => {
   const [search, setSearch] = useState('');
   const [selectedRoute, setSelectedRoute] = useState('all');
   const [dateFilter, setDateFilter] = useState('');
+  const [editingShop, setEditingShop] = useState<Shop | null>(null);
 
   // Due collection modal
   const [collectingShop, setCollectingShop] = useState<Shop | null>(null);
@@ -191,7 +200,33 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
                   <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800">
                     {shop.routeArea}
                   </span>
-                  <span className="text-[10px] text-neutral-500 font-medium">{shop.category}</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] text-neutral-500 font-medium">{shop.category}</span>
+                    {isAdmin && (
+                      <div className="flex items-center gap-1 ml-1 bg-neutral-100 px-1 py-0.5 rounded-md shrink-0">
+                        <button
+                          onClick={() => setEditingShop(shop)}
+                          className="p-1 hover:text-emerald-700 text-neutral-500 rounded transition-colors"
+                          title="দোকান এডিট করুন"
+                        >
+                          <Edit3 className="w-3 h-3" />
+                        </button>
+                        {onDeleteShop && (
+                          <button
+                            onClick={() => {
+                              if (confirm(`আপনি কি নিশ্চিতভাবে "${shop.name}" দোকানটি মুছে ফেলতে চান?`)) {
+                                onDeleteShop(shop.id);
+                              }
+                            }}
+                            className="p-1 hover:text-rose-600 text-neutral-500 rounded transition-colors"
+                            title="দোকান ডিলিট করুন"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <h4 className="font-extrabold text-base text-neutral-900 mt-2">{shop.name}</h4>
@@ -363,12 +398,24 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
         </div>
       )}
 
-      {/* Add New Shop Modal with Map Location & Route Name */}
+      {/* Add New / Edit Shop Modal with Map Location & Route Name */}
       <AddShopModal
-        isOpen={isAddOpen}
-        onClose={() => setIsAddOpen(false)}
-        onSaveShop={onAddShop}
+        isOpen={isAddOpen || !!editingShop}
+        onClose={() => {
+          setIsAddOpen(false);
+          setEditingShop(null);
+        }}
+        onSaveShop={(shop) => {
+          if (editingShop && onUpdateShop) {
+            onUpdateShop(shop);
+          } else {
+            onAddShop(shop);
+          }
+          setIsAddOpen(false);
+          setEditingShop(null);
+        }}
         existingShops={shops}
+        editShop={editingShop}
         initialRoute={selectedRoute !== 'all' ? selectedRoute : undefined}
       />
     </div>

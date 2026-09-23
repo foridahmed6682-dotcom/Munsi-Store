@@ -21,6 +21,7 @@ interface AddShopModalProps {
   existingShops?: Shop[];
   routes?: Route[];
   initialRoute?: string;
+  editShop?: Shop | null;
 }
 
 export const AddShopModal: React.FC<AddShopModalProps> = ({
@@ -30,6 +31,7 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
   existingShops = [],
   routes = [],
   initialRoute = '',
+  editShop = null,
 }) => {
   const [name, setName] = useState('');
   const [ownerName, setOwnerName] = useState('');
@@ -78,19 +80,34 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
   // Reset form when opened
   useEffect(() => {
     if (isOpen) {
-      setName('');
-      setOwnerName('');
-      setPhone('');
-      const defaultRoute = initialRoute || (routes && routes.length > 0 ? routes[0].banglaName : 'চকবাজার রুট');
-      setRouteArea(defaultRoute);
-      setAddress('');
-      setLat(undefined);
-      setLng(undefined);
-      setLocationSuccessText(null);
-      setLocationError(null);
-      setShowMapPicker(false);
+      if (editShop) {
+        setName(editShop.name || '');
+        setOwnerName(editShop.ownerName || '');
+        setPhone(editShop.phone || '');
+        setRouteArea(editShop.routeArea || '');
+        setAddress(editShop.address || '');
+        setCategory(editShop.category || 'জেনারেল স্টোর / মুদি');
+        setLat(editShop.lat);
+        setLng(editShop.lng);
+        setLocationSuccessText(editShop.lat ? 'পূর্বে সংরক্ষিত জিপিএস লোকেশন লোড হয়েছে' : null);
+        setLocationError(null);
+        setShowMapPicker(false);
+      } else {
+        setName('');
+        setOwnerName('');
+        setPhone('');
+        const defaultRoute = initialRoute || (routes && routes.length > 0 ? routes[0].banglaName : 'চকবাজার রুট');
+        setRouteArea(defaultRoute);
+        setAddress('');
+        setCategory('জেনারেল স্টোর / মুদি');
+        setLat(undefined);
+        setLng(undefined);
+        setLocationSuccessText(null);
+        setLocationError(null);
+        setShowMapPicker(false);
+      }
     }
-  }, [isOpen]);
+  }, [isOpen, editShop]);
 
   // Clean up map on unmount or close
   useEffect(() => {
@@ -281,22 +298,24 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
 
     const cleanRoute = routeArea.trim() || 'সাধারণ রুট';
 
-    const newShop: Shop = {
-      id: `shop-${Date.now()}`,
+    const savedShop: Shop = {
+      ...(editShop ? editShop : {
+        id: `shop-${Date.now()}`,
+        previousDue: 0,
+        createdAt: new Date().toISOString(),
+      }),
       name: name.trim(),
       ownerName: ownerName.trim() || 'মালিক',
       phone: phone.trim(),
       routeArea: cleanRoute,
       address: address.trim() || 'বাজার সংলগ্ন',
-      previousDue: 0,
       category: category,
-      lastVisitDate: new Date().toISOString().split('T')[0],
-      createdAt: new Date().toISOString(),
+      lastVisitDate: editShop?.lastVisitDate || new Date().toISOString().split('T')[0],
       lat: lat,
       lng: lng,
     };
 
-    onSaveShop(newShop);
+    onSaveShop(savedShop);
     onClose();
   };
 
@@ -312,10 +331,10 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
             </div>
             <div>
               <h3 className="font-bold text-base text-neutral-900 leading-tight">
-                নতুন দোকান ও লোকেশন যুক্ত করুন
+                {editShop ? 'দোকানের তথ্য এডিট ও আপডেট' : 'নতুন দোকান ও লোকেশন যুক্ত করুন'}
               </h3>
               <p className="text-[11px] text-neutral-500">
-                দোকানের তথ্য, রুট নাম ও ম্যাপস লোকেশন সংরক্ষণ করুন
+                {editShop ? 'দোকানের নাম, মোবাইল, রুট ও লোকেশন পরিবর্তন করুন' : 'দোকানের তথ্য, রুট নাম ও ম্যাপস লোকেশন সংরক্ষণ করুন'}
               </p>
             </div>
           </div>

@@ -399,6 +399,15 @@ export async function saveShopToCloud(shop: Shop) {
   }
 }
 
+export async function deleteShopFromCloud(shopId: string) {
+  const path = `shops/${shopId}`;
+  try {
+    await deleteDoc(doc(db, 'shops', shopId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
 export async function saveProductToCloud(product: Product) {
   const path = `products/${product.id}`;
   try {

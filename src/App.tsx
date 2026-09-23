@@ -33,6 +33,7 @@ import {
   subscribeToAuthorizedEmails,
   saveOrderToCloud,
   saveShopToCloud,
+  deleteShopFromCloud,
   saveProductToCloud,
   deleteProductFromCloud,
   saveCategoryToCloud,
@@ -336,6 +337,23 @@ export default function App() {
     showToast(`দোকান "${shop.name}" সফলভাবে যুক্ত হয়েছে!`, 'success');
   };
 
+  // Update Shop Handler
+  const handleUpdateShop = (shop: Shop) => {
+    saveShop(shop);
+    saveShopToCloud(shop).catch(() => {});
+    reloadData();
+    showToast(`দোকান "${shop.name}" সফলভাবে আপডেট হয়েছে!`, 'success');
+  };
+
+  // Delete Shop Handler
+  const handleDeleteShop = (shopId: string) => {
+    deleteShopFromCloud(shopId).catch(() => {});
+    const localShops = getShops().filter((s: Shop) => s.id !== shopId);
+    localStorage.setItem('dsr_shops_v1', JSON.stringify(localShops));
+    reloadData();
+    showToast('দোকানটি সফলভাবে ডিলিট করা হয়েছে!', 'info');
+  };
+
   // Add Product Handler
   const handleAddProduct = (product: Product) => {
     saveProduct(product);
@@ -627,6 +645,9 @@ export default function App() {
             onOpenMapForShop={(shopId) => {
               setActiveTab('map');
             }}
+            isAdmin={activeSimulatedRole === 'admin'}
+            onUpdateShop={handleUpdateShop}
+            onDeleteShop={handleDeleteShop}
           />
         )}
 
