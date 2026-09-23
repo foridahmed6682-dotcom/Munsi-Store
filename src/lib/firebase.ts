@@ -31,9 +31,13 @@ export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 
+// Standard provider for general login (email/profile - extremely reliable)
 const provider = new GoogleAuthProvider();
-provider.addScope('https://www.googleapis.com/auth/spreadsheets');
-provider.addScope('https://www.googleapis.com/auth/drive.file');
+
+// Workspace provider for sheet/drive sync (requires enabling APIs in Google Cloud Console)
+const workspaceProvider = new GoogleAuthProvider();
+workspaceProvider.addScope('https://www.googleapis.com/auth/spreadsheets');
+workspaceProvider.addScope('https://www.googleapis.com/auth/drive.file');
 
 // Verification & Connection test as required by firebase-skill
 export async function testConnection() {
@@ -99,9 +103,10 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 // Authentication Handlers
 let cachedAccessToken: string | null = null;
 
-export const googleSignIn = async (): Promise<{ user: User; accessToken: string; appUser: AppUser } | null> => {
+export const googleSignIn = async (requestWorkspaceScopes: boolean = false): Promise<{ user: User; accessToken: string; appUser: AppUser } | null> => {
   try {
-    const result = await signInWithPopup(auth, provider);
+    const activeProvider = requestWorkspaceScopes ? workspaceProvider : provider;
+    const result = await signInWithPopup(auth, activeProvider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     cachedAccessToken = credential?.accessToken || null;
 

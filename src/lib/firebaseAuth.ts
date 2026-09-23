@@ -12,10 +12,13 @@ import firebaseConfig from '../../firebase-applet-config.json';
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
 
+// Standard provider for general login (email/profile)
 const provider = new GoogleAuthProvider();
-// Required Workspace Scopes
-provider.addScope('https://www.googleapis.com/auth/spreadsheets');
-provider.addScope('https://www.googleapis.com/auth/drive.file');
+
+// Workspace provider for sheet/drive sync
+const workspaceProvider = new GoogleAuthProvider();
+workspaceProvider.addScope('https://www.googleapis.com/auth/spreadsheets');
+workspaceProvider.addScope('https://www.googleapis.com/auth/drive.file');
 
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;
@@ -39,10 +42,11 @@ export const initAuth = (
   });
 };
 
-export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
+export const googleSignIn = async (requestWorkspaceScopes: boolean = false): Promise<{ user: User; accessToken: string } | null> => {
   try {
     isSigningIn = true;
-    const result = await signInWithPopup(auth, provider);
+    const activeProvider = requestWorkspaceScopes ? workspaceProvider : provider;
+    const result = await signInWithPopup(auth, activeProvider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
       throw new Error('Failed to retrieve access token from Google sign in');

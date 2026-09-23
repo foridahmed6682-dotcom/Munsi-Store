@@ -338,7 +338,8 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
   const handleOpenGoogleMapsDirections = (shop: Shop) => {
     const lat = shop.lat ?? 23.75;
     const lng = shop.lng ?? 90.39;
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+    const originParam = userLocation ? `&origin=${userLocation.lat},${userLocation.lng}` : '';
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}${originParam}`;
     window.open(url, '_blank');
   };
 

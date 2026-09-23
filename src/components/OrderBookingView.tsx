@@ -335,33 +335,56 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {/* Route Filter */}
-              <select
-                value={routeFilter}
-                onChange={(e) => setRouteFilter(e.target.value)}
-                className="w-full text-xs py-2 px-2.5 bg-neutral-50 border border-neutral-300 rounded-xl focus:ring-2 focus:ring-emerald-500 font-medium text-neutral-800"
-              >
-                <option value="all">সব রুট / এলাকা ({shops.length} দোকান)</option>
-                {availableRouteNames.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
+            <div className="space-y-2">
+              {/* Shop typing search bar */}
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-neutral-400" />
+                <input
+                  type="text"
+                  value={shopSearch}
+                  onChange={(e) => setShopSearch(e.target.value)}
+                  placeholder="দোকানের নাম, প্রোপ্রাইটর বা ফোন নম্বর লিখে খুঁজুন..."
+                  className="w-full text-xs pl-8 pr-3 py-1.5 rounded-xl border border-neutral-300 focus:outline-hidden focus:ring-2 focus:ring-emerald-600 text-neutral-900 bg-white"
+                />
+                {shopSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setShopSearch('')}
+                    className="absolute right-3 top-1.5 text-xs text-neutral-400 hover:text-neutral-600 p-0.5"
+                  >
+                    ক্লিয়ার
+                  </button>
+                )}
+              </div>
 
-              {/* Shop Dropdown */}
-              <select
-                value={selectedShopId}
-                onChange={(e) => setSelectedShopId(e.target.value)}
-                className="w-full text-xs py-2 px-2.5 bg-neutral-50 border border-neutral-300 rounded-xl font-bold text-neutral-900 focus:ring-2 focus:ring-emerald-600"
-              >
-                {filteredShops.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} ({s.ownerName}) {s.previousDue > 0 ? `- বাকী: ৳${s.previousDue}` : '- নগদ'}
-                  </option>
-                ))}
-              </select>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {/* Route Filter */}
+                <select
+                  value={routeFilter}
+                  onChange={(e) => setRouteFilter(e.target.value)}
+                  className="w-full text-xs py-2 px-2.5 bg-neutral-50 border border-neutral-300 rounded-xl focus:ring-2 focus:ring-emerald-500 font-medium text-neutral-800"
+                >
+                  <option value="all">সব রুট / এলাকা ({shops.length} দোকান)</option>
+                  {availableRouteNames.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
+
+                {/* Shop Dropdown */}
+                <select
+                  value={selectedShopId}
+                  onChange={(e) => setSelectedShopId(e.target.value)}
+                  className="w-full text-xs py-2 px-2.5 bg-neutral-50 border border-neutral-300 rounded-xl font-bold text-neutral-900 focus:ring-2 focus:ring-emerald-600"
+                >
+                  {filteredShops.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.ownerName}) {s.previousDue > 0 ? `- বাকী: ৳${s.previousDue}` : '- নগদ'}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
         </div>
@@ -519,9 +542,21 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                   </div>
 
                   <div className="mt-3 pt-2 border-t border-neutral-100 flex items-center justify-between">
-                    <div>
-                      <span className="text-xs text-neutral-500">দর / {prod.unit}: </span>
-                      <span className="text-base font-extrabold text-neutral-900">৳{prod.unitPrice}</span>
+                    <div className="flex flex-col">
+                      <span className="text-[10px] text-neutral-500">দর / {prod.unit}:</span>
+                      {inCartQty > 0 ? (
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <span className="text-xs font-bold text-emerald-800">৳</span>
+                          <input
+                            type="number"
+                            value={cart[prod.id]?.unitPrice ?? prod.unitPrice}
+                            onChange={(e) => handleUpdatePrice(prod.id, e.target.value)}
+                            className="w-16 p-1 text-xs font-black text-emerald-800 bg-neutral-50 border border-neutral-300 rounded-lg focus:ring-1 focus:ring-emerald-500 focus:outline-hidden"
+                          />
+                        </div>
+                      ) : (
+                        <span className="text-sm font-extrabold text-neutral-900">৳{prod.unitPrice}</span>
+                      )}
                     </div>
 
                     {/* Quantity Selector */}

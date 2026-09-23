@@ -40,7 +40,8 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING' | 'DELIVERED' | 'CANCELLED'>('ALL');
-  const [timeFilter, setTimeFilter] = useState<'TODAY' | 'WEEK' | 'ALL'>('TODAY');
+  const [timeFilter, setTimeFilter] = useState<'TODAY' | 'WEEK' | 'CUSTOM' | 'ALL'>('TODAY');
+  const [customDate, setCustomDate] = useState<string>('');
 
   const todayStr = new Date().toISOString().split('T')[0];
 
@@ -53,6 +54,9 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
         const orderTime = new Date(order.orderDate).getTime();
         const sevenDaysAgo = Date.now() - 7 * 24 * 3600 * 1000;
         if (orderTime < sevenDaysAgo) return false;
+      } else if (timeFilter === 'CUSTOM') {
+        if (!customDate) return true;
+        if (!order.orderDate.startsWith(customDate)) return false;
       }
 
       // Status filter
@@ -192,7 +196,7 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
           </div>
 
           {/* Time Filter Tabs */}
-          <div className="flex items-center gap-1 bg-neutral-100 p-1 rounded-xl shrink-0">
+          <div className="flex flex-wrap items-center gap-1 bg-neutral-100 p-1 rounded-xl shrink-0">
             <button
               onClick={() => setTimeFilter('TODAY')}
               className={`px-3 py-1 rounded-lg text-xs font-semibold ${
@@ -217,6 +221,29 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
             >
               সকল
             </button>
+            <button
+              onClick={() => {
+                setTimeFilter('CUSTOM');
+                if (!customDate) {
+                  setCustomDate(todayStr);
+                }
+              }}
+              className={`px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 ${
+                timeFilter === 'CUSTOM' ? 'bg-white text-neutral-900 shadow-xs' : 'text-neutral-600'
+              }`}
+            >
+              <Calendar className="w-3.5 h-3.5 shrink-0" />
+              <span>নির্দিষ্ট তারিখ</span>
+            </button>
+
+            {timeFilter === 'CUSTOM' && (
+              <input
+                type="date"
+                value={customDate}
+                onChange={(e) => setCustomDate(e.target.value)}
+                className="text-xs bg-white text-neutral-900 font-bold border border-neutral-300 rounded-lg p-0.5 px-1.5 ml-1 focus:ring-1 focus:ring-emerald-600"
+              />
+            )}
           </div>
         </div>
 
