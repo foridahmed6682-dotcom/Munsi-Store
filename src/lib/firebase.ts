@@ -23,7 +23,18 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { AppUser, UserRole, Shop, Product, Order, DueCollectionRecord, Category, AuthorizedUserEmail, Route, BusinessInfo } from '../types';
-import { DEFAULT_CATEGORIES, DEFAULT_AUTHORIZED_EMAILS, DEFAULT_PRODUCTS, DEFAULT_SHOPS, DEFAULT_ROUTES } from './storage';
+import {
+  DEFAULT_CATEGORIES,
+  DEFAULT_AUTHORIZED_EMAILS,
+  DEFAULT_PRODUCTS,
+  DEFAULT_SHOPS,
+  DEFAULT_ROUTES,
+  getDeletedProductIds,
+  getDeletedShopIds,
+  getDeletedOrderIds,
+  getDeletedCategoryIds,
+  getDeletedRouteIds,
+} from './storage';
 
 export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
@@ -63,260 +74,251 @@ export enum OperationType {
 
 export interface FirestoreErrorInfo {
   error: string;
-  operationType: OperationType;
+  operation: OperationType;
   path: string | null;
   authInfo: {
-    userId?: string | null;
-    email?: string | null;
-    emailVerified?: boolean | null;
-    isAnonymous?: boolean | null;
-    tenantId?: string | null;
-    providerInfo?: {
-      providerId?: string | null;
-      email?: string | null;
-    }[];
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    token: any;
   };
 }
 
-export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo:
-        auth.currentUser?.providerData?.map((p) => ({
-          providerId: p.providerId,
-          email: p.email,
-        })) || [],
-    },
-    operationType,
+export function handleFirestoreError(error: unknown, operation: OperationType, path: string | null): never {
+  const err = error as { code?: string; message?: string };
+  const currentUser = auth.currentUser;
+
+  const errorInfo: FirestoreErrorInfo = {
+    error: err.message || String(error),
+    operation,
     path,
+    authInfo: {
+      userId: currentUser?.uid,
+      email: currentUser?.email,
+      emailVerified: currentUser?.emailVerified,
+      isAnonymous: currentUser?.isAnonymous,
+      token: (currentUser as any)?.accessToken || null,
+    },
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+
+  console.error('Firestore Error Context:', JSON.stringify(errorInfo, null, 2));
+  throw new Error(`Firestore Error [${operation} on ${path}]: ${err.message || String(error)}`);
 }
 
-// Authentication Handlers
-let cachedAccessToken: string | null = null;
-
-export const googleSignIn = async (requestWorkspaceScopes: boolean = false): Promise<{ user: User; accessToken: string; appUser: AppUser } | null> => {
+// 1. Google Sign-in for normal login
+export async function signInWithGoogle(): Promise<{ user: User; isNewUser: boolean; role: UserRole }> {
   try {
-    const activeProvider = requestWorkspaceScopes ? workspaceProvider : provider;
-    const result = await signInWithPopup(auth, activeProvider);
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    cachedAccessToken = credential?.accessToken || null;
+    const result = await signInWithPopup(auth, provider);
+    const firebaseUser = result.user;
 
-    const appUser = await syncUserWithFirestore(result.user);
+    let role: UserRole = 'dsr'; // default role
+    let assignedRoute: string = 'সব রুট (All Routes)';
 
-    return {
-      user: result.user,
-      accessToken: cachedAccessToken || '',
-      appUser,
-    };
-  } catch (error: any) {
-    console.error('Google Sign-in error:', error);
-    throw error;
-  }
-};
+    const userEmail = (firebaseUser.email || '').toLowerCase();
 
-export const logout = async () => {
-  await signOut(auth);
-  cachedAccessToken = null;
-  localStorage.removeItem('munsi_user_profile');
-};
+    // Check if main admin
+    if (userEmail === 'foridahmed6682@gmail.com' || userEmail === 'ahmedmdforid39@gmail.com') {
+      role = 'admin';
+    } else {
+      // Check Firestore authorizedEmails collection
+      const authSnap = await getDocs(collection(db, 'authorizedEmails'));
+      let foundAuth = false;
+      authSnap.forEach((docSnap) => {
+        const data = docSnap.data() as AuthorizedUserEmail;
+        if (data.email && data.email.toLowerCase() === userEmail) {
+          role = data.role || 'dsr';
+          if (data.assignedRoute) assignedRoute = data.assignedRoute;
+          foundAuth = true;
+        }
+      });
 
-export const getStoredGoogleToken = (): string | null => {
-  if (cachedAccessToken) return cachedAccessToken;
-  try {
-    const raw = localStorage.getItem('munsi_user_profile');
-    if (raw) {
-      const user = JSON.parse(raw);
-      return user.accessToken || null;
+      if (!foundAuth) {
+        // Fallback default admin list
+        if (DEFAULT_AUTHORIZED_EMAILS.some((a) => a.email.toLowerCase() === userEmail && a.role === 'admin')) {
+          role = 'admin';
+        }
+      }
     }
-  } catch {
-    return null;
+
+    // Sync user record to Firestore /users/{uid}
+    const userDocRef = doc(db, 'users', firebaseUser.uid);
+    const existingDoc = await getDoc(userDocRef);
+    const isNew = !existingDoc.exists();
+
+    const userData: AppUser = {
+      uid: firebaseUser.uid,
+      email: firebaseUser.email || '',
+      displayName: firebaseUser.displayName || 'ব্যবহারকারী',
+      photoURL: firebaseUser.photoURL || undefined,
+      role,
+      assignedRoute,
+      status: 'active',
+      updatedAt: new Date().toISOString(),
+      ...(isNew ? { createdAt: new Date().toISOString() } : {}),
+    };
+
+    await setDoc(userDocRef, userData, { merge: true });
+
+    if (role === 'admin') {
+      await setDoc(doc(db, 'admins', firebaseUser.uid), {
+        uid: firebaseUser.uid,
+        email: firebaseUser.email,
+        addedAt: new Date().toISOString(),
+      });
+    }
+
+    return { user: firebaseUser, isNewUser: isNew, role };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'users');
   }
-  return null;
-};
+}
 
-// User Profile & Role Synchronization
-export const MAIN_ADMIN_EMAIL = 'foridahmed6682@gmail.com';
+// 2. Google Sign-in with Workspace OAuth Scopes
+export async function signInWithWorkspaceGoogle(): Promise<{ user: User; accessToken: string | null; role: UserRole }> {
+  try {
+    const result = await signInWithPopup(auth, workspaceProvider);
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    const accessToken = credential?.accessToken || null;
+    const firebaseUser = result.user;
 
-export const BOOTSTRAPPED_ADMIN_EMAILS = [
-  MAIN_ADMIN_EMAIL,
-  'ahmedmdforid39@gmail.com'
-];
+    let role: UserRole = 'dsr';
+    let assignedRoute: string = 'সব রুট (All Routes)';
 
+    const userEmail = (firebaseUser.email || '').toLowerCase();
+    if (userEmail === 'foridahmed6682@gmail.com' || userEmail === 'ahmedmdforid39@gmail.com') {
+      role = 'admin';
+    } else {
+      const authSnap = await getDocs(collection(db, 'authorizedEmails'));
+      let foundAuth = false;
+      authSnap.forEach((docSnap) => {
+        const data = docSnap.data() as AuthorizedUserEmail;
+        if (data.email && data.email.toLowerCase() === userEmail) {
+          role = data.role || 'dsr';
+          if (data.assignedRoute) assignedRoute = data.assignedRoute;
+          foundAuth = true;
+        }
+      });
+      if (!foundAuth && DEFAULT_AUTHORIZED_EMAILS.some((a) => a.email.toLowerCase() === userEmail && a.role === 'admin')) {
+        role = 'admin';
+      }
+    }
+
+    const userDocRef = doc(db, 'users', firebaseUser.uid);
+    const existingDoc = await getDoc(userDocRef);
+    const isNew = !existingDoc.exists();
+
+    const userData: AppUser = {
+      uid: firebaseUser.uid,
+      email: firebaseUser.email || '',
+      displayName: firebaseUser.displayName || 'ব্যবহারকারী',
+      photoURL: firebaseUser.photoURL || undefined,
+      role,
+      assignedRoute,
+      status: 'active',
+      updatedAt: new Date().toISOString(),
+      ...(isNew ? { createdAt: new Date().toISOString() } : {}),
+    };
+
+    await setDoc(userDocRef, userData, { merge: true });
+
+    if (role === 'admin') {
+      await setDoc(doc(db, 'admins', firebaseUser.uid), {
+        uid: firebaseUser.uid,
+        email: firebaseUser.email,
+        addedAt: new Date().toISOString(),
+      });
+    }
+
+    return { user: firebaseUser, accessToken, role };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'users');
+  }
+}
+
+// 3. User Sign Out
+export async function logOut(): Promise<void> {
+  await signOut(auth);
+}
+export const logout = logOut;
+
+// Super Admin Check
 export function isMainSuperAdmin(email?: string | null): boolean {
   if (!email) return false;
-  return email.toLowerCase().trim() === MAIN_ADMIN_EMAIL.toLowerCase();
+  const e = email.toLowerCase().trim();
+  return e === 'foridahmed6682@gmail.com' || e === 'ahmedmdforid39@gmail.com';
 }
 
-export async function syncUserWithFirestore(user: User): Promise<AppUser> {
-  const userDocRef = doc(db, 'users', user.uid);
-  const now = new Date().toISOString();
-  const userEmail = user.email?.toLowerCase().trim() || '';
+// Unified Google Sign-in helper returning User, AppUser, and accessToken
+export async function googleSignIn(): Promise<{
+  user: User;
+  appUser: AppUser;
+  accessToken: string | null;
+}> {
+  const result = await signInWithWorkspaceGoogle();
+  const profile = await fetchUserProfile(result.user.uid);
+  const appUser: AppUser = profile || {
+    uid: result.user.uid,
+    email: result.user.email || '',
+    displayName: result.user.displayName || 'ব্যবহারকারী',
+    photoURL: result.user.photoURL || undefined,
+    role: result.role,
+    assignedRoute: 'সব রুট (All Routes)',
+    status: 'active',
+  };
+  return {
+    user: result.user,
+    appUser,
+    accessToken: result.accessToken,
+  };
+}
 
+// 4. Auth State Observer
+export function onAuthChanged(callback: (user: User | null) => void) {
+  return onAuthStateChanged(auth, callback);
+}
+
+// 5. Fetch User Profile
+export async function fetchUserProfile(uid: string): Promise<AppUser | null> {
+  const path = `users/${uid}`;
   try {
-    const isMainAdminUser = isMainSuperAdmin(userEmail);
-    const isBootstrappedAdmin = isMainAdminUser || BOOTSTRAPPED_ADMIN_EMAILS.some((adm) => adm.toLowerCase() === userEmail);
-
-    // Check backend authorization in authorizedEmails collection
-    let backendAuthorizedRole: UserRole | null = null;
-    let backendRoute: string | undefined = undefined;
-    let backendFullName: string | undefined = undefined;
-
-    if (userEmail) {
-      const emailDocId = userEmail.replace(/[@.]/g, '_');
-      try {
-        const authSnap = await getDoc(doc(db, 'authorizedEmails', emailDocId));
-        if (authSnap.exists()) {
-          const authData = authSnap.data() as AuthorizedUserEmail;
-          backendAuthorizedRole = authData.role;
-          backendRoute = authData.assignedRoute;
-          backendFullName = authData.fullName;
-        }
-      } catch (authErr) {
-        console.warn('Authorized emails lookup in Firestore:', authErr);
-      }
+    const snap = await getDoc(doc(db, 'users', uid));
+    if (snap.exists()) {
+      return snap.data() as AppUser;
     }
-
-    const docSnap = await getDoc(userDocRef);
-
-    if (docSnap.exists()) {
-      const existing = docSnap.data() as AppUser;
-      let effectiveRole: UserRole = 'customer';
-
-      if (isMainAdminUser || isBootstrappedAdmin) {
-        effectiveRole = 'admin';
-      } else if (backendAuthorizedRole) {
-        effectiveRole = backendAuthorizedRole;
-      }
-
-      // Update user doc in Firestore
-      const updates: Partial<AppUser> = {
-        role: effectiveRole,
-        updatedAt: now,
-      };
-      if (backendRoute) {
-        updates.assignedRoute = backendRoute;
-      }
-      if (user.displayName || backendFullName) {
-        updates.displayName = user.displayName || backendFullName || existing.displayName;
-      }
-      await updateDoc(userDocRef, updates);
-
-      if (effectiveRole === 'admin') {
-        await setDoc(doc(db, 'admins', user.uid), {
-          uid: user.uid,
-          email: user.email,
-          addedAt: now,
-        });
-      } else {
-        try {
-          await deleteDoc(doc(db, 'admins', user.uid));
-        } catch {
-          // ignore
-        }
-      }
-
-      return {
-        ...existing,
-        ...updates,
-        uid: user.uid,
-        email: user.email || existing.email,
-        displayName: user.displayName || backendFullName || existing.displayName || 'Field Officer',
-        photoURL: user.photoURL || existing.photoURL,
-        role: effectiveRole,
-      };
-    } else {
-      // Create new profile based on email access
-      const assignedRole: UserRole = isMainAdminUser || isBootstrappedAdmin
-        ? 'admin'
-        : backendAuthorizedRole
-        ? backendAuthorizedRole
-        : 'customer';
-
-      const newAppUser: AppUser = {
-        uid: user.uid,
-        email: user.email || '',
-        displayName: user.displayName || backendFullName || (isMainAdminUser ? 'ফরিদ আহমদ (প্রধান এডমিন)' : 'Field Representative'),
-        photoURL: user.photoURL || '',
-        role: assignedRole,
-        assignedRoute: backendRoute || 'সব রুট (All Routes)',
-        status: 'active',
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      await setDoc(userDocRef, newAppUser);
-
-      if (assignedRole === 'admin') {
-        await setDoc(doc(db, 'admins', user.uid), {
-          uid: user.uid,
-          email: user.email,
-          addedAt: now,
-        });
-      }
-
-      return newAppUser;
-    }
-  } catch (err) {
-    console.warn('Error syncing user with Firestore, using fallback profile:', err);
-    const isMainAdminUser = isMainSuperAdmin(userEmail);
-    const isBootstrappedAdmin = isMainAdminUser || BOOTSTRAPPED_ADMIN_EMAILS.some((adm) => adm.toLowerCase() === userEmail);
-    return {
-      uid: user.uid,
-      email: user.email || '',
-      displayName: user.displayName || 'Field Officer',
-      photoURL: user.photoURL || '',
-      role: isMainAdminUser || isBootstrappedAdmin ? 'admin' : 'dsr',
-      status: 'active',
-    };
+    return null;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, path);
   }
 }
 
+// 6. Fetch All Registered Users
 export async function fetchAllUsers(): Promise<AppUser[]> {
   const path = 'users';
   try {
-    const snap = await getDocs(collection(db, path));
-    const list: AppUser[] = [];
-    snap.forEach((d) => {
-      list.push(d.data() as AppUser);
-    });
-    return list;
+    const snapshot = await getDocs(collection(db, path));
+    const users: AppUser[] = [];
+    snapshot.forEach((d) => users.push(d.data() as AppUser));
+    return users;
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
-    return [];
   }
 }
 
-export async function updateUserRoleAndRoute(
-  uid: string,
-  role: UserRole,
-  assignedRoute?: string
-): Promise<void> {
+// 7. Update User Role & Route
+export async function updateUserRoleAndRoute(uid: string, role: UserRole, assignedRoute?: string) {
   const path = `users/${uid}`;
   try {
-    const userDocRef = doc(db, 'users', uid);
-    const updates: Partial<AppUser> = {
+    await updateDoc(doc(db, 'users', uid), {
       role,
+      ...(assignedRoute ? { assignedRoute } : {}),
       updatedAt: new Date().toISOString(),
-    };
-    if (assignedRoute !== undefined) {
-      updates.assignedRoute = assignedRoute;
-    }
-    await updateDoc(userDocRef, updates);
+    });
 
-    // If role became admin, add to admins collection; if revoked, delete from admins
     if (role === 'admin') {
       await setDoc(doc(db, 'admins', uid), {
         uid,
-        updatedAt: new Date().toISOString(),
+        addedAt: new Date().toISOString(),
       });
     } else {
       try {
@@ -337,10 +339,10 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
     collection(db, path),
     (snapshot) => {
       const shops: Shop[] = [];
-      const mockIds = new Set(['shop-1', 'shop-2', 'shop-3', 'shop-4', 'shop-5', 'shop-6']);
+      const deletedIds = getDeletedShopIds();
       snapshot.forEach((d) => {
         const s = d.data() as Shop;
-        if (!mockIds.has(s.id)) {
+        if (!deletedIds.has(s.id)) {
           shops.push(s);
         }
       });
@@ -358,7 +360,13 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
     collection(db, path),
     (snapshot) => {
       const products: Product[] = [];
-      snapshot.forEach((d) => products.push(d.data() as Product));
+      const deletedIds = getDeletedProductIds();
+      snapshot.forEach((d) => {
+        const p = d.data() as Product;
+        if (!deletedIds.has(p.id)) {
+          products.push(p);
+        }
+      });
       onData(products);
     },
     (error) => {
@@ -374,10 +382,10 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
     q,
     (snapshot) => {
       const orders: Order[] = [];
-      const mockOrderIds = new Set(['ord-101', 'ord-102']);
+      const deletedIds = getDeletedOrderIds();
       snapshot.forEach((d) => {
         const o = d.data() as Order;
-        if (!mockOrderIds.has(o.id)) {
+        if (!deletedIds.has(o.id)) {
           orders.push(o);
         }
       });
@@ -417,12 +425,30 @@ export async function saveProductToCloud(product: Product) {
   }
 }
 
+export async function deleteProductFromCloud(productId: string) {
+  const path = `products/${productId}`;
+  try {
+    await deleteDoc(doc(db, 'products', productId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
 export async function saveOrderToCloud(order: Order) {
   const path = `orders/${order.id}`;
   try {
     await setDoc(doc(db, 'orders', order.id), order);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function deleteOrderFromCloud(orderId: string) {
+  const path = `orders/${orderId}`;
+  try {
+    await deleteDoc(doc(db, 'orders', orderId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
   }
 }
 
@@ -435,15 +461,6 @@ export async function saveDueCollectionToCloud(record: DueCollectionRecord) {
   }
 }
 
-export async function deleteProductFromCloud(productId: string) {
-  const path = `products/${productId}`;
-  try {
-    await deleteDoc(doc(db, 'products', productId));
-  } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, path);
-  }
-}
-
 // Category Cloud Methods
 export function subscribeToCloudCategories(onData: (categories: Category[]) => void) {
   const path = 'categories';
@@ -451,7 +468,13 @@ export function subscribeToCloudCategories(onData: (categories: Category[]) => v
     collection(db, path),
     (snapshot) => {
       const list: Category[] = [];
-      snapshot.forEach((d) => list.push(d.data() as Category));
+      const deletedIds = getDeletedCategoryIds();
+      snapshot.forEach((d) => {
+        const c = d.data() as Category;
+        if (!deletedIds.has(c.id)) {
+          list.push(c);
+        }
+      });
       onData(list);
     },
     (error) => {
@@ -485,7 +508,13 @@ export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
     collection(db, path),
     (snapshot) => {
       const list: Route[] = [];
-      snapshot.forEach((d) => list.push(d.data() as Route));
+      const deletedIds = getDeletedRouteIds();
+      snapshot.forEach((d) => {
+        const r = d.data() as Route;
+        if (!deletedIds.has(r.id)) {
+          list.push(r);
+        }
+      });
       onData(list);
     },
     (error) => {
@@ -557,9 +586,15 @@ export async function deleteAuthorizedEmailFromCloud(email: string) {
   }
 }
 
-// Automatic bootstrap seed function if collections are empty
+// Automatic bootstrap seed function - only runs once and respects user deletions
 export async function seedInitialCloudDataIfEmpty() {
   try {
+    // 0. Check system_init doc to prevent re-seeding after user deletes mock data!
+    const initSnap = await getDoc(doc(db, 'settings', 'system_init'));
+    if (initSnap.exists() && initSnap.data()?.initialSeedCompleted) {
+      return;
+    }
+
     // 1. Categories
     const catSnap = await getDocs(collection(db, 'categories'));
     if (catSnap.empty) {
@@ -606,16 +641,45 @@ export async function seedInitialCloudDataIfEmpty() {
 
     // 6. Business Info Seeding
     try {
-      const bizSnap = await getDocs(collection(db, 'settings'));
-      if (bizSnap.empty) {
+      const bizSnap = await getDoc(doc(db, 'settings', 'businessInfo'));
+      if (!bizSnap.exists()) {
         await setDoc(doc(db, 'settings', 'businessInfo'), DEFAULT_BUSINESS_INFO);
       }
     } catch {
       // ignore
     }
+
+    // 7. Mark system_init as permanently completed so it NEVER re-seeds again
+    await setDoc(doc(db, 'settings', 'system_init'), {
+      initialSeedCompleted: true,
+      seededAt: new Date().toISOString(),
+    });
   } catch (err) {
     console.warn('Initial cloud seed skipped or already present:', err);
   }
+}
+
+// Permanently delete all mock products, shops, and orders from Cloud Firestore
+export async function clearAllCloudMockData() {
+  const mockProdIds = DEFAULT_PRODUCTS.map((p) => p.id);
+  const mockShopIds = ['shop-1', 'shop-2', 'shop-3', 'shop-4', 'shop-5', 'shop-6'];
+  const mockOrderIds = ['ord-101', 'ord-102'];
+
+  for (const pid of mockProdIds) {
+    await deleteDoc(doc(db, 'products', pid)).catch(() => {});
+  }
+  for (const sid of mockShopIds) {
+    await deleteDoc(doc(db, 'shops', sid)).catch(() => {});
+  }
+  for (const oid of mockOrderIds) {
+    await deleteDoc(doc(db, 'orders', oid)).catch(() => {});
+  }
+
+  await setDoc(doc(db, 'settings', 'system_init'), {
+    initialSeedCompleted: true,
+    mockDataCleared: true,
+    clearedAt: new Date().toISOString(),
+  }).catch(() => {});
 }
 
 // 7. Business Info Configuration & Persistence

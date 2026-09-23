@@ -70,7 +70,7 @@ export const Header: React.FC<HeaderProps> = ({
           photoURL: res.user.photoURL || '',
           role: res.appUser.role,
           assignedRoute: res.appUser.assignedRoute,
-          accessToken: res.accessToken,
+          accessToken: res.accessToken || undefined,
         });
       }
     } catch (err: any) {

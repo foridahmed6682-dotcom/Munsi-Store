@@ -55,7 +55,7 @@ export const AdminLoginGuard: React.FC<AdminLoginGuardProps> = ({
           photoURL: res.user.photoURL || '',
           role: res.appUser.role,
           assignedRoute: res.appUser.assignedRoute,
-          accessToken: res.accessToken,
+          accessToken: res.accessToken || undefined,
         };
         onLoginSuccess(userObj);
       }

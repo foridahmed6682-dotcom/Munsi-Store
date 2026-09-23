@@ -11,7 +11,7 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png'],
+        includeAssets: ['icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-maskable-192x192.png', 'pwa-512x512.png', 'pwa-maskable-512x512.png'],
         manifest: {
           id: '/',
           name: 'Shop Order Booker & Inventory',
@@ -20,14 +20,23 @@ export default defineConfig(() => {
           theme_color: '#059669',
           background_color: '#ffffff',
           display: 'standalone',
+          orientation: 'portrait-primary',
           start_url: '/',
           scope: '/',
+          lang: 'bn',
+          categories: ['business', 'productivity', 'shopping'],
           icons: [
             {
               src: '/pwa-192x192.png',
               sizes: '192x192',
               type: 'image/png',
               purpose: 'any',
+            },
+            {
+              src: '/pwa-maskable-192x192.png',
+              sizes: '192x192',
+              type: 'image/png',
+              purpose: 'maskable',
             },
             {
               src: '/pwa-512x512.png',
@@ -84,7 +93,7 @@ export default defineConfig(() => {
     ],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': path.resolve(import.meta.dirname || '.', '.'),
       },
     },
     server: {

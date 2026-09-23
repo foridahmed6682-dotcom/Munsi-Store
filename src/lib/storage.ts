@@ -9,6 +9,12 @@ const STORAGE_KEYS = {
   ORDERS: 'dsr_orders_v1',
   COLLECTIONS: 'dsr_collections_v1',
   LAST_MEMO_NUM: 'dsr_last_memo_v1',
+  SEED_DONE: 'dsr_seed_done_v1',
+  DELETED_PRODUCTS: 'dsr_deleted_products_v1',
+  DELETED_SHOPS: 'dsr_deleted_shops_v1',
+  DELETED_ORDERS: 'dsr_deleted_orders_v1',
+  DELETED_CATEGORIES: 'dsr_deleted_categories_v1',
+  DELETED_ROUTES: 'dsr_deleted_routes_v1',
 };
 
 export const DEFAULT_ROUTES: Route[] = [
@@ -109,7 +115,7 @@ export const DEFAULT_PRODUCTS: Product[] = [
     unit: 'কার্টুন',
     unitPrice: 1850,
     costPrice: 1680,
-    stock: 8, // Low stock on purpose
+    stock: 8,
     minStockAlert: 12,
     imageUrl: 'https://images.unsplash.com/photo-1615485290382-441e4d049cb5?w=500&auto=format&fit=crop&q=80',
   },
@@ -162,7 +168,7 @@ export const DEFAULT_PRODUCTS: Product[] = [
     unit: 'কার্টুন',
     unitPrice: 1450,
     costPrice: 1320,
-    stock: 5, // Very low stock
+    stock: 5,
     minStockAlert: 12,
     imageUrl: 'https://images.unsplash.com/photo-1558961363-fa8fdf82db35?w=500&auto=format&fit=crop&q=80',
   },
@@ -181,45 +187,138 @@ export const DEFAULT_PRODUCTS: Product[] = [
   },
 ];
 
-// In production mode, default shops starts clean so users manage real shops
 export const DEFAULT_SHOPS: Shop[] = [];
 
-// Production starts with 0 orders - real orders are created by SR/Admin
-function getInitialOrders(): Order[] {
-  return [];
+// Deleted ID Tracking helpers to prevent deleted items from reappearing on refresh
+export function getDeletedProductIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.DELETED_PRODUCTS);
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+export function addDeletedProductId(id: string) {
+  const set = getDeletedProductIds();
+  set.add(id);
+  localStorage.setItem(STORAGE_KEYS.DELETED_PRODUCTS, JSON.stringify(Array.from(set)));
+}
+
+export function getDeletedShopIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.DELETED_SHOPS);
+    return new Set(raw ? JSON.parse(raw) : ['shop-1', 'shop-2', 'shop-3', 'shop-4', 'shop-5', 'shop-6']);
+  } catch {
+    return new Set(['shop-1', 'shop-2', 'shop-3', 'shop-4', 'shop-5', 'shop-6']);
+  }
+}
+
+export function addDeletedShopId(id: string) {
+  const set = getDeletedShopIds();
+  set.add(id);
+  localStorage.setItem(STORAGE_KEYS.DELETED_SHOPS, JSON.stringify(Array.from(set)));
+}
+
+export function getDeletedOrderIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.DELETED_ORDERS);
+    return new Set(raw ? JSON.parse(raw) : ['ord-101', 'ord-102']);
+  } catch {
+    return new Set(['ord-101', 'ord-102']);
+  }
+}
+
+export function addDeletedOrderId(id: string) {
+  const set = getDeletedOrderIds();
+  set.add(id);
+  localStorage.setItem(STORAGE_KEYS.DELETED_ORDERS, JSON.stringify(Array.from(set)));
+}
+
+export function getDeletedCategoryIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.DELETED_CATEGORIES);
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+export function addDeletedCategoryId(id: string) {
+  const set = getDeletedCategoryIds();
+  set.add(id);
+  localStorage.setItem(STORAGE_KEYS.DELETED_CATEGORIES, JSON.stringify(Array.from(set)));
+}
+
+export function getDeletedRouteIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.DELETED_ROUTES);
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+export function addDeletedRouteId(id: string) {
+  const set = getDeletedRouteIds();
+  set.add(id);
+  localStorage.setItem(STORAGE_KEYS.DELETED_ROUTES, JSON.stringify(Array.from(set)));
+}
+
+export function isInitialSeedDone(): boolean {
+  return localStorage.getItem(STORAGE_KEYS.SEED_DONE) === 'true';
+}
+
+export function markInitialSeedDone() {
+  localStorage.setItem(STORAGE_KEYS.SEED_DONE, 'true');
+}
+
+export function saveBusinessInfoLocal(info: any) {
+  try {
+    localStorage.setItem('dsr_business_info', JSON.stringify(info));
+  } catch (e) {}
+}
+
+export function getBusinessInfoLocal(): any | null {
+  try {
+    const raw = localStorage.getItem('dsr_business_info');
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
 }
 
 // Storage Helpers
 export function getProducts(): Product[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.PRODUCTS);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(DEFAULT_PRODUCTS));
-      return DEFAULT_PRODUCTS;
-    }
-    const parsed: Product[] = JSON.parse(raw);
-    let updated = false;
-    const enriched = parsed.map((p) => {
-      if (!p.imageUrl) {
-        const def = DEFAULT_PRODUCTS.find((dp) => dp.id === p.id || dp.sku === p.sku);
-        if (def?.imageUrl) {
-          updated = true;
-          return { ...p, imageUrl: def.imageUrl };
-        }
+    const deletedIds = getDeletedProductIds();
+    const seedDone = isInitialSeedDone();
+
+    if (raw === null) {
+      if (!seedDone) {
+        markInitialSeedDone();
+        localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(DEFAULT_PRODUCTS));
+        return DEFAULT_PRODUCTS;
       }
-      return p;
-    });
-    if (updated) {
-      localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(enriched));
+      return [];
     }
-    return enriched;
+
+    const parsed: Product[] = JSON.parse(raw);
+    const clean = parsed.filter((p) => !deletedIds.has(p.id));
+    if (clean.length !== parsed.length) {
+      localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(clean));
+    }
+    return clean;
   } catch (e) {
-    return DEFAULT_PRODUCTS;
+    return [];
   }
 }
 
 export function saveProducts(products: Product[]) {
-  localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+  const deletedIds = getDeletedProductIds();
+  const clean = products.filter((p) => !deletedIds.has(p.id));
+  localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(clean));
 }
 
 export function addOrUpdateProduct(product: Product): Product {
@@ -235,6 +334,7 @@ export function addOrUpdateProduct(product: Product): Product {
 }
 
 export function deleteProduct(productId: string) {
+  addDeletedProductId(productId);
   const products = getProducts();
   const filtered = products.filter((p) => p.id !== productId);
   saveProducts(filtered);
@@ -244,18 +344,27 @@ export function deleteProduct(productId: string) {
 export function getCategories(): Category[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.CATEGORIES);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(DEFAULT_CATEGORIES));
-      return DEFAULT_CATEGORIES;
+    const deletedIds = getDeletedCategoryIds();
+    const seedDone = isInitialSeedDone();
+
+    if (raw === null) {
+      if (!seedDone) {
+        localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(DEFAULT_CATEGORIES));
+        return DEFAULT_CATEGORIES;
+      }
+      return [];
     }
-    return JSON.parse(raw);
+    const parsed: Category[] = JSON.parse(raw);
+    return parsed.filter((c) => !deletedIds.has(c.id));
   } catch {
-    return DEFAULT_CATEGORIES;
+    return [];
   }
 }
 
 export function saveCategories(categories: Category[]) {
-  localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(categories));
+  const deletedIds = getDeletedCategoryIds();
+  const clean = categories.filter((c) => !deletedIds.has(c.id));
+  localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(clean));
 }
 
 export function addOrUpdateCategory(category: Category): Category {
@@ -271,6 +380,7 @@ export function addOrUpdateCategory(category: Category): Category {
 }
 
 export function deleteCategory(categoryId: string) {
+  addDeletedCategoryId(categoryId);
   const categories = getCategories();
   const filtered = categories.filter((c) => c.id !== categoryId);
   saveCategories(filtered);
@@ -280,18 +390,27 @@ export function deleteCategory(categoryId: string) {
 export function getRoutes(): Route[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.ROUTES);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEYS.ROUTES, JSON.stringify(DEFAULT_ROUTES));
-      return DEFAULT_ROUTES;
+    const deletedIds = getDeletedRouteIds();
+    const seedDone = isInitialSeedDone();
+
+    if (raw === null) {
+      if (!seedDone) {
+        localStorage.setItem(STORAGE_KEYS.ROUTES, JSON.stringify(DEFAULT_ROUTES));
+        return DEFAULT_ROUTES;
+      }
+      return [];
     }
-    return JSON.parse(raw);
+    const parsed: Route[] = JSON.parse(raw);
+    return parsed.filter((r) => !deletedIds.has(r.id));
   } catch {
-    return DEFAULT_ROUTES;
+    return [];
   }
 }
 
 export function saveRoutes(routes: Route[]) {
-  localStorage.setItem(STORAGE_KEYS.ROUTES, JSON.stringify(routes));
+  const deletedIds = getDeletedRouteIds();
+  const clean = routes.filter((r) => !deletedIds.has(r.id));
+  localStorage.setItem(STORAGE_KEYS.ROUTES, JSON.stringify(clean));
 }
 
 export function addOrUpdateRoute(route: Route): Route {
@@ -307,6 +426,7 @@ export function addOrUpdateRoute(route: Route): Route {
 }
 
 export function deleteRoute(routeId: string) {
+  addDeletedRouteId(routeId);
   const routes = getRoutes();
   const filtered = routes.filter((r) => r.id !== routeId);
   saveRoutes(filtered);
@@ -364,9 +484,8 @@ export function getShops(): Shop[] {
       return [];
     }
     const parsed: Shop[] = JSON.parse(raw);
-    // Filter out previous mock dummy shops
-    const mockIds = new Set(['shop-1', 'shop-2', 'shop-3', 'shop-4', 'shop-5', 'shop-6']);
-    const realShops = parsed.filter((s) => !mockIds.has(s.id));
+    const deletedIds = getDeletedShopIds();
+    const realShops = parsed.filter((s) => !deletedIds.has(s.id));
     return realShops;
   } catch (e) {
     return [];
@@ -374,7 +493,9 @@ export function getShops(): Shop[] {
 }
 
 export function saveShops(shops: Shop[]) {
-  localStorage.setItem(STORAGE_KEYS.SHOPS, JSON.stringify(shops));
+  const deletedIds = getDeletedShopIds();
+  const clean = shops.filter((s) => !deletedIds.has(s.id));
+  localStorage.setItem(STORAGE_KEYS.SHOPS, JSON.stringify(clean));
 }
 
 export function addOrUpdateShop(shop: Shop): Shop {
@@ -387,6 +508,13 @@ export function addOrUpdateShop(shop: Shop): Shop {
   }
   saveShops(shops);
   return shop;
+}
+
+export function deleteShop(shopId: string) {
+  addDeletedShopId(shopId);
+  const shops = getShops();
+  const filtered = shops.filter((s) => s.id !== shopId);
+  saveShops(filtered);
 }
 
 export function updateShopDue(shopId: string, dueDelta: number) {
@@ -406,9 +534,8 @@ export function getOrders(): Order[] {
       return [];
     }
     const parsed: Order[] = JSON.parse(raw);
-    // Filter out previous mock orders
-    const mockOrderIds = new Set(['ord-101', 'ord-102']);
-    const realOrders = parsed.filter((o) => !mockOrderIds.has(o.id));
+    const deletedIds = getDeletedOrderIds();
+    const realOrders = parsed.filter((o) => !deletedIds.has(o.id));
     return realOrders;
   } catch (e) {
     return [];
@@ -416,7 +543,16 @@ export function getOrders(): Order[] {
 }
 
 export function saveOrders(orders: Order[]) {
-  localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(orders));
+  const deletedIds = getDeletedOrderIds();
+  const clean = orders.filter((o) => !deletedIds.has(o.id));
+  localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(clean));
+}
+
+export function deleteOrder(orderId: string) {
+  addDeletedOrderId(orderId);
+  const orders = getOrders();
+  const filtered = orders.filter((o) => o.id !== orderId);
+  saveOrders(filtered);
 }
 
 export function getNextMemoNumber(): string {
@@ -440,21 +576,18 @@ export function createOrder(orderData: Omit<Order, 'id' | 'memoNumber' | 'synced
     ...orderData,
     id,
     memoNumber,
-    syncedWithSheets: false, // initially queued for sync
+    syncedWithSheets: false,
     orderDate,
   };
 
-  // Deduct inventory
   newOrder.items.forEach((item) => {
     adjustStock(item.productId, -item.quantity);
   });
 
-  // Update shop outstanding balance
   if (newOrder.dueAmount > 0) {
     updateShopDue(newOrder.shopId, newOrder.dueAmount);
   }
 
-  // Save order to store
   const orders = getOrders();
   orders.unshift(newOrder);
   saveOrders(orders);
@@ -519,7 +652,6 @@ export function recordDuePayment(shopId: string, amount: number, paymentMethod: 
   collections.unshift(record);
   localStorage.setItem(STORAGE_KEYS.COLLECTIONS, JSON.stringify(collections));
 
-  // Deduct from shop due
   updateShopDue(shopId, -amount);
 
   return record;
@@ -599,9 +731,35 @@ export function saveUserProfile(user: any) {
   }
 }
 
+// Clear all default demo/mock products, shops and orders permanently
+export function clearAllMockDataLocal() {
+  markInitialSeedDone();
+
+  const mockProdIds = DEFAULT_PRODUCTS.map((p) => p.id);
+  mockProdIds.forEach((id) => addDeletedProductId(id));
+
+  const mockShopIds = ['shop-1', 'shop-2', 'shop-3', 'shop-4', 'shop-5', 'shop-6'];
+  mockShopIds.forEach((id) => addDeletedShopId(id));
+
+  const mockOrderIds = ['ord-101', 'ord-102'];
+  mockOrderIds.forEach((id) => addDeletedOrderId(id));
+
+  const cleanProducts = getProducts().filter((p) => !mockProdIds.includes(p.id));
+  saveProducts(cleanProducts);
+
+  const cleanShops = getShops().filter((s) => !mockShopIds.includes(s.id));
+  saveShops(cleanShops);
+
+  const cleanOrders = getOrders().filter((o) => !mockOrderIds.includes(o.id));
+  saveOrders(cleanOrders);
+}
+
 export function resetToDemoData() {
+  localStorage.removeItem(STORAGE_KEYS.DELETED_PRODUCTS);
+  localStorage.removeItem(STORAGE_KEYS.DELETED_SHOPS);
+  localStorage.removeItem(STORAGE_KEYS.DELETED_ORDERS);
   localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(DEFAULT_PRODUCTS));
   localStorage.setItem(STORAGE_KEYS.SHOPS, JSON.stringify(DEFAULT_SHOPS));
-  localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(getInitialOrders()));
+  localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify([]));
   localStorage.removeItem(STORAGE_KEYS.COLLECTIONS);
 }

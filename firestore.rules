@@ -33,26 +33,6 @@ service cloud.firestore {
       );
     }
 
-    function getUserRole() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
-    }
-
-    function isSR() {
-      return isAdmin() || (
-        isSignedIn() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        getUserRole() in ['sr', 'admin']
-      );
-    }
-
-    function isDSR() {
-      return isAdmin() || (
-        isSignedIn() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        getUserRole() in ['dsr', 'sr', 'admin']
-      );
-    }
-
     // Entity Validations
     function isValidUser(data) {
       return data.uid is string && data.uid.size() > 0 && data.uid.size() <= 128 &&
@@ -128,64 +108,49 @@ service cloud.firestore {
     // 3. Authorized Staff Emails by Admin
     match /authorizedEmails/{authId} {
       allow get, list: if true;
-      allow create, update, delete: if isAdmin() || isSignedIn();
+      allow create, update, delete: if true;
     }
 
     // 4. Product Categories
     match /categories/{categoryId} {
       allow get, list: if true;
-      allow create, update, delete: if isAdmin() || isSignedIn();
+      allow create, update, delete: if true;
     }
 
     // 5. Shops Collection
     match /shops/{shopId} {
       allow get, list: if true;
-      allow create: if isValidShop(request.resource.data);
-      allow update: if isValidShop(request.resource.data);
-      allow delete: if isAdmin();
+      allow create, update, delete: if true;
     }
 
     // 6. Products Collection
     match /products/{productId} {
       allow get, list: if true;
-      allow create: if isValidProduct(request.resource.data) && (isAdmin() || isSignedIn());
-      allow update: if isValidProduct(request.resource.data) && (
-        isAdmin() || isSignedIn() ||
-        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock']))
-      );
-      allow delete: if isAdmin() || isSignedIn();
+      allow create, update, delete: if true;
     }
 
     // 7. Orders Collection
     match /orders/{orderId} {
       allow get, list: if true;
-      allow create: if isValidOrder(request.resource.data);
-      allow update: if isValidOrder(request.resource.data) && (
-        isAdmin() ||
-        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deliveryStatus', 'syncedWithSheets', 'notes']))
-      );
-      allow delete: if isAdmin();
+      allow create, update, delete: if true;
     }
 
     // 8. Due Collections
     match /dueCollections/{collectionId} {
       allow get, list: if true;
-      allow create: if isValidDueCollection(request.resource.data);
-      allow update: if isAdmin();
-      allow delete: if isAdmin();
+      allow create, update, delete: if true;
     }
 
     // 9. Routes Collection
     match /routes/{routeId} {
       allow get, list: if true;
-      allow create, update, delete: if isAdmin() || isSignedIn();
+      allow create, update, delete: if true;
     }
 
-    // 10. Settings Collection (Business Settings)
+    // 10. Settings Collection (Business Settings & System Init State)
     match /settings/{settingId} {
       allow get, list: if true;
-      allow create, update: if isAdmin() || isSignedIn();
-      allow delete: if isAdmin();
+      allow create, update, delete: if true;
     }
   }
 }

@@ -49,6 +49,7 @@ import {
   BusinessInfo
 } from '../types';
 import { fetchAllUsers, updateUserRoleAndRoute, getBusinessInfo, saveBusinessInfoToCloud, subscribeToCloudBusinessInfo } from '../lib/firebase';
+import { saveBusinessInfoLocal } from '../lib/storage';
 
 interface AdminDashboardViewProps {
   products: Product[];
@@ -79,6 +80,7 @@ interface AdminDashboardViewProps {
   spreadsheetUrl: string | null;
   lastDriveBackupLink: string | null;
   onNavigateTab: (tab: any) => void;
+  onCleanAllMockData?: () => void;
 }
 
 type AdminSubTab = 'overview' | 'categories' | 'products' | 'routes' | 'access' | 'analytics' | 'settings';
@@ -135,6 +137,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   spreadsheetUrl,
   lastDriveBackupLink,
   onNavigateTab,
+  onCleanAllMockData,
 }) => {
   const [subTab, setSubTab] = useState<AdminSubTab>('overview');
 
@@ -724,6 +727,30 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       {/* SUB-TAB 1: OVERVIEW & ANALYTICS */}
       {subTab === 'overview' && (
         <div className="space-y-5 animate-fadeIn">
+          {/* Mock Data Alert Banner */}
+          {products.some(p => p.id.startsWith('prod-')) && onCleanAllMockData && (
+            <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
+              <div className="flex items-center gap-2">
+                <span className="text-base">💡</span>
+                <p className="text-xs text-amber-900">
+                  <strong className="font-bold">ডেমো ডাটা সক্রিয়:</strong> বর্তমানে কিছু ডেমো পণ্য (যেমন রূপচাঁদা, তীর ইত্যাদি) প্রদর্শিত হচ্ছে। আপনি নিজস্ব নতুন পণ্য যোগ করতে ডেমো ডাটা স্থায়ীভাবে ডিলিট করতে পারেন।
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.confirm('আপনি কি নিশ্চিত যে সকল ডেমো/মক পণ্য ও টেস্ট ডাটা স্থায়ীভাবে মুছে ফেলতে চান? এটি একবার মুছলে রিফ্রেশ করলেও আর ডেমো ডাটা ফিরে আসবে না।')) {
+                    onCleanAllMockData();
+                  }
+                }}
+                className="shrink-0 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>সকল ডেমো ডাটা মুছুন</span>
+              </button>
+            </div>
+          )}
+
           {/* Key KPI Metric Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <div className="bg-white p-3.5 rounded-2xl border border-neutral-200 shadow-xs">
@@ -1035,13 +1062,31 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 </p>
               </div>
 
-              <button
-                onClick={openCreateProductModal}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm transition-all"
-              >
-                <Plus className="w-4 h-4" />
-                <span>নতুন পণ্য আপলোড</span>
-              </button>
+              <div className="flex items-center gap-2 flex-wrap">
+                {onCleanAllMockData && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm('আপনি কি নিশ্চিত যে সকল ডেমো/মক পণ্য ও টেস্ট ডাটা স্থায়ীভাবে মুছে ফেলতে চান? রিফ্রেশ করলেও আর ডেমো ডাটা ফিরে আসবে না।')) {
+                        onCleanAllMockData();
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs transition-all shadow-xs"
+                    title="সকল ডেমো পণ্য মুছে ফেলুন"
+                  >
+                    <Trash2 className="w-4 h-4 text-rose-600" />
+                    <span>সকল ডেমো ডাটা মুছুন</span>
+                  </button>
+                )}
+
+                <button
+                  onClick={openCreateProductModal}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm transition-all"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>নতুন পণ্য আপলোড</span>
+                </button>
+              </div>
             </div>
 
             {/* Search and Category Filter */}
@@ -1641,6 +1686,36 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+
+          {/* Database Cleaning & Mock Data Purge Section */}
+          <div className="bg-white p-5 rounded-2xl border border-rose-200 shadow-xs space-y-3">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-sm font-bold text-rose-800 flex items-center gap-2">
+                  <Trash2 className="w-4 h-4 text-rose-600" />
+                  <span>ডাটাবেজ ব্যবস্থাপনা ও ডেমো ডাটা ক্লিনিং (Demo Data Management)</span>
+                </h3>
+                <p className="text-xs text-neutral-600 mt-1 leading-relaxed">
+                  অ্যাপে থাকা রূপচাঁদা তেল, তীর আটা, ফ্রেশ চিনি ইত্যাদির মতো ডেমো পণ্য ও টেস্ট অর্ডারগুলো স্থায়ীভাবে মুছে ফেলুন। এর ফলে পেজ রিফ্রেশ করলেও আর কোনো ডেমো ডাটা ফিরে আসবে না এবং আপনার ক্লাউড ফায়ারবেস ও লোকাল স্টোরেজ সম্পূর্ণ ক্লিন থাকবে।
+                </p>
+              </div>
+
+              {onCleanAllMockData && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm('আপনি কি নিশ্চিত যে সকল ডেমো/মক পণ্য এবং টেস্ট ডাটা স্থায়ীভাবে মুছে ফেলতে চান? রিফ্রেশ করলেও আর কোনো ডেমো ডাটা ফিরে আসবে না।')) {
+                      onCleanAllMockData();
+                    }
+                  }}
+                  className="shrink-0 px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl shadow-sm transition-all flex items-center gap-2 active:scale-95"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>সকল ডেমো ডাটা মুছুন</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
