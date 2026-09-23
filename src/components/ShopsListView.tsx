@@ -33,6 +33,7 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
 }) => {
   const [search, setSearch] = useState('');
   const [selectedRoute, setSelectedRoute] = useState('all');
+  const [dateFilter, setDateFilter] = useState('');
 
   // Due collection modal
   const [collectingShop, setCollectingShop] = useState<Shop | null>(null);
@@ -58,9 +59,15 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
         s.ownerName.toLowerCase().includes(search.toLowerCase()) ||
         s.phone.includes(search) ||
         s.address.toLowerCase().includes(search.toLowerCase());
-      return matchRoute && matchText;
+
+      let matchDate = true;
+      if (dateFilter) {
+        const shopDateStr = s.createdAt ? s.createdAt.split('T')[0] : (s.lastVisitDate || '');
+        matchDate = shopDateStr === dateFilter;
+      }
+      return matchRoute && matchText && matchDate;
     });
-  }, [shops, selectedRoute, search]);
+  }, [shops, selectedRoute, search, dateFilter]);
 
   const totalMarketDue = useMemo(() => {
     return shops.reduce((sum, s) => sum + s.previousDue, 0);
@@ -117,7 +124,7 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
       </div>
 
       {/* Filter & Search */}
-      <div className="bg-white rounded-2xl p-3 border border-neutral-200 shadow-xs flex flex-col sm:flex-row gap-2">
+      <div className="bg-white rounded-2xl p-3 border border-neutral-200 shadow-xs flex flex-col lg:flex-row gap-2">
         <div className="relative flex-1">
           <Search className="w-4 h-4 absolute left-3 top-2.5 text-neutral-400" />
           <input
@@ -129,18 +136,42 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
           />
         </div>
 
-        <select
-          value={selectedRoute}
-          onChange={(e) => setSelectedRoute(e.target.value)}
-          className="text-xs py-2 px-3 border border-neutral-300 rounded-xl bg-neutral-50 font-medium text-neutral-800 focus:ring-2 focus:ring-emerald-600"
-        >
-          <option value="all">সকল রুট / মার্কেট ({shops.length} দোকান)</option>
-          {routes.map((r) => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </select>
+        <div className="flex flex-col sm:flex-row gap-2 shrink-0">
+          <select
+            value={selectedRoute}
+            onChange={(e) => setSelectedRoute(e.target.value)}
+            className="text-xs py-2 px-3 border border-neutral-300 rounded-xl bg-neutral-50 font-medium text-neutral-800 focus:ring-2 focus:ring-emerald-600 w-full sm:w-auto"
+          >
+            <option value="all">সকল রুট / মার্কেট ({shops.length} দোকান)</option>
+            {routes.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
+
+          {/* Date Picker for finding registered shops by date */}
+          <div className="flex items-center gap-1.5 border border-neutral-300 rounded-xl bg-neutral-50 px-3 py-1.5 shrink-0">
+            <Calendar className="w-4 h-4 text-emerald-700 shrink-0" />
+            <span className="text-[11px] text-neutral-500 font-bold sm:hidden">তারিখ:</span>
+            <input
+              type="date"
+              value={dateFilter}
+              onChange={(e) => setDateFilter(e.target.value)}
+              className="text-xs border-none focus:outline-hidden bg-transparent font-bold text-neutral-800"
+              title="তৈরির তারিখ অনুযায়ী খুঁজুন"
+            />
+            {dateFilter && (
+              <button
+                onClick={() => setDateFilter('')}
+                className="text-[10px] text-rose-500 hover:text-rose-700 font-extrabold px-1"
+                title="ফিল্টার মুছুন"
+              >
+                মুছুন
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Shops Grid */}

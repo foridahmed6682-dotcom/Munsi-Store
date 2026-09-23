@@ -81,7 +81,8 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
       setName('');
       setOwnerName('');
       setPhone('');
-      setRouteArea(initialRoute || (availableRouteNames[0] ?? 'চকবাজার রুট'));
+      const defaultRoute = initialRoute || (routes && routes.length > 0 ? routes[0].banglaName : 'চকবাজার রুট');
+      setRouteArea(defaultRoute);
       setAddress('');
       setLat(undefined);
       setLng(undefined);
@@ -89,7 +90,7 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
       setLocationError(null);
       setShowMapPicker(false);
     }
-  }, [isOpen, initialRoute, availableRouteNames]);
+  }, [isOpen]);
 
   // Clean up map on unmount or close
   useEffect(() => {
@@ -290,6 +291,7 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
       previousDue: 0,
       category: category,
       lastVisitDate: new Date().toISOString().split('T')[0],
+      createdAt: new Date().toISOString(),
       lat: lat,
       lng: lng,
     };

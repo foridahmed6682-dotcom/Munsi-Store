@@ -58,6 +58,7 @@ export interface Shop {
   createdByUid?: string;
   lat?: number;
   lng?: number;
+  createdAt?: string;
 }
 
 export interface Product {
