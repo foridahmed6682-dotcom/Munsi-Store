@@ -56,6 +56,15 @@ import {
   clearAllCloudMockData
 } from './lib/firebase';
 import { syncOrdersToGoogleSheets, backupAllDataToGoogleDrive } from './lib/sheetsService';
+import {
+  sendBackupToGmail,
+  downloadOrdersCSV,
+  downloadInventoryCSV,
+  downloadShopsCSV,
+  downloadJSONFile,
+  generateFullBackupObject,
+  FullBackupData
+} from './lib/backupService';
 import { Header } from './components/Header';
 import { Navigation, NavTab } from './components/Navigation';
 import { OrderBookingView } from './components/OrderBookingView';
@@ -77,6 +86,7 @@ export default function App() {
   // Navigation
   const [activeTab, setActiveTab] = useState<NavTab>('order');
   const [targetOrderShopId, setTargetOrderShopId] = useState<string | undefined>(undefined);
+  const [targetMapShopId, setTargetMapShopId] = useState<string | null>(null);
 
   // Application Data State
   const [products, setProducts] = useState<Product[]>([]);
@@ -550,6 +560,105 @@ export default function App() {
     }
   };
 
+  // Gmail & Email Backup
+  const handleSendEmailBackup = async (recipientEmail?: string) => {
+    try {
+      const email = recipientEmail || userProfile?.email || 'foridahmed6682@gmail.com';
+      const res = await sendBackupToGmail(orders, products, shops, categories, routes, email);
+      showToast(res.message, 'success');
+    } catch (e: any) {
+      console.error('Email backup failed:', e);
+      showToast('জিমেইল ব্যাকআপ পাঠাতে সমস্যা হয়েছে', 'error');
+    }
+  };
+
+  // 1-Click Orders CSV Download
+  const handleDownloadOrdersCSV = () => {
+    try {
+      downloadOrdersCSV(orders);
+      showToast('দৈনিক সকল অর্ডার এক্সেল (CSV) ফাইলে ডাউনলোড হয়েছে!', 'success');
+    } catch (e: any) {
+      showToast('CSV ফাইল তৈরি করতে সমস্যা হয়েছে', 'error');
+    }
+  };
+
+  // 1-Click Inventory CSV Download
+  const handleDownloadInventoryCSV = () => {
+    try {
+      downloadInventoryCSV(products);
+      showToast('ইনভেন্টরি ও স্টক রিপোর্ট (CSV) ডাউনলোড হয়েছে!', 'success');
+    } catch (e: any) {
+      showToast('ইনভেন্টরি রিপোর্ট তৈরি করতে সমস্যা হয়েছে', 'error');
+    }
+  };
+
+  // 1-Click Shops CSV Download
+  const handleDownloadShopsCSV = () => {
+    try {
+      downloadShopsCSV(shops);
+      showToast('দোকান ও বাকি খাতার তালিকা (CSV) ডাউনলোড হয়েছে!', 'success');
+    } catch (e: any) {
+      showToast('দোকান তালিকা তৈরি করতে সমস্যা হয়েছে', 'error');
+    }
+  };
+
+  // Full Database Backup JSON Download
+  const handleDownloadFullBackupJSON = () => {
+    try {
+      const backup = generateFullBackupObject(orders, products, shops, categories, routes);
+      const today = new Date().toISOString().split('T')[0];
+      downloadJSONFile(backup, `MunsiStore_FullBackup_${today}.json`);
+      showToast('সম্পূর্ণ ডাটাবেজ ব্যাকআপ (JSON) সফলভাবে ডাউনলোড হয়েছে!', 'success');
+    } catch (e: any) {
+      showToast('ব্যাকআপ ফাইল তৈরিতে সমস্যা হয়েছে', 'error');
+    }
+  };
+
+  // Restore Database from JSON Backup
+  const handleRestoreFromBackupJSON = async (backupData: FullBackupData) => {
+    try {
+      if (backupData.products && backupData.products.length > 0) {
+        setProducts(backupData.products);
+        saveProducts(backupData.products);
+        for (const p of backupData.products) {
+          saveProductToCloud(p).catch(console.warn);
+        }
+      }
+      if (backupData.shops && backupData.shops.length > 0) {
+        setShops(backupData.shops);
+        saveShops(backupData.shops);
+        for (const s of backupData.shops) {
+          saveShopToCloud(s).catch(console.warn);
+        }
+      }
+      if (backupData.orders && backupData.orders.length > 0) {
+        setOrders(backupData.orders);
+        saveOrders(backupData.orders);
+        for (const o of backupData.orders) {
+          saveOrderToCloud(o).catch(console.warn);
+        }
+      }
+      if (backupData.categories && backupData.categories.length > 0) {
+        setCategories(backupData.categories);
+        saveCategories(backupData.categories);
+        for (const c of backupData.categories) {
+          saveCategoryToCloud(c).catch(console.warn);
+        }
+      }
+      if (backupData.routes && backupData.routes.length > 0) {
+        setRoutes(backupData.routes);
+        saveRoutes(backupData.routes);
+        for (const r of backupData.routes) {
+          saveRouteToCloud(r).catch(console.warn);
+        }
+      }
+      showToast('ব্যাকআপ থেকে সম্পূর্ণ ডাটা সফলভাবে রিস্টোর হয়েছে!', 'success');
+    } catch (e: any) {
+      console.error('Restore failed:', e);
+      showToast('ডাটা রিস্টোর করতে সমস্যা হয়েছে', 'error');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-neutral-100/70 text-neutral-900 flex flex-col font-sans pb-18 md:pb-8">
       {/* Toast Notification */}
@@ -635,6 +744,8 @@ export default function App() {
             onUpdateDeliveryStatus={handleUpdateDeliveryStatus}
             onSyncWithSheets={handleSyncWithSheets}
             onBackupToDrive={handleBackupToDrive}
+            onSendEmailBackup={handleSendEmailBackup}
+            onDownloadOrdersCSV={handleDownloadOrdersCSV}
             isSyncing={isSyncing}
             spreadsheetUrl={spreadsheetUrl}
             lastDriveBackupLink={lastDriveBackupLink}
@@ -644,6 +755,7 @@ export default function App() {
         {activeTab === 'shops' && (
           <ShopsListView
             shops={shops}
+            routes={routes}
             onAddShop={handleAddShop}
             onRecordDuePayment={handleRecordDuePayment}
             onSelectShopForOrder={(shopId) => {
@@ -651,6 +763,7 @@ export default function App() {
               setActiveTab('order');
             }}
             onOpenMapForShop={(shopId) => {
+              setTargetMapShopId(shopId);
               setActiveTab('map');
             }}
             isAdmin={activeSimulatedRole === 'admin'}
@@ -662,6 +775,9 @@ export default function App() {
         {activeTab === 'map' && (
           <RouteMapView
             shops={shops}
+            routes={routes}
+            targetShopId={targetMapShopId}
+            onClearTargetShop={() => setTargetMapShopId(null)}
             onSelectShopForOrder={(shopId) => {
               setTargetOrderShopId(shopId);
               setActiveTab('order');
@@ -741,6 +857,12 @@ export default function App() {
               lastDriveBackupLink={lastDriveBackupLink}
               onNavigateTab={(tab) => setActiveTab(tab)}
               onCleanAllMockData={handleCleanAllMockData}
+              onSendEmailBackup={handleSendEmailBackup}
+              onDownloadFullBackupJSON={handleDownloadFullBackupJSON}
+              onDownloadOrdersCSV={handleDownloadOrdersCSV}
+              onDownloadInventoryCSV={handleDownloadInventoryCSV}
+              onDownloadShopsCSV={handleDownloadShopsCSV}
+              onRestoreFromBackupJSON={handleRestoreFromBackupJSON}
             />
           </AdminLoginGuard>
         )}

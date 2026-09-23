@@ -13,13 +13,15 @@ import {
   ArrowRight,
   ExternalLink,
   Edit3,
-  Trash2
+  Trash2,
+  Navigation as NavIcon
 } from 'lucide-react';
-import { Shop, PaymentMethod } from '../types';
+import { Shop, PaymentMethod, Route } from '../types';
 import { AddShopModal } from './AddShopModal';
 
 interface ShopsListViewProps {
   shops: Shop[];
+  routes?: Route[];
   onAddShop: (shop: Shop) => void;
   onRecordDuePayment: (shopId: string, amount: number, method: PaymentMethod, notes?: string) => void;
   onSelectShopForOrder: (shopId: string) => void;
@@ -31,6 +33,7 @@ interface ShopsListViewProps {
 
 export const ShopsListView: React.FC<ShopsListViewProps> = ({
   shops,
+  routes: configuredRoutes = [],
   onAddShop,
   onRecordDuePayment,
   onSelectShopForOrder,
@@ -53,12 +56,17 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
   // Add shop modal
   const [isAddOpen, setIsAddOpen] = useState(false);
 
-  // Distinct routes
+  // Distinct routes (configured routes + routes on existing shops)
   const routes = useMemo(() => {
     const set = new Set<string>();
-    shops.forEach((s) => set.add(s.routeArea));
+    if (configuredRoutes && configuredRoutes.length > 0) {
+      configuredRoutes.forEach((r) => set.add(r.banglaName));
+    }
+    shops.forEach((s) => {
+      if (s.routeArea) set.add(s.routeArea);
+    });
     return Array.from(set);
-  }, [shops]);
+  }, [shops, configuredRoutes]);
 
   const filteredShops = useMemo(() => {
     return shops.filter((s) => {
@@ -305,15 +313,33 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
                   </button>
                 </div>
 
-                {onOpenMapForShop && (
-                  <button
-                    onClick={() => onOpenMapForShop(shop.id)}
-                    className="mt-2 w-full py-1.5 px-2 rounded-xl text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200/80 transition-colors flex items-center justify-center gap-1.5"
+                {/* Map & Google Directions Buttons */}
+                <div className="mt-2 grid grid-cols-2 gap-1.5">
+                  {onOpenMapForShop && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenMapForShop(shop.id)}
+                      className="py-1.5 px-2 rounded-xl text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200/80 transition-colors flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
+                    >
+                      <MapPin className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>ম্যাপে অবস্থান</span>
+                    </button>
+                  )}
+                  <a
+                    href={
+                      shop.lat !== undefined && shop.lng !== undefined
+                        ? `https://www.google.com/maps/dir/?api=1&destination=${shop.lat},${shop.lng}`
+                        : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(shop.name + ' ' + (shop.address || shop.routeArea || ''))}`
+                    }
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="py-1.5 px-2 rounded-xl text-[11px] font-bold bg-neutral-900 hover:bg-neutral-800 text-white transition-colors flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
+                    title="গুগল ম্যাপে দিকনির্দেশনা দেখুন"
                   >
-                    <MapPin className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>ম্যাপে অবস্থান ও নেভিগেশন দেখুন</span>
-                  </button>
-                )}
+                    <NavIcon className="w-3.5 h-3.5 text-blue-400" />
+                    <span>ডিরেকশন</span>
+                  </a>
+                </div>
               </div>
             </div>
           );
@@ -415,6 +441,7 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
           setEditingShop(null);
         }}
         existingShops={shops}
+        routes={configuredRoutes}
         editShop={editingShop}
         initialRoute={selectedRoute !== 'all' ? selectedRoute : undefined}
       />

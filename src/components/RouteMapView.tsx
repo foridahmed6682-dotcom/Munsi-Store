@@ -15,10 +15,13 @@ import {
   ExternalLink,
   LocateFixed
 } from 'lucide-react';
-import { Shop, PaymentMethod } from '../types';
+import { Shop, PaymentMethod, Route } from '../types';
 
 interface RouteMapViewProps {
   shops: Shop[];
+  routes?: Route[];
+  targetShopId?: string | null;
+  onClearTargetShop?: () => void;
   onSelectShopForOrder: (shopId: string) => void;
   onRecordDuePayment: (shopId: string, amount: number, method: PaymentMethod, notes?: string) => void;
   onUpdateShopCoordinates?: (shopId: string, lat: number, lng: number) => void;
@@ -41,6 +44,9 @@ function calculateDistanceKm(lat1: number, lon1: number, lat2: number, lon2: num
 
 export const RouteMapView: React.FC<RouteMapViewProps> = ({
   shops,
+  routes: configuredRoutes = [],
+  targetShopId = null,
+  onClearTargetShop,
   onSelectShopForOrder,
   onRecordDuePayment,
   onUpdateShopCoordinates,
@@ -49,11 +55,13 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
   const userMarkerRef = useRef<L.Marker | null>(null);
+  const routePolylineRef = useRef<L.Polyline | null>(null);
 
   const [selectedRoute, setSelectedRoute] = useState<string>('all');
   const [dueFilter, setDueFilter] = useState<'ALL' | 'DUE' | 'PAID'>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedShop, setSelectedShop] = useState<Shop | null>(null);
+  const [directionDistanceText, setDirectionDistanceText] = useState<string | null>(null);
 
   // User live geolocation
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -69,9 +77,14 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
   // Filter routes
   const routes = useMemo(() => {
     const set = new Set<string>();
-    shops.forEach((s) => set.add(s.routeArea));
+    if (configuredRoutes && configuredRoutes.length > 0) {
+      configuredRoutes.forEach((r) => set.add(r.banglaName));
+    }
+    shops.forEach((s) => {
+      if (s.routeArea) set.add(s.routeArea);
+    });
     return Array.from(set);
-  }, [shops]);
+  }, [shops, configuredRoutes]);
 
   // Filtered shops
   const filteredShops = useMemo(() => {
@@ -326,21 +339,109 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
     );
   };
 
+  // Automatically focus shop if targetShopId is provided
+  useEffect(() => {
+    if (targetShopId) {
+      const found = shops.find((s) => s.id === targetShopId);
+      if (found) {
+        setSelectedShop(found);
+        if (mapInstanceRef.current && found.lat && found.lng) {
+          mapInstanceRef.current.setView([found.lat, found.lng], 16, { animate: true });
+        }
+        if (userLocation && found.lat && found.lng) {
+          const dist = calculateDistanceKm(userLocation.lat, userLocation.lng, found.lat, found.lng);
+          const text = dist < 1 ? `${Math.round(dist * 1000)} মিটার` : `${dist.toFixed(2)} কিমি`;
+          setDirectionDistanceText(text);
+          drawDirectionRoute(found);
+        }
+      }
+    }
+  }, [targetShopId, shops, userLocation]);
+
+  // Draw visual navigation polyline on map
+  const drawDirectionRoute = (shop: Shop) => {
+    if (!mapInstanceRef.current) return;
+    const map = mapInstanceRef.current;
+
+    // Clear previous polyline
+    if (routePolylineRef.current) {
+      map.removeLayer(routePolylineRef.current);
+      routePolylineRef.current = null;
+    }
+
+    if (!userLocation) {
+      handleLocateMe();
+      return;
+    }
+
+    if (shop.lat !== undefined && shop.lng !== undefined) {
+      const startPoint: L.LatLngTuple = [userLocation.lat, userLocation.lng];
+      const endPoint: L.LatLngTuple = [shop.lat, shop.lng];
+
+      const polyline = L.polyline([startPoint, endPoint], {
+        color: '#2563eb',
+        weight: 5,
+        opacity: 0.9,
+        dashArray: '8, 8',
+      });
+
+      polyline.addTo(map);
+      routePolylineRef.current = polyline;
+
+      map.fitBounds([startPoint, endPoint], { padding: [60, 60], maxZoom: 16 });
+
+      const dist = calculateDistanceKm(userLocation.lat, userLocation.lng, shop.lat, shop.lng);
+      const text = dist < 1 ? `${Math.round(dist * 1000)} মিটার` : `${dist.toFixed(2)} কিমি`;
+      setDirectionDistanceText(text);
+    }
+  };
+
+  // Close selected shop drawer and clear polyline
+  const handleCloseSelectedShop = () => {
+    setSelectedShop(null);
+    setDirectionDistanceText(null);
+    if (onClearTargetShop) onClearTargetShop();
+    if (mapInstanceRef.current && routePolylineRef.current) {
+      mapInstanceRef.current.removeLayer(routePolylineRef.current);
+      routePolylineRef.current = null;
+    }
+  };
+
   // Focus a specific shop on the map
   const handleFocusShop = (shop: Shop) => {
     setSelectedShop(shop);
     if (mapInstanceRef.current && shop.lat && shop.lng) {
       mapInstanceRef.current.setView([shop.lat, shop.lng], 16, { animate: true });
     }
+    if (userLocation && shop.lat && shop.lng) {
+      const dist = calculateDistanceKm(userLocation.lat, userLocation.lng, shop.lat, shop.lng);
+      const text = dist < 1 ? `${Math.round(dist * 1000)} মিটার` : `${dist.toFixed(2)} কিমি`;
+      setDirectionDistanceText(text);
+      drawDirectionRoute(shop);
+    }
+  };
+
+  // Get Safe Google Maps Directions URL
+  const getDirectionsUrl = (shop: Shop) => {
+    if (shop.lat !== undefined && shop.lng !== undefined) {
+      const originParam = userLocation ? `&origin=${userLocation.lat},${userLocation.lng}` : '';
+      return `https://www.google.com/maps/dir/?api=1&destination=${shop.lat},${shop.lng}${originParam}`;
+    }
+    const query = encodeURIComponent(`${shop.name} ${shop.address || shop.routeArea || ''}`);
+    return `https://www.google.com/maps/search/?api=1&query=${query}`;
   };
 
   // Open Google Maps Directions
   const handleOpenGoogleMapsDirections = (shop: Shop) => {
-    const lat = shop.lat ?? 23.75;
-    const lng = shop.lng ?? 90.39;
-    const originParam = userLocation ? `&origin=${userLocation.lat},${userLocation.lng}` : '';
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}${originParam}`;
-    window.open(url, '_blank');
+    drawDirectionRoute(shop);
+    const url = getDirectionsUrl(shop);
+    const link = document.createElement('a');
+    link.href = url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   // Due Collection Submit
@@ -503,7 +604,7 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
             <div className="absolute bottom-3 left-3 right-3 z-10 bg-white/98 backdrop-blur-md rounded-2xl p-3.5 border border-neutral-200 shadow-xl max-w-lg mx-auto animate-in fade-in slide-in-from-bottom duration-200">
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <h3 className="font-extrabold text-sm sm:text-base text-neutral-900">
                       {selectedShop.name}
                     </h3>
@@ -518,6 +619,12 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
                         ? `বকেয়া: ৳${selectedShop.previousDue.toLocaleString()}`
                         : 'পরিশোধিত'}
                     </span>
+                    {directionDistanceText && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 flex items-center gap-0.5">
+                        <NavIcon className="w-2.5 h-2.5" />
+                        <span>দূরত্ব: {directionDistanceText}</span>
+                      </span>
+                    )}
                   </div>
                   <p className="text-xs text-neutral-500 mt-0.5">
                     মালিক: {selectedShop.ownerName} | {selectedShop.routeArea}
@@ -529,8 +636,9 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
                 </div>
 
                 <button
-                  onClick={() => setSelectedShop(null)}
-                  className="w-6 h-6 rounded-full bg-neutral-100 text-neutral-500 hover:bg-neutral-200 flex items-center justify-center text-xs font-bold"
+                  onClick={handleCloseSelectedShop}
+                  className="w-6 h-6 rounded-full bg-neutral-100 text-neutral-500 hover:bg-neutral-200 flex items-center justify-center text-xs font-bold cursor-pointer"
+                  title="বন্ধ করুন"
                 >
                   ✕
                 </button>
@@ -541,7 +649,7 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
                 {/* 1. Book Order */}
                 <button
                   onClick={() => onSelectShopForOrder(selectedShop.id)}
-                  className="flex items-center justify-center gap-1 py-2 px-1 bg-emerald-700 hover:bg-emerald-600 text-white font-bold rounded-xl text-[11px] shadow-xs transition-colors"
+                  className="flex items-center justify-center gap-1 py-2 px-1 bg-emerald-700 hover:bg-emerald-600 text-white font-bold rounded-xl text-[11px] shadow-xs transition-colors cursor-pointer active:scale-95"
                 >
                   <Store className="w-3.5 h-3.5 shrink-0" />
                   <span>অর্ডার</span>
@@ -550,28 +658,31 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
                 {/* 2. Collect Due */}
                 <button
                   onClick={() => setIsDueModalOpen(true)}
-                  className="flex items-center justify-center gap-1 py-2 px-1 bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold rounded-xl text-[11px] shadow-xs transition-colors"
+                  className="flex items-center justify-center gap-1 py-2 px-1 bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold rounded-xl text-[11px] shadow-xs transition-colors cursor-pointer active:scale-95"
                 >
                   <DollarSign className="w-3.5 h-3.5 shrink-0" />
                   <span>বকেয়া আদায়</span>
                 </button>
 
                 {/* 3. Google Maps Directions */}
-                <button
-                  onClick={() => handleOpenGoogleMapsDirections(selectedShop)}
-                  className="flex items-center justify-center gap-1 py-2 px-1 bg-neutral-800 hover:bg-neutral-700 text-white font-bold rounded-xl text-[11px] shadow-xs transition-colors"
-                  title="গুগল ম্যাপে দিকনির্দেশনা দেখুন"
+                <a
+                  href={getDirectionsUrl(selectedShop)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => drawDirectionRoute(selectedShop)}
+                  className="flex items-center justify-center gap-1 py-2 px-1 bg-neutral-900 hover:bg-neutral-800 text-white font-bold rounded-xl text-[11px] shadow-xs transition-colors cursor-pointer active:scale-95"
+                  title="গুগল ম্যাপে দিকনির্দেশনা ও লাইভ নেভিগেশন খুলুন"
                 >
                   <NavIcon className="w-3.5 h-3.5 text-blue-400 shrink-0" />
                   <span>ডিরেকশন</span>
-                </button>
+                </a>
 
                 {/* 4. Update Current GPS Location */}
                 {onUpdateShopCoordinates && (
                   <button
                     onClick={() => handleUpdateShopGPS(selectedShop.id)}
                     disabled={isUpdatingGPS}
-                    className="flex items-center justify-center gap-1 py-2 px-1 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl text-[11px] shadow-xs transition-colors disabled:opacity-50"
+                    className="flex items-center justify-center gap-1 py-2 px-1 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl text-[11px] shadow-xs transition-colors disabled:opacity-50 cursor-pointer active:scale-95"
                     title="দোকানের সামনে দাঁড়িয়ে লাইভ জিপিএস লোকেশন আপডেট করুন"
                   >
                     <LocateFixed className={`w-3.5 h-3.5 text-blue-200 shrink-0 ${isUpdatingGPS ? 'animate-spin' : ''}`} />
@@ -647,16 +758,33 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
                         <span>{shop.phone}</span>
                       </a>
 
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onSelectShopForOrder(shop.id);
-                        }}
-                        className="font-bold text-emerald-700 hover:text-emerald-900 flex items-center gap-0.5"
-                      >
-                        <span>অর্ডার</span>
-                        <ArrowRight className="w-3 h-3" />
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <a
+                          href={getDirectionsUrl(shop)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            drawDirectionRoute(shop);
+                          }}
+                          className="font-bold text-blue-600 hover:text-blue-800 flex items-center gap-0.5"
+                          title="গুগল ম্যাপে দিকনির্দেশনা দেখুন"
+                        >
+                          <NavIcon className="w-2.5 h-2.5" />
+                          <span>ডিরেকশন</span>
+                        </a>
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectShopForOrder(shop.id);
+                          }}
+                          className="font-bold text-emerald-700 hover:text-emerald-900 flex items-center gap-0.5"
+                        >
+                          <span>অর্ডার</span>
+                          <ArrowRight className="w-3 h-3" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );

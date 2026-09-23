@@ -37,6 +37,8 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
   const [ownerName, setOwnerName] = useState('');
   const [phone, setPhone] = useState('');
   const [routeArea, setRouteArea] = useState(initialRoute || '');
+  const [isCustomRoute, setIsCustomRoute] = useState(false);
+  const [customRouteInput, setCustomRouteInput] = useState('');
   const [address, setAddress] = useState('');
   const [category, setCategory] = useState('জেনারেল স্টোর / মুদি');
 
@@ -84,7 +86,16 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
         setName(editShop.name || '');
         setOwnerName(editShop.ownerName || '');
         setPhone(editShop.phone || '');
-        setRouteArea(editShop.routeArea || '');
+        const existingRoute = editShop.routeArea || '';
+        if (existingRoute && !availableRouteNames.includes(existingRoute)) {
+          setIsCustomRoute(true);
+          setCustomRouteInput(existingRoute);
+          setRouteArea(existingRoute);
+        } else {
+          setIsCustomRoute(false);
+          setCustomRouteInput('');
+          setRouteArea(existingRoute || availableRouteNames[0] || 'চকবাজার রুট');
+        }
         setAddress(editShop.address || '');
         setCategory(editShop.category || 'জেনারেল স্টোর / মুদি');
         setLat(editShop.lat);
@@ -96,8 +107,10 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
         setName('');
         setOwnerName('');
         setPhone('');
-        const defaultRoute = initialRoute || (routes && routes.length > 0 ? routes[0].banglaName : 'চকবাজার রুট');
+        const defaultRoute = initialRoute || (routes && routes.length > 0 ? routes[0].banglaName : (availableRouteNames[0] || 'চকবাজার রুট'));
         setRouteArea(defaultRoute);
+        setIsCustomRoute(false);
+        setCustomRouteInput('');
         setAddress('');
         setCategory('জেনারেল স্টোর / মুদি');
         setLat(undefined);
@@ -296,7 +309,12 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
       return;
     }
 
-    const cleanRoute = routeArea.trim() || 'সাধারণ রুট';
+    const resolvedRoute = isCustomRoute ? customRouteInput.trim() : routeArea.trim();
+    if (!resolvedRoute) {
+      alert('অনুগ্রহ করে একটি রুট নির্বাচন করুন অথবা নতুন রুটের নাম লিখুন');
+      return;
+    }
+    const cleanRoute = resolvedRoute;
 
     const savedShop: Shop = {
       ...(editShop ? editShop : {
@@ -391,49 +409,106 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
             </div>
           </div>
 
-          {/* Route Name (User requested: "রুট এর নাম লেখা যাবে") */}
+          {/* Route Selection (User requested: "নতুন দোকান সেট করার সময় রুট সিলেক্ট করার অপশন") */}
           <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="font-bold text-neutral-800 flex items-center gap-1">
-                <Compass className="w-3.5 h-3.5 text-emerald-700" />
-                <span>রুট এর নাম লিখুন বা নির্বাচন করুন</span>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="font-bold text-neutral-800 flex items-center gap-1.5 text-xs sm:text-sm">
+                <Compass className="w-4 h-4 text-emerald-700" />
+                <span>রুট নির্বাচন করুন (Select Route)</span>
                 <span className="text-rose-500">*</span>
               </label>
-              <span className="text-[10px] text-neutral-500">যেকোনো নতুন নাম টাইপ করা যাবে</span>
+              <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                ড্রপডাউন থেকে বেছে নিন
+              </span>
             </div>
-            <input
-              type="text"
-              required
-              list="routes-datalist"
-              value={routeArea}
-              onChange={(e) => setRouteArea(e.target.value)}
-              placeholder="যেমন: চকবাজার রুট, মিরপুর-১০, বা নতুন কোনো রুটের নাম"
-              className="w-full p-2.5 border border-neutral-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-bold text-neutral-900 bg-white"
-            />
-            <datalist id="routes-datalist">
+
+            {/* Standard Dropdown Select */}
+            <select
+              value={isCustomRoute ? '__CUSTOM__' : routeArea}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === '__CUSTOM__') {
+                  setIsCustomRoute(true);
+                  setRouteArea('');
+                } else {
+                  setIsCustomRoute(false);
+                  setRouteArea(val);
+                }
+              }}
+              className="w-full p-2.5 sm:p-3 border-2 border-emerald-600/40 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-bold text-neutral-900 bg-emerald-50/40 text-xs sm:text-sm shadow-xs cursor-pointer"
+            >
+              <option value="" disabled>-- রুট সিলেক্ট করুন --</option>
               {availableRouteNames.map((r) => (
-                <option key={r} value={r} />
+                <option key={r} value={r}>
+                  📍 {r}
+                </option>
               ))}
-            </datalist>
+              <option value="__CUSTOM__">➕ নতুন রুট লিখুন (কাস্টম রুট)...</option>
+            </select>
+
+            {/* If Custom Route is selected */}
+            {isCustomRoute && (
+              <div className="mt-2 p-2.5 bg-amber-50/70 border border-amber-300 rounded-xl animate-in fade-in">
+                <label className="text-[11px] font-bold text-amber-900 block mb-1">
+                  নতুন রুটের নাম লিখুন:
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={customRouteInput}
+                  onChange={(e) => {
+                    setCustomRouteInput(e.target.value);
+                    setRouteArea(e.target.value);
+                  }}
+                  placeholder="যেমন: মতিঝিল রুট, মহাখালী, বা নতুন এলাকার নাম"
+                  autoFocus
+                  className="w-full p-2 border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500 font-bold text-neutral-900 bg-white text-xs"
+                />
+              </div>
+            )}
 
             {/* Quick Route Suggestion Chips */}
             {availableRouteNames.length > 0 && (
-              <div className="mt-1.5 flex flex-wrap gap-1 items-center">
-                <span className="text-[10px] text-neutral-400 mr-1">বিদ্যমান রুট:</span>
-                {availableRouteNames.slice(0, 8).map((r) => (
+              <div className="mt-2">
+                <span className="text-[10px] text-neutral-500 font-semibold block mb-1">
+                  অথবা সরাসরি বাটন চেপে সিলেক্ট করুন:
+                </span>
+                <div className="flex flex-wrap gap-1.5 items-center">
+                  {availableRouteNames.map((r) => {
+                    const isSelected = !isCustomRoute && routeArea === r;
+                    return (
+                      <button
+                        key={r}
+                        type="button"
+                        onClick={() => {
+                          setIsCustomRoute(false);
+                          setRouteArea(r);
+                        }}
+                        className={`text-xs px-2.5 py-1 rounded-lg border font-bold transition-all cursor-pointer ${
+                          isSelected
+                            ? 'bg-emerald-800 text-white border-emerald-800 shadow-xs'
+                            : 'bg-white text-neutral-700 border-neutral-300 hover:border-emerald-600 hover:bg-emerald-50'
+                        }`}
+                      >
+                        {r}
+                      </button>
+                    );
+                  })}
                   <button
-                    key={r}
                     type="button"
-                    onClick={() => setRouteArea(r)}
-                    className={`text-[10px] px-2 py-0.5 rounded-lg border font-medium transition-colors ${
-                      routeArea === r
-                        ? 'bg-emerald-800 text-white border-emerald-800 font-bold'
-                        : 'bg-neutral-100 text-neutral-700 border-neutral-200 hover:bg-neutral-200'
+                    onClick={() => {
+                      setIsCustomRoute(true);
+                      setRouteArea('');
+                    }}
+                    className={`text-xs px-2.5 py-1 rounded-lg border font-bold transition-all cursor-pointer ${
+                      isCustomRoute
+                        ? 'bg-amber-500 text-neutral-950 border-amber-600'
+                        : 'bg-neutral-100 text-neutral-700 border-neutral-300 hover:bg-neutral-200'
                     }`}
                   >
-                    {r}
+                    + নতুন রুট
                   </button>
-                ))}
+                </div>
               </div>
             )}
           </div>

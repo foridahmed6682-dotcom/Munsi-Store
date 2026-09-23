@@ -34,7 +34,13 @@ import {
   SlidersHorizontal,
   Crown,
   Compass,
-  Settings
+  Settings,
+  Download,
+  Send,
+  Database,
+  Save,
+  FileText,
+  Share2
 } from 'lucide-react';
 import {
   Product,
@@ -50,6 +56,7 @@ import {
 } from '../types';
 import { fetchAllUsers, updateUserRoleAndRoute, getBusinessInfo, saveBusinessInfoToCloud, subscribeToCloudBusinessInfo } from '../lib/firebase';
 import { saveBusinessInfoLocal } from '../lib/storage';
+import { FullBackupData, parseAndValidateBackupJSON } from '../lib/backupService';
 
 interface AdminDashboardViewProps {
   products: Product[];
@@ -81,9 +88,15 @@ interface AdminDashboardViewProps {
   lastDriveBackupLink: string | null;
   onNavigateTab: (tab: any) => void;
   onCleanAllMockData?: () => void;
+  onSendEmailBackup?: (recipientEmail?: string) => Promise<void>;
+  onDownloadFullBackupJSON?: () => void;
+  onDownloadOrdersCSV?: () => void;
+  onDownloadInventoryCSV?: () => void;
+  onDownloadShopsCSV?: () => void;
+  onRestoreFromBackupJSON?: (data: FullBackupData) => Promise<void>;
 }
 
-type AdminSubTab = 'overview' | 'categories' | 'products' | 'routes' | 'access' | 'analytics' | 'settings';
+type AdminSubTab = 'overview' | 'categories' | 'products' | 'routes' | 'access' | 'analytics' | 'settings' | 'backup';
 
 const AVAILABLE_ROUTES = [
   'সব রুট (All Routes)',
@@ -138,8 +151,21 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   lastDriveBackupLink,
   onNavigateTab,
   onCleanAllMockData,
+  onSendEmailBackup,
+  onDownloadFullBackupJSON,
+  onDownloadOrdersCSV,
+  onDownloadInventoryCSV,
+  onDownloadShopsCSV,
+  onRestoreFromBackupJSON,
 }) => {
   const [subTab, setSubTab] = useState<AdminSubTab>('overview');
+
+  // Backup State
+  const [backupEmailInput, setBackupEmailInput] = useState(currentUser?.email || 'foridahmed6682@gmail.com');
+  const [isSendingEmailBackup, setIsSendingEmailBackup] = useState(false);
+  const [restoreFileError, setRestoreFileError] = useState<string | null>(null);
+  const [parsedRestoreData, setParsedRestoreData] = useState<FullBackupData | null>(null);
+  const [isRestoring, setIsRestoring] = useState(false);
 
   const allAvailableRouteNames = useMemo(() => {
     const set = new Set<string>();
@@ -721,6 +747,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         >
           <Settings className="w-4 h-4" />
           <span>দোকান ও মেমো সেটিংস</span>
+        </button>
+
+        <button
+          onClick={() => setSubTab('backup')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+            subTab === 'backup'
+              ? 'bg-amber-500 text-neutral-950 font-black shadow-md'
+              : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100'
+          }`}
+        >
+          <Database className="w-4 h-4" />
+          <span>ব্যাকআপ ও রিস্টোর হাব</span>
         </button>
       </div>
 
@@ -1715,6 +1753,310 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   <span>সকল ডেমো ডাটা মুছুন</span>
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SUB-TAB 6: BACKUP & RESTORE HUB */}
+      {subTab === 'backup' && (
+        <div className="space-y-5 animate-fadeIn">
+          {/* Header Banner */}
+          <div className="bg-gradient-to-r from-amber-900 via-neutral-900 to-emerald-950 text-white rounded-2xl p-5 border border-amber-600/30 shadow-md">
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-400 text-neutral-950 flex items-center gap-1">
+                    <Database className="w-3 h-3" />
+                    ব্যাকআপ হাব
+                  </span>
+                  <span className="text-xs text-amber-200/90 font-semibold">
+                    জিরো-রিস্ক ডাটা সিকিউরিটি
+                  </span>
+                </div>
+                <h2 className="text-lg sm:text-xl font-black text-white flex items-center gap-2">
+                  <span>ডাটা ব্যাকআপ, জিমেইল ও এক্সপোর্ট কেন্দ্র</span>
+                </h2>
+                <p className="text-xs text-neutral-300 mt-1 max-w-2xl leading-relaxed">
+                  গুগল শিট এপিআই টোকেন মেয়াদোত্তীর্ণ হওয়া বা ফিল্ডে নেটওয়ার্ক দুর্বলতার কারণে শিট সিঙ্কে সমস্যা হতে পারে। তাই নিচে দেওয়া জিমেইল ব্যাকআপ, অফলাইন এক্সেল (CSV) এবং সরাসরি ডাটাবেজ ডাউনলোডের মাধ্যমে যেকোনো সময় আপনার সম্পূর্ণ ডাটা নিরাপদ রাখুন।
+                </p>
+              </div>
+
+              {/* Cloud Status Pill */}
+              <div className="bg-neutral-800/80 border border-emerald-500/40 p-3 rounded-xl flex items-center gap-3 shrink-0">
+                <div className="w-9 h-9 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-black">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                </div>
+                <div>
+                  <div className="text-[11px] font-bold text-white flex items-center gap-1">
+                    <span>ফায়ারবেস ক্লাউড স্টোরেজ</span>
+                  </div>
+                  <div className="text-[10px] text-emerald-400 font-semibold">স্বয়ংক্রিয় লাইভ সিঙ্ক সক্রিয়</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Backup Options Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            {/* OPTION 1: GMAIL / EMAIL BACKUP */}
+            <div className="bg-white p-5 rounded-2xl border border-neutral-200 shadow-xs space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-neutral-100">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-amber-500/15 text-amber-600 flex items-center justify-center">
+                    <Mail className="w-5 h-5 text-amber-600" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm text-neutral-900">জিমেইলে সরাসরি ব্যাকআপ ও রিপোর্ট</h3>
+                    <p className="text-[11px] text-neutral-500">গুগল শিটের কোনো টোকেন বা ঝামেলা ছাড়া</p>
+                  </div>
+                </div>
+                <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">
+                  সুপার ফাস্ট
+                </span>
+              </div>
+
+              <p className="text-xs text-neutral-600 leading-relaxed">
+                আপনার সকল অর্ডার, মোট বিক্রয়, নগদ আদায়, বাকি এবং কম স্টকের সতর্কবার্তাসহ একটি সাজানো রিপোর্ট সরাসরি আপনার জিমেইলে চলে যাবে। সাথে ডাটাবেজ ব্যাকআপ ফাইল ডাউনলোড হবে।
+              </p>
+
+              <div className="space-y-3 pt-1">
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    প্রাপক জিমেইল এড্রেস (Recipient Email)
+                  </label>
+                  <input
+                    type="email"
+                    value={backupEmailInput}
+                    onChange={(e) => setBackupEmailInput(e.target.value)}
+                    placeholder="foridahmed6682@gmail.com"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600 font-mono"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={isSendingEmailBackup}
+                    onClick={async () => {
+                      if (!backupEmailInput.trim()) {
+                        showToast('অনুগ্রহ করে একটি সঠিক ইমেইল এড্রেস লিখুন', 'error');
+                        return;
+                      }
+                      setIsSendingEmailBackup(true);
+                      try {
+                        if (onSendEmailBackup) {
+                          await onSendEmailBackup(backupEmailInput.trim());
+                        }
+                      } finally {
+                        setIsSendingEmailBackup(false);
+                      }
+                    }}
+                    className="flex-1 py-2.5 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600 text-neutral-950 font-black text-xs rounded-xl shadow-sm transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>{isSendingEmailBackup ? 'প্রস্তুত হচ্ছে...' : 'জিমেইলে ব্যাকআপ পাঠান'}</span>
+                  </button>
+                </div>
+
+                <p className="text-[11px] text-neutral-500 bg-neutral-50 p-2.5 rounded-xl border border-neutral-200">
+                  📱 <strong>মোবাইল ফোনে:</strong> বাটনে চাপ দিলে সরাসরি Gmail বা WhatsApp এ ফুল ফাইলসহ শেয়ারের উইন্ডো আসবে।<br />
+                  💻 <strong>কম্পিউটারে:</strong> নতুন ট্যাবে জিমেইল ওপেন হবে এবং ব্যাকআপ ফাইল ডাউনলোডে যাবে।
+                </p>
+              </div>
+            </div>
+
+            {/* OPTION 2: 1-CLICK EXCEL (CSV) SPREADSHEETS */}
+            <div className="bg-white p-5 rounded-2xl border border-neutral-200 shadow-xs space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-neutral-100">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-teal-500/15 text-teal-600 flex items-center justify-center">
+                    <FileSpreadsheet className="w-5 h-5 text-teal-600" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm text-neutral-900">১-ক্লিকে অফলাইন এক্সেল (CSV) ডাউনলোড</h3>
+                    <p className="text-[11px] text-neutral-500">ইন্টারনেট বা গুগল সাইন ইন ছাড়াও কাজ করে</p>
+                  </div>
+                </div>
+                <span className="px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 text-[10px] font-bold">
+                  অফলাইন ১০০%
+                </span>
+              </div>
+
+              <p className="text-xs text-neutral-600 leading-relaxed">
+                যেকোনো সময় সরাসরি আপনার মোবাইলে বা পিসির ডাউনলোড ফোল্ডারে এক্সেল ফাইল নামিয়ে নিন। বাংলা লেখাগুলো এক্সেলে বা গুগল শিটে একদম পরিষ্কার ও সঠিকভাবে খুলবে।
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => onDownloadOrdersCSV && onDownloadOrdersCSV()}
+                  className="p-3 rounded-xl border border-teal-200 bg-teal-50/60 hover:bg-teal-100 text-left transition-all active:scale-95 cursor-pointer flex flex-col justify-between"
+                >
+                  <div>
+                    <FileText className="w-4 h-4 text-teal-700 mb-1" />
+                    <div className="font-bold text-xs text-teal-950">অর্ডার খাতা</div>
+                    <div className="text-[10px] text-teal-700 mt-0.5">{orders.length} টি মেমো</div>
+                  </div>
+                  <div className="text-[10px] font-bold text-teal-800 mt-2 flex items-center gap-1">
+                    <Download className="w-3 h-3" />
+                    <span>CSV ডাউনলোড</span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onDownloadInventoryCSV && onDownloadInventoryCSV()}
+                  className="p-3 rounded-xl border border-emerald-200 bg-emerald-50/60 hover:bg-emerald-100 text-left transition-all active:scale-95 cursor-pointer flex flex-col justify-between"
+                >
+                  <div>
+                    <Package className="w-4 h-4 text-emerald-700 mb-1" />
+                    <div className="font-bold text-xs text-emerald-950">ইনভেন্টরি রিপোর্ট</div>
+                    <div className="text-[10px] text-emerald-700 mt-0.5">{products.length} টি পণ্য</div>
+                  </div>
+                  <div className="text-[10px] font-bold text-emerald-800 mt-2 flex items-center gap-1">
+                    <Download className="w-3 h-3" />
+                    <span>CSV ডাউনলোড</span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onDownloadShopsCSV && onDownloadShopsCSV()}
+                  className="p-3 rounded-xl border border-blue-200 bg-blue-50/60 hover:bg-blue-100 text-left transition-all active:scale-95 cursor-pointer flex flex-col justify-between"
+                >
+                  <div>
+                    <Store className="w-4 h-4 text-blue-700 mb-1" />
+                    <div className="font-bold text-xs text-blue-950">দোকান ও বাকি</div>
+                    <div className="text-[10px] text-blue-700 mt-0.5">{shops.length} টি দোকান</div>
+                  </div>
+                  <div className="text-[10px] font-bold text-blue-800 mt-2 flex items-center gap-1">
+                    <Download className="w-3 h-3" />
+                    <span>CSV ডাউনলোড</span>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* OPTION 3: FULL DATABASE JSON BACKUP */}
+            <div className="bg-white p-5 rounded-2xl border border-neutral-200 shadow-xs space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-neutral-100">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-purple-500/15 text-purple-600 flex items-center justify-center">
+                    <Database className="w-5 h-5 text-purple-600" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm text-neutral-900">সম্পূর্ণ ডাটাবেজ ব্যাকআপ (JSON)</h3>
+                    <p className="text-[11px] text-neutral-500">সবকিছু একটি ফাইলে ফুল ব্যাকআপ</p>
+                  </div>
+                </div>
+                <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 text-[10px] font-bold">
+                  রিস্টোর উপযোগী
+                </span>
+              </div>
+
+              <p className="text-xs text-neutral-600 leading-relaxed">
+                অ্যাপের সমস্ত ডাটা (অর্ডার, পণ্য, দোকান, ক্যাটাগরি, রুট, হিসাব) একটি সিঙ্গেল ফাইলে সংরক্ষণ করুন। এটি দিয়ে পরবর্তীতে যেকোনো ডিভাইসে এক ক্লিকে সম্পূর্ণ ডাটা রিস্টোর করা যাবে।
+              </p>
+
+              <button
+                type="button"
+                onClick={() => onDownloadFullBackupJSON && onDownloadFullBackupJSON()}
+                className="w-full py-2.5 bg-purple-700 hover:bg-purple-800 text-white font-bold text-xs rounded-xl shadow-sm transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>সম্পূর্ণ ডাটাবেজ ব্যাকআপ ডাউনলোড করুন (JSON)</span>
+              </button>
+            </div>
+
+            {/* OPTION 4: RESTORE FROM BACKUP */}
+            <div className="bg-white p-5 rounded-2xl border border-neutral-200 shadow-xs space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-neutral-100">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-indigo-500/15 text-indigo-600 flex items-center justify-center">
+                    <RefreshCw className="w-5 h-5 text-indigo-600" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm text-neutral-900">ব্যাকআপ ফাইল থেকে ডাটা রিস্টোর</h3>
+                    <p className="text-[11px] text-neutral-500">মোবাইল পাল্টালে বা ডাটা মুছে গেলে ফিরিয়ে আনুন</p>
+                  </div>
+                </div>
+                <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 text-[10px] font-bold">
+                  রিস্টোর
+                </span>
+              </div>
+
+              <p className="text-xs text-neutral-600 leading-relaxed">
+                পূর্বে সেভ করা <strong className="text-indigo-900">MunsiStore_Backup.json</strong> ফাইলটি সিলেক্ট করে অ্যাপের পূর্বাবস্থা ফিরিয়ে আনুন।
+              </p>
+
+              <div className="space-y-3">
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                      const text = event.target?.result as string;
+                      const res = parseAndValidateBackupJSON(text);
+                      if (!res.isValid || !res.data) {
+                        setRestoreFileError(res.error || 'ভুল ফরম্যাটের ফাইল');
+                        setParsedRestoreData(null);
+                      } else {
+                        setRestoreFileError(null);
+                        setParsedRestoreData(res.data);
+                      }
+                    };
+                    reader.readAsText(file);
+                  }}
+                  className="w-full text-xs text-neutral-600 file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
+                />
+
+                {restoreFileError && (
+                  <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{restoreFileError}</span>
+                  </div>
+                )}
+
+                {parsedRestoreData && (
+                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl space-y-2">
+                    <div className="text-xs font-bold text-emerald-950 flex items-center justify-between">
+                      <span>ফাইল যাচাইকরণ সফল:</span>
+                      <span className="text-[10px] text-emerald-700 font-semibold">{new Date(parsedRestoreData.exportDate).toLocaleString('bn-BD')}</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1 text-[11px] text-emerald-900">
+                      <div>অর্ডার: <strong>{parsedRestoreData.orders?.length || 0}</strong></div>
+                      <div>পণ্য: <strong>{parsedRestoreData.products?.length || 0}</strong></div>
+                      <div>দোকান: <strong>{parsedRestoreData.shops?.length || 0}</strong></div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={isRestoring}
+                      onClick={async () => {
+                        if (!parsedRestoreData) return;
+                        if (!window.confirm('আপনি কি নিশ্চিত যে এই ব্যাকআপ ফাইলটি রিস্টোর করতে চান? বর্তমান ডাটার সাথে ব্যাকআপ ডাটা যুক্ত হবে।')) {
+                          return;
+                        }
+                        setIsRestoring(true);
+                        try {
+                          if (onRestoreFromBackupJSON) {
+                            await onRestoreFromBackupJSON(parsedRestoreData);
+                          }
+                          setParsedRestoreData(null);
+                        } finally {
+                          setIsRestoring(false);
+                        }
+                      }}
+                      className="w-full py-2 bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs rounded-lg shadow-sm transition-all cursor-pointer"
+                    >
+                      {isRestoring ? 'রিস্টোর হচ্ছে...' : 'এখনই ডাটা রিস্টোর করুন'}
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>

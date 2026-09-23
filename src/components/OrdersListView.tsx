@@ -14,7 +14,9 @@ import {
   Truck,
   RotateCw,
   Share2,
-  Printer
+  Printer,
+  Mail,
+  Download
 } from 'lucide-react';
 import { Order } from '../types';
 import { getBusinessInfo } from '../lib/firebase';
@@ -25,6 +27,8 @@ interface OrdersListViewProps {
   onUpdateDeliveryStatus: (orderId: string, status: Order['deliveryStatus']) => void;
   onSyncWithSheets: () => void;
   onBackupToDrive: () => void;
+  onSendEmailBackup?: () => void;
+  onDownloadOrdersCSV?: () => void;
   isSyncing: boolean;
   spreadsheetUrl: string | null;
   lastDriveBackupLink: string | null;
@@ -36,6 +40,8 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
   onUpdateDeliveryStatus,
   onSyncWithSheets,
   onBackupToDrive,
+  onSendEmailBackup,
+  onDownloadOrdersCSV,
   isSyncing,
   spreadsheetUrl,
   lastDriveBackupLink,
@@ -140,34 +146,63 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
         </div>
       </div>
 
-      {/* Sync Action Header */}
-      <div className="bg-emerald-900 text-white rounded-2xl p-3.5 sm:p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-md">
+      {/* Sync & Backup Action Header */}
+      <div className="bg-gradient-to-r from-emerald-950 via-emerald-900 to-teal-950 text-white rounded-2xl p-3.5 sm:p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-md border border-emerald-800/60">
         <div>
-          <h3 className="font-bold text-sm sm:text-base flex items-center gap-2">
-            <FileSpreadsheet className="w-5 h-5 text-emerald-300" />
-            গুগল শিট ও ড্রাইভ স্বয়ংক্রিয় ব্যাকআপ
-          </h3>
+          <div className="flex items-center gap-2">
+            <h3 className="font-bold text-sm sm:text-base flex items-center gap-2 text-white">
+              <FileSpreadsheet className="w-5 h-5 text-emerald-400" />
+              সেলস ব্যাকআপ ও এক্সপোর্ট হাব
+            </h3>
+            <span className="bg-emerald-500/20 text-emerald-300 text-[10px] px-2 py-0.5 rounded-full font-bold border border-emerald-400/30">
+              Gmail & Excel
+            </span>
+          </div>
           <p className="text-xs text-emerald-200/90 mt-0.5">
-            নেটওয়ার্ক ছাড়া অফলাইনে অর্ডার কাটার পর অনলাইনে এলে এক ক্লিকে গুগল শিট ও ড্রাইভে ব্যাকআপ করুন
+            গুগল শিট ছাড়াও সরাসরি জিমেইল এবং এক্সেলে (CSV) অর্ডার ও বিক্রয় ডাটা এক ক্লিকে সেভ করুন
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+          {onSendEmailBackup && (
+            <button
+              onClick={onSendEmailBackup}
+              className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3.5 py-2 bg-amber-400 hover:bg-amber-300 text-neutral-950 font-black rounded-xl text-xs shadow transition-all active:scale-95 cursor-pointer"
+              title="সম্পূর্ণ অর্ডার রিপোর্ট ও ব্যাকআপ সরাসরি জিমেইলে পাঠান"
+            >
+              <Mail className="w-3.5 h-3.5 text-neutral-950" />
+              <span>জিমেইলে ব্যাকআপ</span>
+            </button>
+          )}
+
+          {onDownloadOrdersCSV && (
+            <button
+              onClick={onDownloadOrdersCSV}
+              className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-xl text-xs shadow transition-all active:scale-95 cursor-pointer"
+              title="আজকের সকল অর্ডার এক্সেল-সাপোর্টেড CSV ফাইলে ডাউনলোড করুন"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>এক্সেলে ডাউনলোড</span>
+            </button>
+          )}
+
           <button
             onClick={onSyncWithSheets}
             disabled={isSyncing}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3.5 py-2 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold rounded-xl text-xs shadow transition-all disabled:opacity-50"
+            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs shadow transition-all disabled:opacity-50"
+            title="গুগল শিটে সরাসরি সিঙ্ক করুন"
           >
             <RotateCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-            <span>{isSyncing ? 'সিঙ্ক হচ্ছে...' : 'গুগল শিটে সিঙ্ক'}</span>
+            <span>{isSyncing ? 'সিঙ্ক হচ্ছে...' : 'গুগল শিট'}</span>
           </button>
 
           <button
             onClick={onBackupToDrive}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3.5 py-2 bg-neutral-800 hover:bg-neutral-700 text-emerald-200 border border-emerald-700 font-medium rounded-xl text-xs shadow transition-all"
+            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-emerald-200 border border-emerald-700 font-medium rounded-xl text-xs shadow transition-all"
+            title="গুগল ড্রাইভে ব্যাকআপ স্ন্যাপশট আপলোড করুন"
           >
             <HardDrive className="w-3.5 h-3.5" />
-            <span>ড্রাইভ ব্যাকআপ</span>
+            <span>ড্রাইভ</span>
           </button>
 
           {spreadsheetUrl && (
@@ -175,7 +210,7 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
               href={spreadsheetUrl}
               target="_blank"
               rel="noreferrer"
-              className="flex items-center gap-1 px-3 py-2 bg-white text-emerald-900 hover:bg-emerald-50 font-bold rounded-xl text-xs shadow"
+              className="flex items-center gap-1 px-3 py-2 bg-white text-emerald-950 hover:bg-emerald-50 font-bold rounded-xl text-xs shadow"
             >
               <span>শিট ওপেন</span>
             </a>
