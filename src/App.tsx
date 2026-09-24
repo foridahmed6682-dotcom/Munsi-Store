@@ -100,7 +100,7 @@ export default function App() {
   // Network & Auth & RBAC
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
   const [userProfile, setUserProfileState] = useState<UserProfile | null>(null);
-  const [activeSimulatedRole, setActiveSimulatedRole] = useState<UserRole>('dsr');
+  const [activeSimulatedRole, setActiveSimulatedRole] = useState<UserRole>('customer');
 
   // Sync state
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
@@ -145,6 +145,8 @@ export default function App() {
     setUserProfileState(user);
     if (user?.role) {
       setActiveSimulatedRole(user.role);
+    } else {
+      setActiveSimulatedRole('customer');
     }
   }, []);
 

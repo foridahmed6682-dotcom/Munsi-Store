@@ -1408,6 +1408,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                               <option value="admin">এডমিন (Admin)</option>
                               <option value="sr">এসআর (SR)</option>
                               <option value="dsr">ডিএসআর (DSR)</option>
+                              <option value="customer">কাস্টমার (Customer - সাধারণ ক্রেতা)</option>
                             </select>
                           )}
                         </td>
@@ -1495,6 +1496,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                             <option value="admin">এডমিন (Admin)</option>
                             <option value="sr">এসআর (SR)</option>
                             <option value="dsr">ডিএসআর (DSR)</option>
+                            <option value="customer">কাস্টমার (Customer)</option>
                           </select>
                         </td>
                         <td className="p-3 text-neutral-600 font-medium">{u.assignedRoute || 'সব রুট'}</td>
@@ -2585,6 +2587,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                     <option value="admin">এডমিন (Admin - সম্পূর্ণ নিয়ন্ত্রণ)</option>
                     <option value="sr">এসআর (SR - রুট সেলস)</option>
                     <option value="dsr">ডিএসআর (DSR - ডেলিভারি ও অর্ডার)</option>
+                    <option value="customer">কাস্টমার (Customer - সাধারণ অনলাইন ক্রেতা)</option>
                   </select>
                 </div>
 

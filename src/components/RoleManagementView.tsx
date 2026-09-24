@@ -352,6 +352,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                       <option value="admin">এডমিন (Admin)</option>
                       <option value="sr">এসআর (SR)</option>
                       <option value="dsr">ডিএসআর (DSR)</option>
+                      <option value="customer">কাস্টমার (Customer - সাধারণ ক্রেতা)</option>
                     </select>
                   </td>
                   <td className="p-3">

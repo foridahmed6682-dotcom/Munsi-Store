@@ -15,7 +15,7 @@ import {
   User,
   LogOut
 } from 'lucide-react';
-import { googleSignIn, logout } from '../lib/firebase';
+import { googleSignIn, logout, isMainSuperAdmin } from '../lib/firebase';
 import { UserProfile, UserRole } from '../types';
 
 export interface HeaderProps {
@@ -49,7 +49,7 @@ export const Header: React.FC<HeaderProps> = ({
   installPrompt = null,
   onInstallApp = () => {},
   isAppInstalled = false,
-  activeRole = 'dsr',
+  activeRole = 'customer',
   onSwitchRole,
   onOpenAdmin,
 }) => {
@@ -57,6 +57,9 @@ export const Header: React.FC<HeaderProps> = ({
   const [showRoleSelector, setShowRoleSelector] = React.useState(false);
   const [showIOSModal, setShowIOSModal] = React.useState(false);
   const activeUser = userProfile || directUser;
+
+  const isActualAdmin =
+    (activeUser && (activeUser.role === 'admin' || isMainSuperAdmin(activeUser.email))) || false;
 
   const handleSignIn = async () => {
     try {
@@ -92,12 +95,12 @@ export const Header: React.FC<HeaderProps> = ({
 
   const triggerSync = onSyncClick || onSyncTrigger || (() => {});
 
-  const currentRole: UserRole = (activeUser?.role as UserRole) || activeRole || 'customer';
+  const currentRole: UserRole = activeRole || (activeUser?.role as UserRole) || 'customer';
   const roleBadgeMap: Record<UserRole, { label: string; bg: string; icon: React.ComponentType<{ className?: string }> }> = {
     admin: { label: 'এডমিন', bg: 'bg-purple-600 text-white', icon: ShieldCheck },
     sr: { label: 'এসআর', bg: 'bg-blue-600 text-white', icon: UserCheck },
     dsr: { label: 'ডিএসআর', bg: 'bg-emerald-600 text-white', icon: Truck },
-    customer: { label: 'ক্রেতা (Guest)', bg: 'bg-indigo-600 text-white', icon: User },
+    customer: { label: 'ক্রেতা (Customer)', bg: 'bg-indigo-600 text-white', icon: User },
   };
   const roleBadgeConfig = roleBadgeMap[currentRole] || roleBadgeMap.customer;
 
@@ -116,22 +119,29 @@ export const Header: React.FC<HeaderProps> = ({
               <h1 className="font-bold text-base sm:text-lg tracking-tight leading-tight truncate">
                 মুন্সী স্টোর <span className="text-emerald-300 font-normal text-xs sm:text-sm">| DSR অর্ডার বুকার</span>
               </h1>
-              {/* Interactive Role Switch Badge - strictly hidden from guests/customers */}
-              {activeUser && currentRole !== 'customer' && (
+              {/* Interactive Role Switch Badge - ONLY for verified Admin users */}
+              {isActualAdmin ? (
                 <button
                   type="button"
                   onClick={() => setShowRoleSelector(!showRoleSelector)}
                   className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full shadow-xs cursor-pointer hover:opacity-90 transition-opacity ${roleBadgeConfig.bg}`}
-                  title="রোল পরিবর্তন করতে ক্লিক করুন"
+                  title="এডমিন: ভিউ সুইচ করতে ক্লিক করুন"
                 >
                   <RoleIcon className="w-3 h-3" />
                   <span>{roleBadgeConfig.label}</span>
                   <span className="text-[9px] opacity-80">▼</span>
                 </button>
+              ) : (
+                <span
+                  className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full shadow-xs ${roleBadgeConfig.bg}`}
+                >
+                  <RoleIcon className="w-3 h-3" />
+                  <span>{roleBadgeConfig.label}</span>
+                </span>
               )}
 
-              {/* Role Dropdown */}
-              {showRoleSelector && activeUser && currentRole !== 'customer' && (
+              {/* Role Dropdown - ONLY for Admin */}
+              {showRoleSelector && isActualAdmin && (
                 <div className="absolute top-7 left-24 z-50 bg-white text-neutral-900 rounded-2xl p-2 shadow-2xl border border-neutral-200 w-44 animate-in fade-in zoom-in-95">
                   <p className="text-[10px] font-bold text-neutral-400 px-2 py-1 uppercase">
                     রোল সুইচ করুন

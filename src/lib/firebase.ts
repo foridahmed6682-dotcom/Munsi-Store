@@ -39,13 +39,15 @@ import {
 export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
 /* CRITICAL: The app will break without this line */
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
 export const auth = getAuth(app);
 
-// Standard provider for general login (email/profile - extremely reliable)
+// Standard provider with full Google Sheets & Drive OAuth scopes
 const provider = new GoogleAuthProvider();
+provider.addScope('https://www.googleapis.com/auth/spreadsheets');
+provider.addScope('https://www.googleapis.com/auth/drive.file');
 
-// Workspace provider for sheet/drive sync (requires enabling APIs in Google Cloud Console)
+// Workspace provider for sheet/drive sync
 const workspaceProvider = new GoogleAuthProvider();
 workspaceProvider.addScope('https://www.googleapis.com/auth/spreadsheets');
 workspaceProvider.addScope('https://www.googleapis.com/auth/drive.file');
@@ -132,13 +134,13 @@ export async function signInWithGoogle(): Promise<{ user: User; isNewUser: boole
     const result = await signInWithPopup(auth, provider);
     const firebaseUser = result.user;
 
-    let role: UserRole = 'dsr'; // default role
+    let role: UserRole = 'customer'; // Default role if not assigned by admin
     let assignedRoute: string = 'সব রুট (All Routes)';
 
-    const userEmail = (firebaseUser.email || '').toLowerCase();
+    const userEmail = (firebaseUser.email || '').toLowerCase().trim();
 
-    // Check if main admin
-    if (userEmail === 'foridahmed6682@gmail.com' || userEmail === 'ahmedmdforid39@gmail.com') {
+    // Check if main super admin
+    if (isMainSuperAdmin(userEmail)) {
       role = 'admin';
     } else {
       // Check Firestore authorizedEmails collection
@@ -146,8 +148,8 @@ export async function signInWithGoogle(): Promise<{ user: User; isNewUser: boole
       let foundAuth = false;
       authSnap.forEach((docSnap) => {
         const data = docSnap.data() as AuthorizedUserEmail;
-        if (data.email && data.email.toLowerCase() === userEmail) {
-          role = data.role || 'dsr';
+        if (data.email && data.email.toLowerCase().trim() === userEmail) {
+          role = data.role || 'customer';
           if (data.assignedRoute) assignedRoute = data.assignedRoute;
           foundAuth = true;
         }
@@ -155,7 +157,7 @@ export async function signInWithGoogle(): Promise<{ user: User; isNewUser: boole
 
       if (!foundAuth) {
         // Fallback default admin list
-        if (DEFAULT_AUTHORIZED_EMAILS.some((a) => a.email.toLowerCase() === userEmail && a.role === 'admin')) {
+        if (DEFAULT_AUTHORIZED_EMAILS.some((a) => a.email.toLowerCase().trim() === userEmail && a.role === 'admin')) {
           role = 'admin';
         }
       }
@@ -202,24 +204,24 @@ export async function signInWithWorkspaceGoogle(): Promise<{ user: User; accessT
     const accessToken = credential?.accessToken || null;
     const firebaseUser = result.user;
 
-    let role: UserRole = 'dsr';
+    let role: UserRole = 'customer'; // Default role if not assigned by admin
     let assignedRoute: string = 'সব রুট (All Routes)';
 
-    const userEmail = (firebaseUser.email || '').toLowerCase();
-    if (userEmail === 'foridahmed6682@gmail.com' || userEmail === 'ahmedmdforid39@gmail.com') {
+    const userEmail = (firebaseUser.email || '').toLowerCase().trim();
+    if (isMainSuperAdmin(userEmail)) {
       role = 'admin';
     } else {
       const authSnap = await getDocs(collection(db, 'authorizedEmails'));
       let foundAuth = false;
       authSnap.forEach((docSnap) => {
         const data = docSnap.data() as AuthorizedUserEmail;
-        if (data.email && data.email.toLowerCase() === userEmail) {
-          role = data.role || 'dsr';
+        if (data.email && data.email.toLowerCase().trim() === userEmail) {
+          role = data.role || 'customer';
           if (data.assignedRoute) assignedRoute = data.assignedRoute;
           foundAuth = true;
         }
       });
-      if (!foundAuth && DEFAULT_AUTHORIZED_EMAILS.some((a) => a.email.toLowerCase() === userEmail && a.role === 'admin')) {
+      if (!foundAuth && DEFAULT_AUTHORIZED_EMAILS.some((a) => a.email.toLowerCase().trim() === userEmail && a.role === 'admin')) {
         role = 'admin';
       }
     }

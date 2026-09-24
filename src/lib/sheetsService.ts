@@ -67,6 +67,9 @@ export async function getOrCreateSpreadsheet(token: string): Promise<{ id: strin
 
   if (!createRes.ok) {
     const errText = await createRes.text();
+    if (createRes.status === 401) {
+      throw new Error('গুগল অ্যাকাউন্ট টোকেন মেয়াদোত্তীর্ণ বা পাওয়া যায়নি। অনুগ্রহ করে পুনরায় গুগল সাইন-ইন করুন।');
+    }
     throw new Error(`Failed to create spreadsheet: ${errText}`);
   }
 

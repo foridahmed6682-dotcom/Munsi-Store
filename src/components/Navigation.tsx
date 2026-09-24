@@ -33,7 +33,7 @@ export const Navigation: React.FC<NavigationProps> = ({
       label: userRole === 'sr' ? 'রুট অর্ডার পর্যবেক্ষণ' : 'অর্ডার ও মেমো তালিকা',
       shortLabel: 'লিস্ট',
       icon: FileText,
-      roles: ['admin', 'sr'],
+      roles: ['admin', 'sr', 'dsr'],
     },
     {
       id: 'shops' as NavTab,
@@ -55,7 +55,7 @@ export const Navigation: React.FC<NavigationProps> = ({
       label: 'ইনভেন্টরি স্টক ও ছবি',
       shortLabel: 'স্টক',
       icon: Package,
-      roles: ['admin', 'sr'],
+      roles: ['admin', 'sr', 'dsr'],
     },
     {
       id: 'admin' as NavTab,

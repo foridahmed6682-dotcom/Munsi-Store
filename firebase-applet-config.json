@@ -1,12 +1,11 @@
 {
-  "projectId": "munsi-store",
-  "appId": "1:568646225139:web:44c5095e438863d8fb7b86",
-  "apiKey": "AIzaSyCc8vUJdYT2BBPZaI4ylIy61mWT5MvBZNI",
-  "authDomain": "munsi-store.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-shoporderbookeri-a050f7ec-14f6-48a4-a13f-2a1a58a6df8b",
-  "storageBucket": "munsi-store.firebasestorage.app",
-  "messagingSenderId": "568646225139",
+  "projectId": "gen-lang-client-0454574190",
+  "appId": "1:631976147034:web:67f942ff1162a17e038063",
+  "apiKey": "AIzaSyAKbuSY-iGRYL-D-oJyqw2j1wnRzxe1aGg",
+  "authDomain": "gen-lang-client-0454574190.firebaseapp.com",
+  "storageBucket": "gen-lang-client-0454574190.firebasestorage.app",
+  "messagingSenderId": "631976147034",
   "measurementId": "",
-  "oAuthClientId": "568646225139-h2dgf1boasggiidh175qkogh9a64oc2f.apps.googleusercontent.com",
+  "oAuthClientId": "631976147034-1rjt1nh830ad6bbodsaqebdnj42s04g4.apps.googleusercontent.com",
   "recaptchaSiteKey": ""
 }
