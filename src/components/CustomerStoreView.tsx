@@ -22,9 +22,13 @@ import {
   HeartHandshake,
   BadgePercent,
   Check,
-  AlertCircle
+  AlertCircle,
+  Copy,
+  Smartphone,
+  Building
 } from 'lucide-react';
-import { Product, Order, OrderItem, Category, PaymentMethod } from '../types';
+import { Product, Order, OrderItem, Category, PaymentMethod, BusinessInfo } from '../types';
+import { getBusinessInfo, DEFAULT_BUSINESS_INFO } from '../lib/storage';
 
 interface CustomerStoreViewProps {
   products: Product[];
@@ -35,6 +39,7 @@ interface CustomerStoreViewProps {
   hotline?: string;
   onViewMemo?: (order: Order) => void;
   pastOrders?: Order[];
+  businessInfo?: BusinessInfo;
 }
 
 export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
@@ -46,6 +51,7 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
   hotline = '01768-826682',
   onViewMemo,
   pastOrders = [],
+  businessInfo,
 }) => {
   // State
   const [activeTab, setActiveTab] = useState<'shop' | 'checkout' | 'success' | 'my-orders'>('shop');
@@ -60,13 +66,33 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
   const [customerPhone, setCustomerPhone] = useState(currentUser?.phone || '');
   const [altPhone, setAltPhone] = useState('');
   const [customerAddress, setCustomerAddress] = useState('');
-  const [deliveryArea, setDeliveryArea] = useState<'local' | 'inside_dhaka' | 'outside_dhaka'>('inside_dhaka');
+  const [customerCity, setCustomerCity] = useState('');
   const [deliveryTimeSlot, setDeliveryTimeSlot] = useState('anytime');
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
-  const [bkashSender, setBkashSender] = useState('');
-  const [bkashTrxId, setBkashTrxId] = useState('');
   const [deliveryNotes, setDeliveryNotes] = useState('');
   const [formErrors, setFormErrors] = useState<{ [key: string]: string }>({});
+  const [copiedNumber, setCopiedNumber] = useState<string | null>(null);
+
+  // Business & Payment Settings from Admin
+  const activeBizInfo = businessInfo || getBusinessInfo();
+  const paymentSettings = activeBizInfo.paymentSettings || DEFAULT_BUSINESS_INFO.paymentSettings!;
+
+  // Dynamic Payment Method State (picks first enabled method)
+  const defaultPayMethod: PaymentMethod = useMemo(() => {
+    if (paymentSettings.cashOnDelivery?.enabled !== false) return 'CASH';
+    if (paymentSettings.bkash?.enabled !== false) return 'BKASH';
+    if (paymentSettings.nagad?.enabled !== false) return 'NAGAD';
+    return 'CASH';
+  }, [paymentSettings]);
+
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(defaultPayMethod);
+  const [bkashSender, setBkashSender] = useState('');
+  const [bkashTrxId, setBkashTrxId] = useState('');
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedNumber(text);
+    setTimeout(() => setCopiedNumber(null), 2500);
+  };
 
   // Dynamic Categories
   const categoryList = useMemo(() => {
@@ -116,15 +142,9 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
     return cartItems.reduce((sum, item) => sum + item.lineTotal, 0);
   }, [cartItems]);
 
-  // Delivery Charge Calculation
-  const deliveryCharge = useMemo(() => {
-    if (subTotal === 0) return 0;
-    if (deliveryArea === 'local') return 30; // লোকাল এরিয়া
-    if (deliveryArea === 'inside_dhaka') return 60; // ঢাকা সিটি
-    return 120; // ঢাকা সিটির বাইরে / সারা বাংলাদেশ
-  }, [deliveryArea, subTotal]);
-
-  const grandTotal = subTotal + deliveryCharge;
+  // Zero Delivery Charge strictly on customer checkout
+  const deliveryCharge = 0;
+  const grandTotal = subTotal;
 
   // Cart Management
   const addToCart = (productId: string) => {
@@ -193,13 +213,7 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
     const memoNo = `MS-CUST-${Date.now().toString().slice(-6)}`;
     const fullNotes = [
       deliveryNotes.trim() ? `নোট: ${deliveryNotes.trim()}` : '',
-      `ডেলিভারি এরিয়া: ${
-        deliveryArea === 'inside_dhaka'
-          ? 'ঢাকা সিটির ভেতরে (৳৬০)'
-          : deliveryArea === 'outside_dhaka'
-          ? 'ঢাকার বাইরে / সারা বাংলাদেশ (৳১২০)'
-          : 'লোকাল ডেলিভারি (৳৩০)'
-      }`,
+      customerCity.trim() ? `শহর/এলাকা: ${customerCity.trim()}` : '',
       `ডেলিভারি স্লট: ${
         deliveryTimeSlot === 'morning'
           ? 'সকাল ৯টা - দুপুর ১টা'
@@ -221,7 +235,7 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
       shopName: `অনলাইন কাস্টমার: ${customerName}`,
       shopPhone: customerPhone,
       shopAddress: customerAddress,
-      shopRoute: deliveryArea === 'inside_dhaka' ? 'ঢাকা হোম ডেলিভারি' : 'সারা বাংলাদেশ কুরিয়ার',
+      shopRoute: customerCity.trim() || 'অনলাইন ডেলিভারি',
       items: cartItems,
       subTotal: subTotal,
       discountPercent: 0,
@@ -239,8 +253,8 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
       customerName,
       customerPhone,
       customerAddress,
-      customerCity: deliveryArea === 'inside_dhaka' ? 'ঢাকা' : 'ঢাকার বাইরে',
-      deliveryCharge,
+      customerCity: customerCity.trim() || 'ঢাকা',
+      deliveryCharge: 0,
       orderType: 'b2c_customer',
       trxId: bkashTrxId || undefined,
       bookedByUid: currentUser?.uid || 'guest-customer',
@@ -263,8 +277,6 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
       `📞 *ফোন:* ${order.customerPhone || order.shopPhone}\n` +
       `📍 *ঠিকানা:* ${order.customerAddress || order.shopAddress}\n\n` +
       `📦 *অর্ডারকৃত পণ্যসমূহ:*\n${itemsList}\n\n` +
-      `💵 *সাব-টোটাল:* ৳${order.subTotal}\n` +
-      `🚚 *ডেলিভারি চার্জ:* ৳${order.deliveryCharge || 0}\n` +
       `💰 *সর্বমোট প্রদেয় বিল:* ৳${order.netTotal}\n` +
       `💳 *পেমেন্ট মেথড:* ${order.paymentMethod === 'CASH' ? 'ক্যাশ অন ডেলিভারি (হাতে পেয়ে টাকা দিন)' : order.paymentMethod}\n\n` +
       `অনুগ্রহ করে আমার অর্ডারটি কনফার্ম করুন। ধন্যবাদ!`;
@@ -797,63 +809,16 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
                 </div>
               </div>
 
-              {/* 2. Delivery Address & Area */}
+              {/* 2. Delivery Address & Information */}
               <div className="bg-white rounded-2xl border border-neutral-200 p-4 sm:p-5 shadow-xs">
                 <h3 className="font-bold text-neutral-900 text-sm sm:text-base mb-3 flex items-center gap-2 pb-2 border-b border-neutral-100">
                   <span className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-800 text-xs font-black flex items-center justify-center">
                     ২
                   </span>
-                  ডেলিভারি ঠিকানা ও এলাকা নির্বাচন
+                  ডেলিভারি ঠিকানা ও তথ্য
                 </h3>
 
                 <div className="space-y-3">
-                  {/* Delivery Area Picker */}
-                  <div>
-                    <label className="block text-xs font-bold text-neutral-700 mb-1.5">
-                      ডেলিভারি এরিয়া সিলেক্ট করুন:
-                    </label>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setDeliveryArea('inside_dhaka')}
-                        className={`p-2.5 rounded-xl border text-left transition-all ${
-                          deliveryArea === 'inside_dhaka'
-                            ? 'border-emerald-600 bg-emerald-50/80 ring-2 ring-emerald-500/20'
-                            : 'border-neutral-200 hover:bg-neutral-50'
-                        }`}
-                      >
-                        <div className="font-bold text-xs text-neutral-900">ঢাকা সিটির ভেতরে</div>
-                        <div className="text-[11px] text-emerald-700 font-extrabold mt-0.5">চার্জ: ৳৬০</div>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setDeliveryArea('outside_dhaka')}
-                        className={`p-2.5 rounded-xl border text-left transition-all ${
-                          deliveryArea === 'outside_dhaka'
-                            ? 'border-emerald-600 bg-emerald-50/80 ring-2 ring-emerald-500/20'
-                            : 'border-neutral-200 hover:bg-neutral-50'
-                        }`}
-                      >
-                        <div className="font-bold text-xs text-neutral-900">ঢাকার বাইরে / সারা দেশ</div>
-                        <div className="text-[11px] text-emerald-700 font-extrabold mt-0.5">চার্জ: ৳১২০</div>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setDeliveryArea('local')}
-                        className={`p-2.5 rounded-xl border text-left transition-all ${
-                          deliveryArea === 'local'
-                            ? 'border-emerald-600 bg-emerald-50/80 ring-2 ring-emerald-500/20'
-                            : 'border-neutral-200 hover:bg-neutral-50'
-                        }`}
-                      >
-                        <div className="font-bold text-xs text-neutral-900">লোকাল স্টোর এরিয়া</div>
-                        <div className="text-[11px] text-emerald-700 font-extrabold mt-0.5">চার্জ: ৳৩০</div>
-                      </button>
-                    </div>
-                  </div>
-
                   {/* Detailed Address Field */}
                   <div>
                     <label className="block text-xs font-bold text-neutral-700 mb-1">
@@ -875,8 +840,20 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
                     )}
                   </div>
 
-                  {/* Delivery Slot */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-neutral-700 mb-1">
+                        শহর / জেলা (ঐচ্ছিক)
+                      </label>
+                      <input
+                        type="text"
+                        value={customerCity}
+                        onChange={(e) => setCustomerCity(e.target.value)}
+                        placeholder="যেমন: ঢাকা, চট্টগ্রাম, সিলেট..."
+                        className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      />
+                    </div>
+
                     <div>
                       <label className="block text-xs font-bold text-neutral-700 mb-1">
                         পছন্দসই সময় (ডেলিভারি স্লট)
@@ -891,24 +868,24 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
                         <option value="evening">বিকাল ৩:০০ - রাত ৮:০০</option>
                       </select>
                     </div>
+                  </div>
 
-                    <div>
-                      <label className="block text-xs font-bold text-neutral-700 mb-1">
-                        স্পেশাল নোট (ঐচ্ছিক)
-                      </label>
-                      <input
-                        type="text"
-                        value={deliveryNotes}
-                        onChange={(e) => setDeliveryNotes(e.target.value)}
-                        placeholder="যেমন: কল দিয়ে গেট খুলবেন"
-                        className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                      />
-                    </div>
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">
+                      স্পেশাল নোট (ঐচ্ছিক)
+                    </label>
+                    <input
+                      type="text"
+                      value={deliveryNotes}
+                      onChange={(e) => setDeliveryNotes(e.target.value)}
+                      placeholder="যেমন: কল দিয়ে গেট খুলবেন বা কেয়ারটেকারের কাছে রাখবেন"
+                      className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
                   </div>
                 </div>
               </div>
 
-              {/* 3. Payment Method */}
+              {/* 3. Payment Method Selection (Controlled by Admin) */}
               <div className="bg-white rounded-2xl border border-neutral-200 p-4 sm:p-5 shadow-xs">
                 <h3 className="font-bold text-neutral-900 text-sm sm:text-base mb-3 flex items-center gap-2 pb-2 border-b border-neutral-100">
                   <span className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-800 text-xs font-black flex items-center justify-center">
@@ -918,115 +895,262 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
                 </h3>
 
                 <div className="space-y-2.5">
-                  <label
-                    onClick={() => setPaymentMethod('CASH')}
-                    className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
-                      paymentMethod === 'CASH'
-                        ? 'border-emerald-600 bg-emerald-50/90 ring-2 ring-emerald-500/20'
-                        : 'border-neutral-200 hover:bg-neutral-50'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="payment"
-                      checked={paymentMethod === 'CASH'}
-                      onChange={() => setPaymentMethod('CASH')}
-                      className="mt-1 text-emerald-600 focus:ring-emerald-500"
-                    />
-                    <div>
-                      <div className="font-bold text-sm text-neutral-900 flex items-center gap-1.5">
-                        <Banknote className="w-4 h-4 text-emerald-700" />
-                        ক্যাশ অন ডেলিভারি (Cash on Delivery)
-                      </div>
-                      <p className="text-xs text-neutral-500 mt-0.5">
-                        পণ্যটি আপনার ঠিকানায় পৌঁছালে তা দেখে ও বুঝে নিয়ে ডেলিভারিম্যানকে টাকা দিন।
-                      </p>
-                    </div>
-                  </label>
-
-                  <label
-                    onClick={() => setPaymentMethod('BKASH')}
-                    className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
-                      paymentMethod === 'BKASH'
-                        ? 'border-pink-600 bg-pink-50/90 ring-2 ring-pink-500/20'
-                        : 'border-neutral-200 hover:bg-neutral-50'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="payment"
-                      checked={paymentMethod === 'BKASH'}
-                      onChange={() => setPaymentMethod('BKASH')}
-                      className="mt-1 text-pink-600 focus:ring-pink-500"
-                    />
-                    <div className="w-full">
-                      <div className="font-bold text-sm text-neutral-900 flex items-center justify-between">
-                        <span className="flex items-center gap-1.5 text-pink-700">
-                          📱 বিকাশ পেমেন্ট (bKash)
-                        </span>
-                        <span className="text-[10px] bg-pink-100 text-pink-800 font-bold px-2 py-0.5 rounded">
-                          সেন্ড মানি / মার্চেন্ট
-                        </span>
-                      </div>
-                      <p className="text-xs text-neutral-500 mt-0.5">
-                        বিকাশ নম্বর: <span className="font-mono font-bold text-neutral-800">{hotline}</span> (Personal)
-                      </p>
-
-                      {paymentMethod === 'BKASH' && (
-                        <div className="mt-2.5 pt-2 border-t border-pink-200/60 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          <input
-                            type="tel"
-                            value={bkashSender}
-                            onChange={(e) => setBkashSender(e.target.value)}
-                            placeholder="যে বিকাশ নম্বর থেকে টাকা পাঠিয়েছেন"
-                            className="p-2 bg-white border border-pink-200 rounded-lg text-xs"
-                          />
-                          <input
-                            type="text"
-                            value={bkashTrxId}
-                            onChange={(e) => setBkashTrxId(e.target.value)}
-                            placeholder="বিকাশ TrxID কোড লিখুন"
-                            className="p-2 bg-white border border-pink-200 rounded-lg text-xs uppercase"
-                          />
+                  {/* CASH ON DELIVERY (If enabled by admin) */}
+                  {paymentSettings?.cashOnDelivery?.enabled !== false && (
+                    <label
+                      onClick={() => setPaymentMethod('CASH')}
+                      className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                        paymentMethod === 'CASH'
+                          ? 'border-emerald-600 bg-emerald-50/90 ring-2 ring-emerald-500/20'
+                          : 'border-neutral-200 hover:bg-neutral-50'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="payment"
+                        checked={paymentMethod === 'CASH'}
+                        onChange={() => setPaymentMethod('CASH')}
+                        className="mt-1 text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <div>
+                        <div className="font-bold text-sm text-neutral-900 flex items-center gap-1.5">
+                          <Banknote className="w-4 h-4 text-emerald-700" />
+                          ক্যাশ অন ডেলিভারি (Cash on Delivery)
                         </div>
-                      )}
-                    </div>
-                  </label>
-
-                  <label
-                    onClick={() => setPaymentMethod('NAGAD')}
-                    className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
-                      paymentMethod === 'NAGAD'
-                        ? 'border-orange-600 bg-orange-50/90 ring-2 ring-orange-500/20'
-                        : 'border-neutral-200 hover:bg-neutral-50'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="payment"
-                      checked={paymentMethod === 'NAGAD'}
-                      onChange={() => setPaymentMethod('NAGAD')}
-                      className="mt-1 text-orange-600 focus:ring-orange-500"
-                    />
-                    <div className="w-full">
-                      <div className="font-bold text-sm text-neutral-900 flex items-center justify-between">
-                        <span className="flex items-center gap-1.5 text-orange-700">
-                          📱 নগদ পেমেন্ট (Nagad)
-                        </span>
-                        <span className="text-[10px] bg-orange-100 text-orange-800 font-bold px-2 py-0.5 rounded">
-                          সেন্ড মানি
-                        </span>
+                        <p className="text-xs text-neutral-500 mt-0.5">
+                          {paymentSettings?.cashOnDelivery?.instructions || 'পণ্যটি আপনার ঠিকানায় পৌঁছালে তা দেখে ও বুঝে নিয়ে ডেলিভারিম্যানকে টাকা দিন।'}
+                        </p>
                       </div>
-                      <p className="text-xs text-neutral-500 mt-0.5">
-                        নগদ নম্বর: <span className="font-mono font-bold text-neutral-800">{hotline}</span> (Personal)
-                      </p>
-                    </div>
-                  </label>
+                    </label>
+                  )}
+
+                  {/* BKASH (If enabled by admin) */}
+                  {paymentSettings?.bkash?.enabled !== false && (
+                    <label
+                      onClick={() => setPaymentMethod('BKASH')}
+                      className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                        paymentMethod === 'BKASH'
+                          ? 'border-pink-600 bg-pink-50/90 ring-2 ring-pink-500/20'
+                          : 'border-neutral-200 hover:bg-neutral-50'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="payment"
+                        checked={paymentMethod === 'BKASH'}
+                        onChange={() => setPaymentMethod('BKASH')}
+                        className="mt-1 text-pink-600 focus:ring-pink-500"
+                      />
+                      <div className="w-full">
+                        <div className="font-bold text-sm text-neutral-900 flex items-center justify-between">
+                          <span className="flex items-center gap-1.5 text-pink-700">
+                            <Smartphone className="w-4 h-4" /> বিকাশ পেমেন্ট (bKash)
+                          </span>
+                          <span className="text-[10px] bg-pink-100 text-pink-800 font-bold px-2 py-0.5 rounded">
+                            {paymentSettings?.bkash?.type || 'Personal'}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-xs text-neutral-500">বিকাশ নম্বর:</span>
+                          <span className="font-mono font-bold text-neutral-900 text-xs">
+                            {paymentSettings?.bkash?.number || activeBizInfo.bkashNumber || hotline}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              copyToClipboard(paymentSettings?.bkash?.number || activeBizInfo.bkashNumber || hotline);
+                            }}
+                            className="text-[10px] text-pink-700 bg-pink-100 hover:bg-pink-200 font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5"
+                          >
+                            {copiedNumber === (paymentSettings?.bkash?.number || activeBizInfo.bkashNumber || hotline) ? (
+                              <>
+                                <Check className="w-3 h-3 text-emerald-600" /> কপি হয়েছে
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3 h-3" /> কপি
+                              </>
+                            )}
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-neutral-500 mt-0.5">
+                          {paymentSettings?.bkash?.instructions || 'বিকাশে সেন্ড মানি করুন এবং নিচে প্রেরক নম্বর ও TrxID দিন।'}
+                        </p>
+
+                        {paymentMethod === 'BKASH' && (
+                          <div className="mt-2.5 pt-2 border-t border-pink-200/60 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <input
+                              type="tel"
+                              value={bkashSender}
+                              onChange={(e) => setBkashSender(e.target.value)}
+                              placeholder="যে বিকাশ নম্বর থেকে টাকা পাঠিয়েছেন"
+                              className="p-2 bg-white border border-pink-200 rounded-lg text-xs"
+                            />
+                            <input
+                              type="text"
+                              value={bkashTrxId}
+                              onChange={(e) => setBkashTrxId(e.target.value)}
+                              placeholder="বিকাশ TrxID কোড লিখুন"
+                              className="p-2 bg-white border border-pink-200 rounded-lg text-xs uppercase"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </label>
+                  )}
+
+                  {/* NAGAD (If enabled by admin) */}
+                  {paymentSettings?.nagad?.enabled !== false && (
+                    <label
+                      onClick={() => setPaymentMethod('NAGAD')}
+                      className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                        paymentMethod === 'NAGAD'
+                          ? 'border-orange-600 bg-orange-50/90 ring-2 ring-orange-500/20'
+                          : 'border-neutral-200 hover:bg-neutral-50'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="payment"
+                        checked={paymentMethod === 'NAGAD'}
+                        onChange={() => setPaymentMethod('NAGAD')}
+                        className="mt-1 text-orange-600 focus:ring-orange-500"
+                      />
+                      <div className="w-full">
+                        <div className="font-bold text-sm text-neutral-900 flex items-center justify-between">
+                          <span className="flex items-center gap-1.5 text-orange-700">
+                            <Smartphone className="w-4 h-4" /> নগদ পেমেন্ট (Nagad)
+                          </span>
+                          <span className="text-[10px] bg-orange-100 text-orange-800 font-bold px-2 py-0.5 rounded">
+                            {paymentSettings?.nagad?.type || 'Personal'}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-xs text-neutral-500">নগদ নম্বর:</span>
+                          <span className="font-mono font-bold text-neutral-900 text-xs">
+                            {paymentSettings?.nagad?.number || activeBizInfo.nagadNumber || hotline}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              copyToClipboard(paymentSettings?.nagad?.number || activeBizInfo.nagadNumber || hotline);
+                            }}
+                            className="text-[10px] text-orange-700 bg-orange-100 hover:bg-orange-200 font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5"
+                          >
+                            {copiedNumber === (paymentSettings?.nagad?.number || activeBizInfo.nagadNumber || hotline) ? (
+                              <>
+                                <Check className="w-3 h-3 text-emerald-600" /> কপি হয়েছে
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3 h-3" /> কপি
+                              </>
+                            )}
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-neutral-500 mt-0.5">
+                          {paymentSettings?.nagad?.instructions || 'নগদে সেন্ড মানি করুন এবং নিচে প্রেরক নম্বর ও TrxID দিন।'}
+                        </p>
+
+                        {paymentMethod === 'NAGAD' && (
+                          <div className="mt-2.5 pt-2 border-t border-orange-200/60 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <input
+                              type="tel"
+                              value={bkashSender}
+                              onChange={(e) => setBkashSender(e.target.value)}
+                              placeholder="যে নগদ নম্বর থেকে টাকা পাঠিয়েছেন"
+                              className="p-2 bg-white border border-orange-200 rounded-lg text-xs"
+                            />
+                            <input
+                              type="text"
+                              value={bkashTrxId}
+                              onChange={(e) => setBkashTrxId(e.target.value)}
+                              placeholder="নগদ TrxID কোড লিখুন"
+                              className="p-2 bg-white border border-orange-200 rounded-lg text-xs uppercase"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </label>
+                  )}
+
+                  {/* ROCKET (If enabled by admin) */}
+                  {paymentSettings?.rocket?.enabled && (
+                    <label
+                      onClick={() => setPaymentMethod('BKASH')}
+                      className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                        paymentMethod === 'BKASH'
+                          ? 'border-purple-600 bg-purple-50/90 ring-2 ring-purple-500/20'
+                          : 'border-neutral-200 hover:bg-neutral-50'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="payment"
+                        checked={paymentMethod === 'BKASH'}
+                        onChange={() => setPaymentMethod('BKASH')}
+                        className="mt-1 text-purple-600 focus:ring-purple-500"
+                      />
+                      <div className="w-full">
+                        <div className="font-bold text-sm text-neutral-900 flex items-center justify-between">
+                          <span className="flex items-center gap-1.5 text-purple-700">
+                            <Smartphone className="w-4 h-4" /> রকেট পেমেন্ট (Rocket)
+                          </span>
+                          <span className="text-[10px] bg-purple-100 text-purple-800 font-bold px-2 py-0.5 rounded">
+                            {paymentSettings?.rocket?.type || 'Personal'}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-xs text-neutral-500">রকেট নম্বর:</span>
+                          <span className="font-mono font-bold text-neutral-900 text-xs">
+                            {paymentSettings?.rocket?.number || activeBizInfo.rocketNumber}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              copyToClipboard(paymentSettings?.rocket?.number || activeBizInfo.rocketNumber || '');
+                            }}
+                            className="text-[10px] text-purple-700 bg-purple-100 hover:bg-purple-200 font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5"
+                          >
+                            <Copy className="w-3 h-3" /> কপি
+                          </button>
+                        </div>
+                      </div>
+                    </label>
+                  )}
+
+                  {/* BANK TRANSFER (If enabled by admin) */}
+                  {paymentSettings?.bank?.enabled && (
+                    <label
+                      onClick={() => setPaymentMethod('CASH')}
+                      className="flex items-start gap-3 p-3 rounded-xl border border-neutral-200 hover:bg-neutral-50 cursor-pointer transition-all"
+                    >
+                      <div className="w-full">
+                        <div className="font-bold text-sm text-neutral-900 flex items-center justify-between">
+                          <span className="flex items-center gap-1.5 text-blue-700">
+                            <Building className="w-4 h-4" /> ব্যাংক একাউন্ট ট্রান্সফার
+                          </span>
+                          <span className="text-[10px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded">
+                            Bank Deposit
+                          </span>
+                        </div>
+                        <div className="mt-2 p-2.5 bg-blue-50/60 rounded-lg text-xs space-y-1 text-neutral-700">
+                          <div><span className="font-bold">ব্যাংক:</span> {paymentSettings.bank.bankName}</div>
+                          <div><span className="font-bold">হিসাবের নাম:</span> {paymentSettings.bank.accountName}</div>
+                          <div><span className="font-bold">হিসাব নম্বর:</span> <span className="font-mono font-bold">{paymentSettings.bank.accountNumber}</span></div>
+                          <div><span className="font-bold">শাখা:</span> {paymentSettings.bank.branch}</div>
+                        </div>
+                      </div>
+                    </label>
+                  )}
                 </div>
               </div>
             </div>
 
-            {/* Right Column: Order Summary & Confirm Box */}
+            {/* Right Column: Order Summary & Confirm Box (NO DELIVERY CHARGE) */}
             <div className="md:col-span-5">
               <div className="bg-white rounded-2xl border border-neutral-200 p-4 sm:p-5 shadow-xs sticky top-[80px]">
                 <h3 className="font-black text-neutral-900 text-base mb-3 pb-2 border-b border-neutral-100 flex items-center justify-between">
@@ -1053,16 +1177,11 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
                   ))}
                 </div>
 
-                {/* Calculation breakdown */}
+                {/* Calculation breakdown: NO DELIVERY CHARGE */}
                 <div className="space-y-2 pt-3 border-t border-neutral-200 text-xs text-neutral-600">
                   <div className="flex justify-between">
                     <span>পণ্যের উপ-মোট (Subtotal):</span>
                     <span className="font-bold text-neutral-800">৳{subTotal.toLocaleString('en-IN')}</span>
-                  </div>
-
-                  <div className="flex justify-between">
-                    <span>ডেলিভারি চার্জ ({deliveryArea === 'inside_dhaka' ? 'ঢাকা' : deliveryArea === 'outside_dhaka' ? 'ঢাকার বাইরে' : 'লোকাল'}):</span>
-                    <span className="font-bold text-emerald-800">৳{deliveryCharge}</span>
                   </div>
 
                   <div className="flex justify-between pt-2.5 border-t border-neutral-200 text-sm sm:text-base font-black text-neutral-900">

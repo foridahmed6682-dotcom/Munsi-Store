@@ -155,6 +155,16 @@ export interface UserProfile {
   accessToken?: string;
 }
 
+export interface PaymentMethodConfig {
+  id: PaymentMethod | 'ROCKET' | 'BANK';
+  name: string;
+  banglaName: string;
+  enabled: boolean;
+  accountNumber?: string;
+  accountType?: 'Personal' | 'Merchant' | 'Agent';
+  instructions?: string;
+}
+
 export interface BusinessInfo {
   name: string;
   banglaName: string;
@@ -163,11 +173,46 @@ export interface BusinessInfo {
   hotline: string;
   email?: string;
   bkashNumber?: string;
+  nagadNumber?: string;
+  rocketNumber?: string;
   deliveryCharge?: number;
   minOrderAmount?: number;
   siteNotice?: string;
   isNoticeActive?: boolean;
   memoFooterNotice?: string;
+  paymentSettings?: {
+    cashOnDelivery: {
+      enabled: boolean;
+      instructions?: string;
+    };
+    bkash: {
+      enabled: boolean;
+      number: string;
+      type: 'Personal' | 'Merchant' | 'Agent';
+      instructions?: string;
+    };
+    nagad: {
+      enabled: boolean;
+      number: string;
+      type: 'Personal' | 'Merchant';
+      instructions?: string;
+    };
+    rocket: {
+      enabled: boolean;
+      number: string;
+      type: 'Personal' | 'Merchant';
+      instructions?: string;
+    };
+    bank: {
+      enabled: boolean;
+      bankName: string;
+      accountName: string;
+      accountNumber: string;
+      branch: string;
+      routingNumber?: string;
+      instructions?: string;
+    };
+  };
 }
 
 

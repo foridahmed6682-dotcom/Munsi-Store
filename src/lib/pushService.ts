@@ -1,4 +1,7 @@
 // Web Push Notification Service for Munsi Store
+import { doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { db } from './firebase';
+
 export const VAPID_PUBLIC_KEY = 'BIyxRt1UASyhSfEmRx8J7Yivfy-o_EiystQWv96lYqerntJizLMQNCHGi4guiKBkeHMDvbex0RVRDKHGiHg6nUA';
 
 export interface PushStatus {
@@ -126,6 +129,22 @@ export async function subscribeToPush(meta?: { role?: string; userEmail?: string
       throw new Error(errJson.error || 'সার্ভারে পুশ সাবস্ক্রিপশন রেজিস্টার করতে সমস্যা হয়েছে।');
     }
 
+    // Store in Firestore for resilient multi-platform persistence (e.g. Vercel serverless)
+    try {
+      const endpointHash = btoa(subscription.endpoint).slice(-40).replace(/[^a-zA-Z0-9_-]/g, '_');
+      await setDoc(doc(db, 'push_subscriptions', endpointHash), {
+        endpoint: subscription.endpoint,
+        subscriptionJson: JSON.stringify(subscription),
+        role: meta?.role || 'user',
+        userEmail: meta?.userEmail || '',
+        userName: meta?.userName || '',
+        userAgent: navigator.userAgent,
+        updatedAt: new Date().toISOString()
+      });
+    } catch (fsErr) {
+      console.warn('Could not save push subscription to Firestore:', fsErr);
+    }
+
     // Store in localStorage for rapid state recovery
     localStorage.setItem('munsi_push_subscribed', 'true');
 
@@ -165,6 +184,13 @@ export async function unsubscribeFromPush(): Promise<{ success: boolean; error?:
           endpoint: subscription.endpoint
         })
       }).catch(console.error);
+
+      try {
+        const endpointHash = btoa(subscription.endpoint).slice(-40).replace(/[^a-zA-Z0-9_-]/g, '_');
+        await deleteDoc(doc(db, 'push_subscriptions', endpointHash));
+      } catch {
+        // ignore
+      }
 
       await subscription.unsubscribe();
     }

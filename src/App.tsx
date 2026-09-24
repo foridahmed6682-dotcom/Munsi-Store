@@ -855,6 +855,9 @@ export default function App() {
               categories={categories}
               onOrderCreated={handleOrderCreated}
               currentUser={userProfile}
+              businessInfo={businessInfo}
+              businessName={businessInfo?.banglaName || businessInfo?.name}
+              hotline={businessInfo?.hotline}
               onViewMemo={(order) => {
                 setSelectedMemoOrder(order);
                 setIsMemoOpen(true);

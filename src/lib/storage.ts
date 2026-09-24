@@ -26,11 +26,46 @@ export const DEFAULT_BUSINESS_INFO: BusinessInfo = {
   hotline: '০১৭১১-XXXXXX',
   email: 'foridahmed6682@gmail.com',
   bkashNumber: '01711000000',
-  deliveryCharge: 60,
-  minOrderAmount: 500,
+  nagadNumber: '01711000000',
+  rocketNumber: '',
+  deliveryCharge: 0,
+  minOrderAmount: 0,
   siteNotice: '🚚 সকল অনলাইন ও রিটেইল অর্ডার ২৪ ঘণ্টার মধ্যে বিশ্বস্ত ডেলিভারি করা হয়!',
   isNoticeActive: true,
   memoFooterNotice: 'ধন্যবাদ! বিক্রিত মাল ফেরত নেওয়া হয় না। যেকোনো প্রয়োজনে হটলাইনে যোগাযোগ করুন।',
+  paymentSettings: {
+    cashOnDelivery: {
+      enabled: true,
+      instructions: 'পণ্য হাতে পেয়ে দেখে বুঝে মূল্য পরিশোধ করুন।',
+    },
+    bkash: {
+      enabled: true,
+      number: '01711000000',
+      type: 'Personal',
+      instructions: 'বিকাশ অ্যাপ বা *247# ডায়াল করে সেন্ড মানি করুন।',
+    },
+    nagad: {
+      enabled: true,
+      number: '01711000000',
+      type: 'Personal',
+      instructions: 'নগদ অ্যাপ বা *167# ডায়াল করে সেন্ড মানি করুন।',
+    },
+    rocket: {
+      enabled: false,
+      number: '',
+      type: 'Personal',
+      instructions: 'রকেট একাউন্টে সেন্ড মানি করুন।',
+    },
+    bank: {
+      enabled: false,
+      bankName: 'ইসলামী ব্যাংক বাংলাদেশ লিমিটেড',
+      accountName: 'Munsi Store',
+      accountNumber: '2050XXXXXXXXXX',
+      branch: 'চকবাজার শাখা, ঢাকা',
+      routingNumber: '',
+      instructions: 'ব্যাংক একাউন্টে টাকা ট্রান্সফার করে ডিপোজিট স্লিপ বা রেফারেন্স রাখুন।',
+    },
+  },
 };
 
 export function getBusinessInfo(): BusinessInfo {

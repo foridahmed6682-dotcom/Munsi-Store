@@ -43,7 +43,9 @@ import {
   Share2,
   Bell,
   BellRing,
-  Smartphone
+  Smartphone,
+  CreditCard,
+  Banknote
 } from 'lucide-react';
 import {
   Product,
@@ -58,7 +60,7 @@ import {
   BusinessInfo
 } from '../types';
 import { fetchAllUsers, updateUserRoleAndRoute, getBusinessInfo, saveBusinessInfoToCloud, subscribeToCloudBusinessInfo } from '../lib/firebase';
-import { saveBusinessInfoLocal } from '../lib/storage';
+import { saveBusinessInfoLocal, DEFAULT_BUSINESS_INFO } from '../lib/storage';
 import { FullBackupData, parseAndValidateBackupJSON } from '../lib/backupService';
 import { PushNotificationManager } from './PushNotificationManager';
 
@@ -1830,55 +1832,501 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 </div>
               </div>
 
-              {/* Section 2: Online Customer & E-commerce Settings */}
-              <div className="space-y-3 pt-3 border-t border-neutral-200">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1.5">
-                  <Truck className="w-4 h-4" />
-                  <span>২. সাধারণ কাস্টমার ও ডেলিভারি সেটিংস</span>
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Section 2: Online Customer Payment Methods & Number Management */}
+              <div className="space-y-4 pt-3 border-t border-neutral-200">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
                   <div>
-                    <label className="block text-xs font-bold text-neutral-700 mb-1">
-                      হোম ডেলিভারি চার্জ (৳)
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={bizInfo.deliveryCharge !== undefined ? bizInfo.deliveryCharge : 60}
-                      onChange={(e) => setBizInfo({ ...bizInfo, deliveryCharge: parseFloat(e.target.value) || 0 })}
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600 font-mono"
-                      placeholder="যেমন: 60"
-                    />
-                    <span className="text-[10px] text-neutral-500">ফ্রি ডেলিভারি হলে 0 লিখুন</span>
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1.5">
+                      <CreditCard className="w-4 h-4 text-emerald-600" />
+                      <span>২. কাস্টমার চেকআউট ও পেমেন্ট মেথড কনফিগারেশন</span>
+                    </h3>
+                    <p className="text-[11px] text-neutral-500 mt-0.5">
+                      চেকআউট পেজে কোন কোন পেমেন্ট মেথড ও নাম্বার দেখাবে তা এখান থেকে নিয়ন্ত্রণ করুন। কাস্টমার পেজে কোনো ডেলিভারি চার্জ যোগ হবে না।
+                    </p>
                   </div>
+                  <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" /> ডেলিভারি চার্জ জিরো (ফ্রি)
+                  </span>
+                </div>
 
-                  <div>
-                    <label className="block text-xs font-bold text-neutral-700 mb-1">
-                      নূন্যতম অর্ডার মূল্য (৳)
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={bizInfo.minOrderAmount !== undefined ? bizInfo.minOrderAmount : 500}
-                      onChange={(e) => setBizInfo({ ...bizInfo, minOrderAmount: parseFloat(e.target.value) || 0 })}
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600 font-mono"
-                      placeholder="যেমন: 500"
-                    />
-                    <span className="text-[10px] text-neutral-500">অনলাইনে সর্বনিম্ন অর্ডার লিমিট</span>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-neutral-700 mb-1">
-                      বিকাশ / নগদ পেমেন্ট নম্বর
-                    </label>
+                {/* Grid of Payment Methods */}
+                <div className="space-y-3">
+                  {/* 1. Cash on Delivery */}
+                  <div className="p-3.5 bg-neutral-50 border border-neutral-200 rounded-xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Banknote className="w-4 h-4 text-emerald-700" />
+                        <span className="text-xs font-bold text-neutral-900">ক্যাশ অন ডেলিভারি (Cash on Delivery)</span>
+                      </div>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={bizInfo.paymentSettings?.cashOnDelivery?.enabled ?? true}
+                          onChange={(e) => {
+                            const current = bizInfo.paymentSettings || DEFAULT_BUSINESS_INFO.paymentSettings!;
+                            setBizInfo({
+                              ...bizInfo,
+                              paymentSettings: {
+                                ...current,
+                                cashOnDelivery: {
+                                  ...current.cashOnDelivery,
+                                  enabled: e.target.checked,
+                                },
+                              },
+                            });
+                          }}
+                          className="w-4 h-4 text-emerald-600 rounded"
+                        />
+                        <span className="text-xs font-bold text-neutral-700">চেকআউটে দেখাবে</span>
+                      </label>
+                    </div>
                     <input
                       type="text"
-                      value={bizInfo.bkashNumber || ''}
-                      onChange={(e) => setBizInfo({ ...bizInfo, bkashNumber: e.target.value })}
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600 font-mono"
-                      placeholder="যেমন: 01711000000"
+                      value={bizInfo.paymentSettings?.cashOnDelivery?.instructions || 'পণ্য হাতে পেয়ে দেখে বুঝে মূল্য পরিশোধ করুন।'}
+                      onChange={(e) => {
+                        const current = bizInfo.paymentSettings || DEFAULT_BUSINESS_INFO.paymentSettings!;
+                        setBizInfo({
+                          ...bizInfo,
+                          paymentSettings: {
+                            ...current,
+                            cashOnDelivery: {
+                              ...current.cashOnDelivery,
+                              instructions: e.target.value,
+                            },
+                          },
+                        });
+                      }}
+                      className="w-full px-3 py-1.5 rounded-lg border border-neutral-200 text-xs bg-white text-neutral-700"
+                      placeholder="কাস্টমারকে দেখানো নির্দেশিকা..."
                     />
-                    <span className="text-[10px] text-neutral-500">চেকআউট পেজে কাস্টমারদের দেখাবে</span>
+                  </div>
+
+                  {/* 2. bKash Payment */}
+                  <div className="p-3.5 bg-pink-50/60 border border-pink-200 rounded-xl space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Smartphone className="w-4 h-4 text-pink-600" />
+                        <span className="text-xs font-bold text-pink-950">বিকাশ পেমেন্ট (bKash)</span>
+                      </div>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={bizInfo.paymentSettings?.bkash?.enabled ?? true}
+                          onChange={(e) => {
+                            const current = bizInfo.paymentSettings || DEFAULT_BUSINESS_INFO.paymentSettings!;
+                            setBizInfo({
+                              ...bizInfo,
+                              paymentSettings: {
+                                ...current,
+                                bkash: {
+                                  ...current.bkash,
+                                  enabled: e.target.checked,
+                                },
+                              },
+                            });
+                          }}
+                          className="w-4 h-4 text-pink-600 rounded"
+                        />
+                        <span className="text-xs font-bold text-pink-900">চেকআউটে দেখাবে</span>
+                      </label>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div>
+                        <label className="block text-[11px] font-bold text-neutral-700 mb-0.5">বিকাশ মোবাইল নম্বর *</label>
+                        <input
+                          type="text"
+                          value={bizInfo.paymentSettings?.bkash?.number ?? bizInfo.bkashNumber ?? ''}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            const current = bizInfo.paymentSettings || DEFAULT_BUSINESS_INFO.paymentSettings!;
+                            setBizInfo({
+                              ...bizInfo,
+                              bkashNumber: val,
+                              paymentSettings: {
+                                ...current,
+                                bkash: {
+                                  ...current.bkash,
+                                  number: val,
+                                },
+                              },
+                            });
+                          }}
+                          className="w-full px-3 py-1.5 rounded-lg border border-pink-200 text-xs bg-white font-mono font-bold"
+                          placeholder="017XXXXXXXX"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-neutral-700 mb-0.5">একাউন্ট ধরণ</label>
+                        <select
+                          value={bizInfo.paymentSettings?.bkash?.type || 'Personal'}
+                          onChange={(e) => {
+                            const current = bizInfo.paymentSettings || DEFAULT_BUSINESS_INFO.paymentSettings!;
+                            setBizInfo({
+                              ...bizInfo,
+                              paymentSettings: {
+                                ...current,
+                                bkash: {
+                                  ...current.bkash,
+                                  type: e.target.value as any,
+                                },
+                              },
+                            });
+                          }}
+                          className="w-full px-3 py-1.5 rounded-lg border border-pink-200 text-xs bg-white font-medium"
+                        >
+                          <option value="Personal">পার্সোনাল (Personal)</option>
+                          <option value="Merchant">মার্চেন্ট (Merchant)</option>
+                          <option value="Agent">এজেন্ট (Agent)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-neutral-700 mb-0.5">পেমেন্ট নির্দেশিকা</label>
+                        <input
+                          type="text"
+                          value={bizInfo.paymentSettings?.bkash?.instructions || 'বিকাশে সেন্ড মানি করুন ও TrxID দিন'}
+                          onChange={(e) => {
+                            const current = bizInfo.paymentSettings || DEFAULT_BUSINESS_INFO.paymentSettings!;
+                            setBizInfo({
+                              ...bizInfo,
+                              paymentSettings: {
+                                ...current,
+                                bkash: {
+                                  ...current.bkash,
+                                  instructions: e.target.value,
+                                },
+                              },
+                            });
+                          }}
+                          className="w-full px-3 py-1.5 rounded-lg border border-pink-200 text-xs bg-white"
+                          placeholder="নির্দেশিকা..."
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 3. Nagad Payment */}
+                  <div className="p-3.5 bg-orange-50/60 border border-orange-200 rounded-xl space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Smartphone className="w-4 h-4 text-orange-600" />
+                        <span className="text-xs font-bold text-orange-950">নগদ পেমেন্ট (Nagad)</span>
+                      </div>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={bizInfo.paymentSettings?.nagad?.enabled ?? true}
+                          onChange={(e) => {
+                            const current = bizInfo.paymentSettings || DEFAULT_BUSINESS_INFO.paymentSettings!;
+                            setBizInfo({
+                              ...bizInfo,
+                              paymentSettings: {
+                                ...current,
+                                nagad: {
+                                  ...current.nagad,
+                                  enabled: e.target.checked,
+                                },
+                              },
+                            });
+                          }}
+                          className="w-4 h-4 text-orange-600 rounded"
+                        />
+                        <span className="text-xs font-bold text-orange-900">চেকআউটে দেখাবে</span>
+                      </label>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div>
+                        <label className="block text-[11px] font-bold text-neutral-700 mb-0.5">নগদ মোবাইল নম্বর *</label>
+                        <input
+                          type="text"
+                          value={bizInfo.paymentSettings?.nagad?.number ?? bizInfo.nagadNumber ?? bizInfo.hotline ?? ''}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            const current = bizInfo.paymentSettings || DEFAULT_BUSINESS_INFO.paymentSettings!;
+                            setBizInfo({
+                              ...bizInfo,
+                              nagadNumber: val,
+                              paymentSettings: {
+                                ...current,
+                                nagad: {
+                                  ...current.nagad,
+                                  number: val,
+                                },
+                              },
+                            });
+                          }}
+                          className="w-full px-3 py-1.5 rounded-lg border border-orange-200 text-xs bg-white font-mono font-bold"
+                          placeholder="01XXXXXXXXX"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-neutral-700 mb-0.5">একাউন্ট ধরণ</label>
+                        <select
+                          value={bizInfo.paymentSettings?.nagad?.type || 'Personal'}
+                          onChange={(e) => {
+                            const current = bizInfo.paymentSettings || DEFAULT_BUSINESS_INFO.paymentSettings!;
+                            setBizInfo({
+                              ...bizInfo,
+                              paymentSettings: {
+                                ...current,
+                                nagad: {
+                                  ...current.nagad,
+                                  type: e.target.value as any,
+                                },
+                              },
+                            });
+                          }}
+                          className="w-full px-3 py-1.5 rounded-lg border border-orange-200 text-xs bg-white font-medium"
+                        >
+                          <option value="Personal">পার্সোনাল (Personal)</option>
+                          <option value="Merchant">মার্চেন্ট (Merchant)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-neutral-700 mb-0.5">পেমেন্ট নির্দেশিকা</label>
+                        <input
+                          type="text"
+                          value={bizInfo.paymentSettings?.nagad?.instructions || 'নগদে সেন্ড মানি করুন ও TrxID দিন'}
+                          onChange={(e) => {
+                            const current = bizInfo.paymentSettings || DEFAULT_BUSINESS_INFO.paymentSettings!;
+                            setBizInfo({
+                              ...bizInfo,
+                              paymentSettings: {
+                                ...current,
+                                nagad: {
+                                  ...current.nagad,
+                                  instructions: e.target.value,
+                                },
+                              },
+                            });
+                          }}
+                          className="w-full px-3 py-1.5 rounded-lg border border-orange-200 text-xs bg-white"
+                          placeholder="নির্দেশিকা..."
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 4. Rocket Payment */}
+                  <div className="p-3.5 bg-purple-50/60 border border-purple-200 rounded-xl space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Smartphone className="w-4 h-4 text-purple-600" />
+                        <span className="text-xs font-bold text-purple-950">রকেট পেমেন্ট (Rocket - DBBL)</span>
+                      </div>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={bizInfo.paymentSettings?.rocket?.enabled ?? false}
+                          onChange={(e) => {
+                            const current = bizInfo.paymentSettings || DEFAULT_BUSINESS_INFO.paymentSettings!;
+                            setBizInfo({
+                              ...bizInfo,
+                              paymentSettings: {
+                                ...current,
+                                rocket: {
+                                  ...current.rocket,
+                                  enabled: e.target.checked,
+                                },
+                              },
+                            });
+                          }}
+                          className="w-4 h-4 text-purple-600 rounded"
+                        />
+                        <span className="text-xs font-bold text-purple-900">চেকআউটে দেখাবে</span>
+                      </label>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div>
+                        <label className="block text-[11px] font-bold text-neutral-700 mb-0.5">রকেট নম্বর (১২ ডিজিট)</label>
+                        <input
+                          type="text"
+                          value={bizInfo.paymentSettings?.rocket?.number ?? bizInfo.rocketNumber ?? ''}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            const current = bizInfo.paymentSettings || DEFAULT_BUSINESS_INFO.paymentSettings!;
+                            setBizInfo({
+                              ...bizInfo,
+                              rocketNumber: val,
+                              paymentSettings: {
+                                ...current,
+                                rocket: {
+                                  ...current.rocket,
+                                  number: val,
+                                },
+                              },
+                            });
+                          }}
+                          className="w-full px-3 py-1.5 rounded-lg border border-purple-200 text-xs bg-white font-mono font-bold"
+                          placeholder="01XXXXXXXXX-X"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-neutral-700 mb-0.5">একাউন্ট ধরণ</label>
+                        <select
+                          value={bizInfo.paymentSettings?.rocket?.type || 'Personal'}
+                          onChange={(e) => {
+                            const current = bizInfo.paymentSettings || DEFAULT_BUSINESS_INFO.paymentSettings!;
+                            setBizInfo({
+                              ...bizInfo,
+                              paymentSettings: {
+                                ...current,
+                                rocket: {
+                                  ...current.rocket,
+                                  type: e.target.value as any,
+                                },
+                              },
+                            });
+                          }}
+                          className="w-full px-3 py-1.5 rounded-lg border border-purple-200 text-xs bg-white font-medium"
+                        >
+                          <option value="Personal">পার্সোনাল (Personal)</option>
+                          <option value="Merchant">মার্চেন্ট (Merchant)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-neutral-700 mb-0.5">পেমেন্ট নির্দেশিকা</label>
+                        <input
+                          type="text"
+                          value={bizInfo.paymentSettings?.rocket?.instructions || 'রকেট একাউন্টে সেন্ড মানি করুন ও TrxID দিন'}
+                          onChange={(e) => {
+                            const current = bizInfo.paymentSettings || DEFAULT_BUSINESS_INFO.paymentSettings!;
+                            setBizInfo({
+                              ...bizInfo,
+                              paymentSettings: {
+                                ...current,
+                                rocket: {
+                                  ...current.rocket,
+                                  instructions: e.target.value,
+                                },
+                              },
+                            });
+                          }}
+                          className="w-full px-3 py-1.5 rounded-lg border border-purple-200 text-xs bg-white"
+                          placeholder="নির্দেশিকা..."
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 5. Bank Transfer */}
+                  <div className="p-3.5 bg-blue-50/60 border border-blue-200 rounded-xl space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <CreditCard className="w-4 h-4 text-blue-600" />
+                        <span className="text-xs font-bold text-blue-950">সরাসরি ব্যাংক একাউন্ট ট্রান্সফার (Bank Transfer)</span>
+                      </div>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={bizInfo.paymentSettings?.bank?.enabled ?? false}
+                          onChange={(e) => {
+                            const current = bizInfo.paymentSettings || DEFAULT_BUSINESS_INFO.paymentSettings!;
+                            setBizInfo({
+                              ...bizInfo,
+                              paymentSettings: {
+                                ...current,
+                                bank: {
+                                  ...current.bank,
+                                  enabled: e.target.checked,
+                                },
+                              },
+                            });
+                          }}
+                          className="w-4 h-4 text-blue-600 rounded"
+                        />
+                        <span className="text-xs font-bold text-blue-900">চেকআউটে দেখাবে</span>
+                      </label>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                      <div>
+                        <label className="block text-[11px] font-bold text-neutral-700 mb-0.5">ব্যাংক নাম</label>
+                        <input
+                          type="text"
+                          value={bizInfo.paymentSettings?.bank?.bankName || ''}
+                          onChange={(e) => {
+                            const current = bizInfo.paymentSettings || DEFAULT_BUSINESS_INFO.paymentSettings!;
+                            setBizInfo({
+                              ...bizInfo,
+                              paymentSettings: {
+                                ...current,
+                                bank: {
+                                  ...current.bank,
+                                  bankName: e.target.value,
+                                },
+                              },
+                            });
+                          }}
+                          className="w-full px-3 py-1.5 rounded-lg border border-blue-200 text-xs bg-white"
+                          placeholder="যেমন: ডাচ-বাংলা ব্যাংক"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-neutral-700 mb-0.5">একাউন্ট হোল্ডারের নাম</label>
+                        <input
+                          type="text"
+                          value={bizInfo.paymentSettings?.bank?.accountName || ''}
+                          onChange={(e) => {
+                            const current = bizInfo.paymentSettings || DEFAULT_BUSINESS_INFO.paymentSettings!;
+                            setBizInfo({
+                              ...bizInfo,
+                              paymentSettings: {
+                                ...current,
+                                bank: {
+                                  ...current.bank,
+                                  accountName: e.target.value,
+                                },
+                              },
+                            });
+                          }}
+                          className="w-full px-3 py-1.5 rounded-lg border border-blue-200 text-xs bg-white"
+                          placeholder="Munsi Store"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-neutral-700 mb-0.5">একাউন্ট নম্বর</label>
+                        <input
+                          type="text"
+                          value={bizInfo.paymentSettings?.bank?.accountNumber || ''}
+                          onChange={(e) => {
+                            const current = bizInfo.paymentSettings || DEFAULT_BUSINESS_INFO.paymentSettings!;
+                            setBizInfo({
+                              ...bizInfo,
+                              paymentSettings: {
+                                ...current,
+                                bank: {
+                                  ...current.bank,
+                                  accountNumber: e.target.value,
+                                },
+                              },
+                            });
+                          }}
+                          className="w-full px-3 py-1.5 rounded-lg border border-blue-200 text-xs bg-white font-mono font-bold"
+                          placeholder="2050XXXXXXXXXX"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-neutral-700 mb-0.5">শাখা (Branch)</label>
+                        <input
+                          type="text"
+                          value={bizInfo.paymentSettings?.bank?.branch || ''}
+                          onChange={(e) => {
+                            const current = bizInfo.paymentSettings || DEFAULT_BUSINESS_INFO.paymentSettings!;
+                            setBizInfo({
+                              ...bizInfo,
+                              paymentSettings: {
+                                ...current,
+                                bank: {
+                                  ...current.bank,
+                                  branch: e.target.value,
+                                },
+                              },
+                            });
+                          }}
+                          className="w-full px-3 py-1.5 rounded-lg border border-blue-200 text-xs bg-white"
+                          placeholder="চকবাজার শাখা"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
