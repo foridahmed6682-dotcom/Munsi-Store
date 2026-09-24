@@ -68,6 +68,7 @@ import {
 import { Header } from './components/Header';
 import { Navigation, NavTab } from './components/Navigation';
 import { OrderBookingView } from './components/OrderBookingView';
+import { CustomerStoreView } from './components/CustomerStoreView';
 import { OrdersListView } from './components/OrdersListView';
 import { ShopsListView } from './components/ShopsListView';
 import { InventoryView } from './components/InventoryView';
@@ -226,16 +227,16 @@ export default function App() {
   // Order Creation Handler
   const handleOrderCreated = async (orderData: any) => {
     try {
-      const memoNumber = `MS-${Date.now().toString().slice(-6)}`;
+      const memoNumber = orderData.memoNumber || `MS-${Date.now().toString().slice(-6)}`;
       const newOrder: Order = {
-        ...orderData,
-        id: `ord-${Date.now()}`,
-        memoNumber,
+        id: orderData.id || `ord-${Date.now()}`,
         orderDate: new Date().toISOString(),
         syncedWithSheets: false,
-        bookedByUid: userProfile?.uid || 'usr-local',
-        bookedByName: userProfile?.displayName || (activeSimulatedRole === 'dsr' ? 'হাবিবুর রহমান (DSR)' : 'এডমিন অফিসার'),
-        bookedByRole: activeSimulatedRole,
+        bookedByUid: userProfile?.uid || orderData.bookedByUid || 'usr-local',
+        bookedByName: userProfile?.displayName || orderData.bookedByName || (activeSimulatedRole === 'dsr' ? 'হাবিবুর রহমান (DSR)' : activeSimulatedRole === 'customer' ? 'অনলাইন কাস্টমার' : 'এডমিন অফিসার'),
+        bookedByRole: orderData.bookedByRole || activeSimulatedRole,
+        ...orderData,
+        memoNumber,
       };
 
       // 1. Save to local storage (instant offline persistence)
@@ -252,16 +253,18 @@ export default function App() {
         }
       }
 
-      // 3. Update shop's debt in local storage & Firestore
-      const shopToUpdate = shops.find((s) => s.id === newOrder.shopId);
-      if (shopToUpdate) {
-        const updatedShop: Shop = {
-          ...shopToUpdate,
-          previousDue: newOrder.totalOutstandingAfterOrder,
-          lastVisitDate: new Date().toISOString().split('T')[0],
-        };
-        saveShop(updatedShop);
-        saveShopToCloud(updatedShop).catch(() => {});
+      // 3. Update shop's debt in local storage & Firestore (if a regular shop order)
+      if (newOrder.shopId && newOrder.shopId !== 'shop-direct-customer') {
+        const shopToUpdate = shops.find((s) => s.id === newOrder.shopId);
+        if (shopToUpdate) {
+          const updatedShop: Shop = {
+            ...shopToUpdate,
+            previousDue: newOrder.totalOutstandingAfterOrder,
+            lastVisitDate: new Date().toISOString().split('T')[0],
+          };
+          saveShop(updatedShop);
+          saveShopToCloud(updatedShop).catch(() => {});
+        }
       }
 
       // 4. Save order to Firebase Firestore in background
@@ -270,10 +273,8 @@ export default function App() {
       // Reload state
       reloadData();
 
-      // Open printable memo modal immediately
-      setSelectedMemoOrder(newOrder);
-      setIsMemoOpen(true);
-      showToast(`মেমো #${memoNumber} সফলভাবে তৈরি ও সংরক্ষিত হয়েছে!`, 'success');
+      // Show toast
+      showToast(`মেমো #${newOrder.memoNumber} সফলভাবে তৈরি ও সংরক্ষিত হয়েছে!`, 'success');
 
       // 5. Background auto-sync to Sheets if online and token available
       if (navigator.onLine && userProfile?.accessToken) {
@@ -290,9 +291,15 @@ export default function App() {
           })
           .catch((err) => console.log('Auto-sync deferred to next online sync:', err));
       }
-    } catch (e: any) {
-      console.error(e);
-      showToast('অর্ডার সংরক্ষণ ব্যর্থ হয়েছে', 'error');
+
+      // Open printable memo modal if not customer checkout (customer has its own success screen)
+      if (activeSimulatedRole !== 'customer') {
+        setSelectedMemoOrder(newOrder);
+        setIsMemoOpen(true);
+      }
+    } catch (err: any) {
+      console.error('Error creating order:', err);
+      showToast(`অর্ডার তৈরিতে ত্রুটি: ${err.message}`, 'error');
     }
   };
 
@@ -737,15 +744,29 @@ export default function App() {
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl mx-auto w-full px-3 sm:px-4 pt-4">
         {activeTab === 'order' && (
-          <OrderBookingView
-            products={products}
-            shops={shops}
-            routes={routes}
-            selectedShopIdProp={targetOrderShopId}
-            onOrderCreated={handleOrderCreated}
-            onAddShop={handleAddShop}
-            onCartCountChange={(count) => setCartCount(count)}
-          />
+          activeSimulatedRole === 'customer' ? (
+            <CustomerStoreView
+              products={products}
+              categories={categories}
+              onOrderCreated={handleOrderCreated}
+              currentUser={userProfile}
+              onViewMemo={(order) => {
+                setSelectedMemoOrder(order);
+                setIsMemoOpen(true);
+              }}
+              pastOrders={orders}
+            />
+          ) : (
+            <OrderBookingView
+              products={products}
+              shops={shops}
+              routes={routes}
+              selectedShopIdProp={targetOrderShopId}
+              onOrderCreated={handleOrderCreated}
+              onAddShop={handleAddShop}
+              onCartCountChange={(count) => setCartCount(count)}
+            />
+          )
         )}
 
         {activeTab === 'orders' && (

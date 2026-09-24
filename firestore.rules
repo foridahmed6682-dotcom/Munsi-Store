@@ -37,7 +37,7 @@ service cloud.firestore {
     function isValidUser(data) {
       return data.uid is string && data.uid.size() > 0 && data.uid.size() <= 128 &&
              data.email is string && data.email.size() > 0 && data.email.size() <= 256 &&
-             data.role in ['admin', 'sr', 'dsr'];
+             data.role in ['admin', 'sr', 'dsr', 'customer'];
     }
 
     function isValidShop(data) {

@@ -110,6 +110,13 @@ export interface Order {
   syncedWithSheets: boolean;
   syncedAt?: string;
   notes?: string;
+  customerName?: string;
+  customerPhone?: string;
+  customerAddress?: string;
+  customerCity?: string;
+  deliveryCharge?: number;
+  orderType?: 'b2b_dsr' | 'b2c_customer';
+  trxId?: string;
   bookedByUid?: string;
   bookedByName?: string;
   bookedByRole?: UserRole;

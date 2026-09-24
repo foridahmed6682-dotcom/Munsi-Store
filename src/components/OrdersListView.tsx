@@ -360,6 +360,13 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                       {order.shopRoute}
                     </span>
 
+                    {/* Customer E-commerce Badge */}
+                    {order.orderType === 'b2c_customer' && (
+                      <span className="text-[10px] font-bold text-teal-800 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-md">
+                        🛒 অনলাইন কাস্টমার
+                      </span>
+                    )}
+
                     {/* Sync Status Badge */}
                     {order.syncedWithSheets ? (
                       <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
