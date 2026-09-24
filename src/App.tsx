@@ -85,7 +85,6 @@ import { ShopsListView } from './components/ShopsListView';
 import { InventoryView } from './components/InventoryView';
 import { RouteMapView } from './components/RouteMapView';
 import { AdminDashboardView } from './components/AdminDashboardView';
-import { AdminLoginGuard } from './components/AdminLoginGuard';
 import { MemoModal } from './components/MemoModal';
 import { Product, Shop, Order, UserProfile, PaymentMethod, UserRole, DueCollectionRecord, Category, AuthorizedUserEmail, Route, BusinessInfo } from './types';
 import { CheckCircle2, AlertCircle, ExternalLink, LogIn, Lock } from 'lucide-react';
@@ -137,6 +136,13 @@ export default function App() {
     setToastMessage({ text, type });
     setTimeout(() => setToastMessage(null), 4000);
   };
+
+  // Guard against non-admin viewing admin tab: immediately navigate back to 'order'
+  useEffect(() => {
+    if (activeTab === 'admin' && activeSimulatedRole !== 'admin') {
+      setActiveTab('order');
+    }
+  }, [activeTab, activeSimulatedRole]);
 
   // Load and refresh state from local storage
   const reloadData = useCallback(() => {
@@ -984,69 +990,51 @@ export default function App() {
             onUpdateProduct={handleUpdateProduct}
             onDeleteProduct={handleDeleteProduct}
             onAdjustStock={handleAdjustStock}
-            onOpenAdmin={() => setActiveTab('admin')}
             onCleanAllMockData={handleCleanAllMockData}
           />
         )}
 
-        {activeTab === 'admin' && (
-          <AdminLoginGuard
+        {activeTab === 'admin' && activeSimulatedRole === 'admin' && (
+          <AdminDashboardView
+            products={products}
+            shops={shops}
+            orders={orders}
+            categories={categories}
+            authorizedEmails={authorizedEmails}
+            routes={routes}
             currentUser={userProfile}
             activeSimulatedRole={activeSimulatedRole}
-            onLoginSuccess={(user) => {
-              setUserProfileState(user);
-              saveUserProfile(user);
-              if (user?.role) {
-                setActiveSimulatedRole(user.role);
-              }
-              showToast(`এ্যাডমিন '${user.displayName || user.email}' হিসেবে সফলভাবে লগইন হয়েছে!`, 'success');
+            onAddProduct={handleAddProduct}
+            onUpdateProduct={handleUpdateProduct}
+            onDeleteProduct={handleDeleteProduct}
+            onAdjustStock={handleAdjustStock}
+            onAddCategory={handleAddCategory}
+            onUpdateCategory={handleUpdateCategory}
+            onDeleteCategory={handleDeleteCategory}
+            onAddRoute={handleAddRoute}
+            onUpdateRoute={handleUpdateRoute}
+            onDeleteRoute={handleDeleteRoute}
+            onAddAuthorizedEmail={handleAddAuthorizedEmail}
+            onUpdateAuthorizedEmail={handleUpdateAuthorizedEmail}
+            onDeleteAuthorizedEmail={handleDeleteAuthorizedEmail}
+            onSimulatedRoleChange={(role) => {
+              setActiveSimulatedRole(role);
+              showToast(`${role === 'admin' ? 'এডমিন' : role === 'sr' ? 'এসআর' : 'ডিএসআর'} রোল ভিউ সক্রিয়`, 'info');
             }}
-            onSwitchToAdminRole={() => {
-              setActiveSimulatedRole('admin');
-              showToast('এ্যাডমিন রোলে রূপান্তর করা হয়েছে', 'info');
-            }}
-          >
-            <AdminDashboardView
-              products={products}
-              shops={shops}
-              orders={orders}
-              categories={categories}
-              authorizedEmails={authorizedEmails}
-              routes={routes}
-              currentUser={userProfile}
-              activeSimulatedRole={activeSimulatedRole}
-              onAddProduct={handleAddProduct}
-              onUpdateProduct={handleUpdateProduct}
-              onDeleteProduct={handleDeleteProduct}
-              onAdjustStock={handleAdjustStock}
-              onAddCategory={handleAddCategory}
-              onUpdateCategory={handleUpdateCategory}
-              onDeleteCategory={handleDeleteCategory}
-              onAddRoute={handleAddRoute}
-              onUpdateRoute={handleUpdateRoute}
-              onDeleteRoute={handleDeleteRoute}
-              onAddAuthorizedEmail={handleAddAuthorizedEmail}
-              onUpdateAuthorizedEmail={handleUpdateAuthorizedEmail}
-              onDeleteAuthorizedEmail={handleDeleteAuthorizedEmail}
-              onSimulatedRoleChange={(role) => {
-                setActiveSimulatedRole(role);
-                showToast(`${role === 'admin' ? 'এডমিন' : role === 'sr' ? 'এসআর' : 'ডিএসআর'} রোল ভিউ সক্রিয়`, 'info');
-              }}
-              onSyncWithSheets={handleSyncWithSheets}
-              onBackupToDrive={handleBackupToDrive}
-              isSyncing={isSyncing}
-              spreadsheetUrl={spreadsheetUrl}
-              lastDriveBackupLink={lastDriveBackupLink}
-              onNavigateTab={(tab) => setActiveTab(tab)}
-              onCleanAllMockData={handleCleanAllMockData}
-              onSendEmailBackup={handleSendEmailBackup}
-              onDownloadFullBackupJSON={handleDownloadFullBackupJSON}
-              onDownloadOrdersCSV={handleDownloadOrdersCSV}
-              onDownloadInventoryCSV={handleDownloadInventoryCSV}
-              onDownloadShopsCSV={handleDownloadShopsCSV}
-              onRestoreFromBackupJSON={handleRestoreFromBackupJSON}
-            />
-          </AdminLoginGuard>
+            onSyncWithSheets={handleSyncWithSheets}
+            onBackupToDrive={handleBackupToDrive}
+            isSyncing={isSyncing}
+            spreadsheetUrl={spreadsheetUrl}
+            lastDriveBackupLink={lastDriveBackupLink}
+            onNavigateTab={(tab) => setActiveTab(tab)}
+            onCleanAllMockData={handleCleanAllMockData}
+            onSendEmailBackup={handleSendEmailBackup}
+            onDownloadFullBackupJSON={handleDownloadFullBackupJSON}
+            onDownloadOrdersCSV={handleDownloadOrdersCSV}
+            onDownloadInventoryCSV={handleDownloadInventoryCSV}
+            onDownloadShopsCSV={handleDownloadShopsCSV}
+            onRestoreFromBackupJSON={handleRestoreFromBackupJSON}
+          />
         )}
       </main>
 

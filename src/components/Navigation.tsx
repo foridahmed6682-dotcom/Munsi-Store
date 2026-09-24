@@ -68,79 +68,82 @@ export const Navigation: React.FC<NavigationProps> = ({
   ];
 
   const visibleTabs = tabs.filter((t) => {
-    // If not logged in, show 'order' (customer store) and 'admin' (login barrier)
-    if (!isLoggedIn) {
-      return t.id === 'order' || t.id === 'admin';
+    // Admin tab is strictly for authenticated users with role 'admin'
+    if (t.id === 'admin') {
+      return isLoggedIn && userRole === 'admin';
     }
-    // If logged in as customer/guest, show 'order' and 'admin'
+    // If not logged in, only show 'order' (Customer Store)
+    if (!isLoggedIn) {
+      return t.id === 'order';
+    }
+    // If customer role, only show 'order' (Customer Store)
     if (userRole === 'customer') {
-      return t.id === 'order' || t.id === 'admin';
+      return t.id === 'order';
     }
     // For staff roles (admin, sr, dsr)
-    if (t.id === 'admin') {
-      return userRole === 'admin';
-    }
     return t.roles.includes(userRole);
   });
 
   return (
     <>
-      {/* Top / Desktop Tab Bar */}
-      <nav className="hidden md:block bg-white border-b border-neutral-200/80 sticky top-[57px] z-30 shadow-xs">
-        <div className="max-w-7xl mx-auto px-4 flex items-center justify-between">
-          <div className="flex space-x-1 py-1.5 overflow-x-auto">
-            {visibleTabs.map((tab) => {
-              const Icon = tab.icon;
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  id={`tab-desktop-${tab.id}`}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-semibold transition-all shrink-0 relative ${
-                    isActive
-                      ? tab.adminPill
-                        ? 'bg-purple-800 text-white shadow-sm'
-                        : 'bg-emerald-800 text-white shadow-sm'
-                      : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100'
-                  }`}
-                >
-                  <Icon
-                    className={`w-4 h-4 ${
+      {/* Top / Desktop Tab Bar - Only show when there are multiple tabs */}
+      {visibleTabs.length > 1 && (
+        <nav className="hidden md:block bg-white border-b border-neutral-200/80 sticky top-[57px] z-30 shadow-xs">
+          <div className="max-w-7xl mx-auto px-4 flex items-center justify-between">
+            <div className="flex space-x-1 py-1.5 overflow-x-auto">
+              {visibleTabs.map((tab) => {
+                const Icon = tab.icon;
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    id={`tab-desktop-${tab.id}`}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-semibold transition-all shrink-0 relative ${
                       isActive
-                        ? 'text-white'
-                        : tab.adminPill
-                        ? 'text-purple-600'
-                        : tab.highlight
-                        ? 'text-emerald-700'
-                        : 'text-neutral-500'
+                        ? tab.adminPill
+                          ? 'bg-purple-800 text-white shadow-sm'
+                          : 'bg-emerald-800 text-white shadow-sm'
+                        : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100'
                     }`}
-                  />
-                  <span>{tab.label}</span>
-                  {tab.adminPill && !isActive && (
-                    <span className="text-[10px] bg-purple-100 text-purple-800 px-1.5 py-0.2 rounded font-bold border border-purple-200">
-                      ADMIN
-                    </span>
-                  )}
-                  {tab.badge && (
-                    <span className="bg-emerald-500 text-neutral-950 text-[11px] font-bold px-1.5 py-0.5 rounded-full">
-                      {tab.badge}
-                    </span>
-                  )}
-                  {tab.highlight && !isActive && (
-                    <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-bold border border-emerald-300">
-                      FREE MAP
-                    </span>
-                  )}
-                </button>
-              );
-            })}
+                  >
+                    <Icon
+                      className={`w-4 h-4 ${
+                        isActive
+                          ? 'text-white'
+                          : tab.adminPill
+                          ? 'text-purple-600'
+                          : tab.highlight
+                          ? 'text-emerald-700'
+                          : 'text-neutral-500'
+                      }`}
+                    />
+                    <span>{tab.label}</span>
+                    {tab.adminPill && !isActive && (
+                      <span className="text-[10px] bg-purple-100 text-purple-800 px-1.5 py-0.2 rounded font-bold border border-purple-200">
+                        ADMIN
+                      </span>
+                    )}
+                    {tab.badge && (
+                      <span className="bg-emerald-500 text-neutral-950 text-[11px] font-bold px-1.5 py-0.5 rounded-full">
+                        {tab.badge}
+                      </span>
+                    )}
+                    {tab.highlight && !isActive && (
+                      <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-bold border border-emerald-300">
+                        FREE MAP
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      </nav>
+        </nav>
+      )}
 
-      {/* Mobile Fixed Bottom Navigation */}
-      {visibleTabs.length > 0 && (
+      {/* Mobile Fixed Bottom Navigation - Only show when there are multiple tabs */}
+      {visibleTabs.length > 1 && (
         <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-neutral-200/90 shadow-2xl safe-area-inset-bottom">
           <div 
             className="grid h-15"

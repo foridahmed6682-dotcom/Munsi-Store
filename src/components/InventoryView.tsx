@@ -24,7 +24,6 @@ interface InventoryViewProps {
   onUpdateProduct?: (product: Product) => void;
   onDeleteProduct?: (productId: string) => void;
   onAdjustStock: (productId: string, delta: number) => void;
-  onOpenAdmin?: () => void;
   onCleanAllMockData?: () => void;
 }
 
@@ -35,7 +34,6 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   onUpdateProduct,
   onDeleteProduct,
   onAdjustStock,
-  onOpenAdmin,
   onCleanAllMockData,
 }) => {
   const [search, setSearch] = useState('');
@@ -305,17 +303,6 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             >
               <Trash2 className="w-3.5 h-3.5 text-rose-600" />
               <span>ডেমো ডাটা মুছুন</span>
-            </button>
-          )}
-
-          {onOpenAdmin && (
-            <button
-              onClick={onOpenAdmin}
-              className="px-3.5 py-2 bg-purple-700 hover:bg-purple-600 text-white rounded-xl text-xs font-bold shadow flex items-center gap-1.5 transition-all"
-              title="এডমিন প্যানেলে যান (ক্যাটাগরি, প্রোডাক্ট ও মেইল পারমিশন)"
-            >
-              <ShieldCheck className="w-4 h-4 text-purple-200" />
-              <span>এডমিন প্যানেল</span>
             </button>
           )}
 
