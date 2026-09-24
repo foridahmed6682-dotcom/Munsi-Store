@@ -374,25 +374,37 @@ export default function App() {
 
   // Add Product Handler
   const handleAddProduct = (product: Product) => {
+    setProducts((prev) => [product, ...prev.filter((p) => p.id !== product.id)]);
     saveProduct(product);
-    saveProductToCloud(product).catch(() => {});
-    reloadData();
+    saveProductToCloud(product).catch((err) => {
+      console.warn('Could not sync added product to cloud:', err);
+    });
     showToast(`পণ্য "${product.banglaName}" সফলভাবে যুক্ত হয়েছে!`, 'success');
   };
 
   // Update Product Handler
   const handleUpdateProduct = (product: Product) => {
+    setProducts((prev) => {
+      const idx = prev.findIndex((p) => p.id === product.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = product;
+        return next;
+      }
+      return [product, ...prev];
+    });
     saveProduct(product);
-    saveProductToCloud(product).catch(() => {});
-    reloadData();
-    showToast(`পণ্য "${product.banglaName}" আপডেট হয়েছে!`, 'success');
+    saveProductToCloud(product).catch((err) => {
+      console.warn('Could not sync updated product to cloud:', err);
+    });
+    showToast(`পণ্য "${product.banglaName}" সফলভাবে আপডেট হয়েছে!`, 'success');
   };
 
   // Delete Product Handler
   const handleDeleteProduct = (productId: string) => {
+    setProducts((prev) => prev.filter((p) => p.id !== productId));
     deleteProduct(productId);
     deleteProductFromCloud(productId).catch(() => {});
-    reloadData();
     showToast('পণ্যটি সফলভাবে মুছে ফেলা হয়েছে', 'info');
   };
 
@@ -801,6 +813,8 @@ export default function App() {
             products={products}
             categoriesList={categories}
             onAddProduct={handleAddProduct}
+            onUpdateProduct={handleUpdateProduct}
+            onDeleteProduct={handleDeleteProduct}
             onAdjustStock={handleAdjustStock}
             onOpenAdmin={() => setActiveTab('admin')}
             onCleanAllMockData={handleCleanAllMockData}

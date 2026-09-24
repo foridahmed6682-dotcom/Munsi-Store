@@ -10,7 +10,10 @@ import {
   CheckCircle,
   DollarSign,
   ShieldCheck,
-  Trash2
+  Trash2,
+  Edit3,
+  X,
+  Upload
 } from 'lucide-react';
 import { Product, Category } from '../types';
 
@@ -18,6 +21,8 @@ interface InventoryViewProps {
   products: Product[];
   categoriesList?: Category[];
   onAddProduct: (product: Product) => void;
+  onUpdateProduct?: (product: Product) => void;
+  onDeleteProduct?: (productId: string) => void;
   onAdjustStock: (productId: string, delta: number) => void;
   onOpenAdmin?: () => void;
   onCleanAllMockData?: () => void;
@@ -27,6 +32,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   products,
   categoriesList,
   onAddProduct,
+  onUpdateProduct,
+  onDeleteProduct,
   onAdjustStock,
   onOpenAdmin,
   onCleanAllMockData,
@@ -39,8 +46,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [stockInProduct, setStockInProduct] = useState<Product | null>(null);
   const [stockInQty, setStockInQty] = useState('');
 
-  // Add Product Modal
+  // Add / Edit Product Modal
   const [isAddProductOpen, setIsAddProductOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [newProdName, setNewProdName] = useState('');
   const [newBanglaName, setNewBanglaName] = useState('');
   const [newSku, setNewSku] = useState('');
@@ -56,9 +64,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const categories = useMemo(() => {
     const set = new Set<string>();
     if (categoriesList && categoriesList.length > 0) {
-      categoriesList.forEach((c) => set.add(c.name));
+      categoriesList.forEach((c) => set.add(c.banglaName || c.name));
     }
-    products.forEach((p) => set.add(p.category));
+    products.forEach((p) => {
+      if (p.category) set.add(p.category);
+    });
     return Array.from(set);
   }, [products, categoriesList]);
 
@@ -96,29 +106,104 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     setStockInQty('');
   };
 
-  const handleAddProductSubmit = (e: React.FormEvent) => {
+  const openAddProductModal = () => {
+    setEditingProduct(null);
+    setNewProdName('');
+    setNewBanglaName('');
+    setNewSku('');
+    setNewCategory(categories[0] || 'তেল ও ঘি');
+    setNewUnit('কার্টুন');
+    setNewUnitPrice('');
+    setNewCostPrice('');
+    setNewStock('20');
+    setNewMinAlert('5');
+    setNewTradeOffer('');
+    setNewImageUrl('');
+    setIsAddProductOpen(true);
+  };
+
+  const openEditProductModal = (prod: Product) => {
+    setEditingProduct(prod);
+    setNewProdName(prod.name || '');
+    setNewBanglaName(prod.banglaName || '');
+    setNewSku(prod.sku || '');
+    setNewCategory(prod.category || (categories[0] || 'তেল ও ঘি'));
+    setNewUnit(prod.unit || 'কার্টুন');
+    setNewUnitPrice(prod.unitPrice !== undefined && prod.unitPrice !== null ? prod.unitPrice.toString() : '');
+    setNewCostPrice(prod.costPrice !== undefined && prod.costPrice !== null ? prod.costPrice.toString() : '');
+    setNewStock(prod.stock !== undefined && prod.stock !== null ? prod.stock.toString() : '0');
+    setNewMinAlert(prod.minStockAlert !== undefined && prod.minStockAlert !== null ? prod.minStockAlert.toString() : '5');
+    setNewTradeOffer(prod.tradeOfferDesc || '');
+    setNewImageUrl(prod.imageUrl || '');
+    setIsAddProductOpen(true);
+  };
+
+  const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 2 * 1024 * 1024) {
+        alert('ছবির সাইজ ২ মেগাবাইটের (2MB) নিচে হতে হবে');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          setNewImageUrl(event.target.result as string);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleProductFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newProdName || !newUnitPrice || !newCostPrice) return;
+    if (!newBanglaName.trim() && !newProdName.trim()) {
+      alert('পণ্যের নাম আবশ্যক');
+      return;
+    }
 
-    const created: Product = {
-      id: `prod-${Date.now()}`,
-      name: newProdName,
-      banglaName: newBanglaName || newProdName,
-      sku: newSku || `SKU-${Date.now().toString().slice(-4)}`,
-      category: newCategory,
-      unit: newUnit,
-      unitPrice: parseFloat(newUnitPrice) || 0,
-      costPrice: parseFloat(newCostPrice) || 0,
-      stock: parseInt(newStock, 10) || 0,
-      minStockAlert: parseInt(newMinAlert, 10) || 10,
-      tradeOfferDesc: newTradeOffer,
-      imageUrl: newImageUrl || undefined,
-    };
+    const unitPriceNum = parseFloat(newUnitPrice) || 0;
+    const costPriceNum = parseFloat(newCostPrice) || 0;
+    const stockNum = parseInt(newStock, 10) || 0;
+    const minAlertNum = parseInt(newMinAlert, 10) || 5;
 
-    onAddProduct(created);
+    if (editingProduct && onUpdateProduct) {
+      const updated: Product = {
+        ...editingProduct,
+        id: editingProduct.id,
+        name: newProdName.trim() || newBanglaName.trim(),
+        banglaName: newBanglaName.trim() || newProdName.trim(),
+        sku: newSku.trim() || editingProduct.sku,
+        category: newCategory,
+        unit: newUnit,
+        unitPrice: unitPriceNum,
+        costPrice: costPriceNum,
+        stock: stockNum,
+        minStockAlert: minAlertNum,
+        tradeOfferDesc: newTradeOffer.trim() || '',
+        imageUrl: newImageUrl.trim() || editingProduct.imageUrl || '',
+      };
+      onUpdateProduct(updated);
+    } else {
+      const created: Product = {
+        id: `prod-${Date.now()}`,
+        name: newProdName.trim() || newBanglaName.trim(),
+        banglaName: newBanglaName.trim() || newProdName.trim(),
+        sku: newSku.trim() || `SKU-${Date.now().toString().slice(-4)}`,
+        category: newCategory,
+        unit: newUnit,
+        unitPrice: unitPriceNum,
+        costPrice: costPriceNum,
+        stock: stockNum,
+        minStockAlert: minAlertNum,
+        tradeOfferDesc: newTradeOffer.trim() || '',
+        imageUrl: newImageUrl.trim() || '',
+      };
+      onAddProduct(created);
+    }
+
     setIsAddProductOpen(false);
-
-    // Reset
+    setEditingProduct(null);
     setNewProdName('');
     setNewBanglaName('');
     setNewSku('');
@@ -235,7 +320,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           )}
 
           <button
-            onClick={() => setIsAddProductOpen(true)}
+            onClick={openAddProductModal}
             className="px-4 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold shadow flex items-center gap-1.5 transition-all"
           >
             <Plus className="w-4 h-4" />
@@ -263,7 +348,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               {filteredProducts.map((prod) => {
                 const isLow = prod.stock <= prod.minStockAlert;
                 const margin = prod.unitPrice - prod.costPrice;
-                const marginPct = Math.round((margin / prod.costPrice) * 100);
+                const marginPct = prod.costPrice > 0 ? Math.round((margin / prod.costPrice) * 100) : 0;
 
                 return (
                   <tr key={prod.id} className="hover:bg-neutral-50/80 transition-colors">
@@ -330,12 +415,24 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                     </td>
 
                     <td className="py-3 px-4 text-right">
-                      <button
-                        onClick={() => setStockInProduct(prod)}
-                        className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl font-bold text-xs transition-colors"
-                      >
-                        + স্টক যোগ
-                      </button>
+                      <div className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => openEditProductModal(prod)}
+                          className="p-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 hover:text-emerald-700 rounded-lg border border-neutral-200 transition-colors"
+                          title="পণ্য এডিট করুন"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setStockInProduct(prod)}
+                          className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg font-bold text-xs transition-colors"
+                          title="স্টক বৃদ্ধি করুন"
+                        >
+                          + স্টক
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -395,41 +492,56 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         </div>
       )}
 
-      {/* Add New Product Modal */}
+      {/* Add / Edit Product Modal */}
       {isAddProductOpen && (
         <div className="fixed inset-0 z-50 bg-neutral-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in">
-          <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl border border-neutral-200 max-h-[90vh] overflow-y-auto">
-            <h3 className="font-bold text-base text-neutral-900 mb-3 flex items-center gap-2">
-              <Package className="w-5 h-5 text-emerald-700" />
-              নতুন পণ্য ক্যাটালগে যুক্ত করুন
-            </h3>
+          <div className="bg-white rounded-2xl max-w-lg w-full p-5 shadow-2xl border border-neutral-200 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-neutral-100 mb-3">
+              <h3 className="font-bold text-sm sm:text-base text-neutral-900 flex items-center gap-2">
+                <Package className="w-5 h-5 text-emerald-700" />
+                <span>{editingProduct ? 'পণ্যের তথ্য ও মূল্য সম্পাদনা' : 'নতুন পণ্য ক্যাটালগে যুক্ত করুন'}</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddProductOpen(false);
+                  setEditingProduct(null);
+                }}
+                className="p-1 text-neutral-400 hover:text-neutral-700 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
 
-            <form onSubmit={handleAddProductSubmit} className="space-y-3 text-xs">
-              <div>
-                <label className="font-bold text-neutral-700 block mb-1">পণ্যের বাংলা নাম *</label>
-                <input
-                  type="text"
-                  required
-                  value={newBanglaName}
-                  onChange={(e) => setNewBanglaName(e.target.value)}
-                  placeholder="যেমন: ফ্রেশ সয়াবিন তেল (১ লিটার)"
-                  className="w-full p-2 border border-neutral-300 rounded-xl"
-                />
+            <form onSubmit={handleProductFormSubmit} className="space-y-3 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="font-bold text-neutral-700 block mb-1">
+                    পণ্যের বাংলা নাম <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={newBanglaName}
+                    onChange={(e) => setNewBanglaName(e.target.value)}
+                    placeholder="যেমন: ফ্রেশ সয়াবিন তেল (১ লিটার)"
+                    className="w-full p-2 border border-neutral-300 rounded-xl focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-neutral-700 block mb-1">ইংরেজি নাম</label>
+                  <input
+                    type="text"
+                    value={newProdName}
+                    onChange={(e) => setNewProdName(e.target.value)}
+                    placeholder="Fresh Soybean Oil 1L"
+                    className="w-full p-2 border border-neutral-300 rounded-xl focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
               </div>
 
-              <div>
-                <label className="font-bold text-neutral-700 block mb-1">ইংরেজি নাম *</label>
-                <input
-                  type="text"
-                  required
-                  value={newProdName}
-                  onChange={(e) => setNewProdName(e.target.value)}
-                  placeholder="Fresh Soybean Oil 1L"
-                  className="w-full p-2 border border-neutral-300 rounded-xl"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 <div>
                   <label className="font-bold text-neutral-700 block mb-1">SKU কোড</label>
                   <input
@@ -437,72 +549,90 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                     value={newSku}
                     onChange={(e) => setNewSku(e.target.value)}
                     placeholder="OIL-FRSH-1L"
-                    className="w-full p-2 border border-neutral-300 rounded-xl"
+                    className="w-full p-2 border border-neutral-300 rounded-xl font-mono focus:outline-none focus:border-emerald-600"
                   />
                 </div>
 
                 <div>
                   <label className="font-bold text-neutral-700 block mb-1">ক্যাটাগরি</label>
-                  <input
-                    type="text"
+                  <select
                     value={newCategory}
                     onChange={(e) => setNewCategory(e.target.value)}
-                    placeholder="তেল ও ঘি"
-                    className="w-full p-2 border border-neutral-300 rounded-xl"
-                  />
+                    className="w-full p-2 border border-neutral-300 rounded-xl bg-white font-medium focus:outline-none focus:border-emerald-600"
+                  >
+                    {categories.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                    {!categories.includes(newCategory) && newCategory && (
+                      <option value={newCategory}>{newCategory}</option>
+                    )}
+                  </select>
                 </div>
-              </div>
 
-              <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label className="font-bold text-neutral-700 block mb-1">একক (Unit) *</label>
+                  <label className="font-bold text-neutral-700 block mb-1">
+                    একক (Unit) <span className="text-rose-500">*</span>
+                  </label>
                   <select
                     value={newUnit}
                     onChange={(e) => setNewUnit(e.target.value)}
-                    className="w-full p-2 border border-neutral-300 rounded-xl bg-white"
+                    className="w-full p-2 border border-neutral-300 rounded-xl bg-white font-medium focus:outline-none focus:border-emerald-600"
                   >
                     <option value="কার্টুন">কার্টুন</option>
                     <option value="বস্তা">বস্তা</option>
                     <option value="ডজন">ডজন</option>
                     <option value="কেজি">কেজি</option>
                     <option value="পিস">পিস</option>
+                    <option value="প্যাকেট">প্যাকেট</option>
+                    <option value="লিটার">লিটার</option>
                   </select>
-                </div>
-
-                <div>
-                  <label className="font-bold text-neutral-700 block mb-1">ক্রয় রেট (৳) *</label>
-                  <input
-                    type="number"
-                    required
-                    value={newCostPrice}
-                    onChange={(e) => setNewCostPrice(e.target.value)}
-                    placeholder="1800"
-                    className="w-full p-2 border border-neutral-300 rounded-xl"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-bold text-neutral-700 block mb-1">বিক্রয় রেট (৳) *</label>
-                  <input
-                    type="number"
-                    required
-                    value={newUnitPrice}
-                    onChange={(e) => setNewUnitPrice(e.target.value)}
-                    placeholder="1950"
-                    className="w-full p-2 border border-neutral-300 rounded-xl font-bold"
-                  />
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                 <div>
-                  <label className="font-bold text-neutral-700 block mb-1">প্রাথমিক স্টক সংখ্যা</label>
+                  <label className="font-bold text-neutral-700 block mb-1">
+                    বিক্রয় রেট (৳) <span className="text-rose-500">*</span>
+                  </label>
                   <input
                     type="number"
+                    required
+                    min="0"
+                    step="0.01"
+                    value={newUnitPrice}
+                    onChange={(e) => setNewUnitPrice(e.target.value)}
+                    placeholder="1950"
+                    className="w-full p-2 border border-neutral-300 rounded-xl font-bold font-mono focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-neutral-700 block mb-1">
+                    ক্রয় রেট (৳) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min="0"
+                    step="0.01"
+                    value={newCostPrice}
+                    onChange={(e) => setNewCostPrice(e.target.value)}
+                    placeholder="1800"
+                    className="w-full p-2 border border-neutral-300 rounded-xl font-mono focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-neutral-700 block mb-1">বর্তমান স্টক</label>
+                  <input
+                    type="number"
+                    min="0"
                     value={newStock}
                     onChange={(e) => setNewStock(e.target.value)}
                     placeholder="50"
-                    className="w-full p-2 border border-neutral-300 rounded-xl"
+                    className="w-full p-2 border border-neutral-300 rounded-xl font-mono focus:outline-none focus:border-emerald-600"
                   />
                 </div>
 
@@ -510,10 +640,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   <label className="font-bold text-neutral-700 block mb-1">অ্যালার্ট লেভেল</label>
                   <input
                     type="number"
+                    min="1"
                     value={newMinAlert}
                     onChange={(e) => setNewMinAlert(e.target.value)}
                     placeholder="10"
-                    className="w-full p-2 border border-neutral-300 rounded-xl"
+                    className="w-full p-2 border border-neutral-300 rounded-xl font-mono focus:outline-none focus:border-emerald-600"
                   />
                 </div>
               </div>
@@ -525,66 +656,98 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   value={newTradeOffer}
                   onChange={(e) => setNewTradeOffer(e.target.value)}
                   placeholder="যেমন: ১০ কার্টুনে ১ কার্টুন ফ্রি"
-                  className="w-full p-2 border border-neutral-300 rounded-xl"
+                  className="w-full p-2 border border-neutral-300 rounded-xl focus:outline-none focus:border-emerald-600"
                 />
               </div>
 
               <div>
-                <label className="font-bold text-neutral-700 block mb-1">প্রোডাক্টের ছবির লিঙ্ক (Image URL)</label>
-                <input
-                  type="url"
-                  value={newImageUrl}
-                  onChange={(e) => setNewImageUrl(e.target.value)}
-                  placeholder="https://images.unsplash.com/..."
-                  className="w-full p-2 border border-neutral-300 rounded-xl text-xs"
-                />
-                <div className="flex items-center gap-1.5 mt-1.5 overflow-x-auto text-[10px] text-neutral-500">
-                  <span className="shrink-0 font-semibold">ডিফল্ট ছবি:</span>
-                  <button
-                    type="button"
-                    onClick={() => setNewImageUrl('https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?w=500&auto=format&fit=crop&q=80')}
-                    className="px-2 py-0.5 rounded bg-neutral-100 hover:bg-neutral-200 shrink-0"
-                  >
-                    তেল
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setNewImageUrl('https://images.unsplash.com/photo-1509440159596-0249088772ff?w=500&auto=format&fit=crop&q=80')}
-                    className="px-2 py-0.5 rounded bg-neutral-100 hover:bg-neutral-200 shrink-0"
-                  >
-                    আটা/ময়দা
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setNewImageUrl('https://images.unsplash.com/photo-1558961363-fa8fdf82db35?w=500&auto=format&fit=crop&q=80')}
-                    className="px-2 py-0.5 rounded bg-neutral-100 hover:bg-neutral-200 shrink-0"
-                  >
-                    বিস্কুট
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setNewImageUrl('https://images.unsplash.com/photo-1607006314181-42778f307399?w=500&auto=format&fit=crop&q=80')}
-                    className="px-2 py-0.5 rounded bg-neutral-100 hover:bg-neutral-200 shrink-0"
-                  >
-                    সাবান
-                  </button>
+                <label className="font-bold text-neutral-700 block mb-1">
+                  প্রোডাক্ট ছবি লিংক (Image URL) অথবা ডিভাইস থেকে সরাসরি আপলোড
+                </label>
+                <div className="flex gap-2 items-stretch">
+                  <input
+                    type="url"
+                    value={newImageUrl}
+                    onChange={(e) => setNewImageUrl(e.target.value)}
+                    placeholder="https://images.unsplash.com/..."
+                    className="flex-1 p-2 border border-neutral-300 rounded-xl text-xs font-mono focus:outline-none focus:border-emerald-600"
+                  />
+                  <div className="relative shrink-0">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      id="inventory-image-upload-file"
+                      onChange={handleImageFileChange}
+                      className="hidden"
+                    />
+                    <label
+                      htmlFor="inventory-image-upload-file"
+                      className="flex items-center justify-center gap-1 px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl text-xs font-bold cursor-pointer transition-colors h-full"
+                    >
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>আপলোড</span>
+                    </label>
+                  </div>
                 </div>
+
+                {newImageUrl && (
+                  <div className="mt-2 p-1.5 bg-neutral-50 rounded-xl border border-neutral-200 flex items-center gap-2">
+                    <img src={newImageUrl} alt="Preview" className="w-10 h-10 object-cover rounded-lg border border-neutral-300 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <span className="text-[10px] text-neutral-500 font-bold block truncate">প্রিভিউ ইমেজ সোর্স:</span>
+                      <span className="text-[9px] text-neutral-400 font-mono block truncate">
+                        {newImageUrl.startsWith('data:') ? 'ডিভাইস থেকে আপলোড করা ছবি' : newImageUrl}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setNewImageUrl('')}
+                      className="text-[10px] text-rose-600 hover:text-rose-800 font-bold p-1 shrink-0"
+                    >
+                      রিমুভ
+                    </button>
+                  </div>
+                )}
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setIsAddProductOpen(false)}
-                  className="px-4 py-2 text-neutral-600 hover:bg-neutral-100 rounded-xl font-semibold"
-                >
-                  বাতিল
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl font-bold shadow"
-                >
-                  পণ্য সংরক্ষণ করুন
-                </button>
+              <div className="flex items-center justify-between pt-3 border-t border-neutral-100">
+                {editingProduct && onDeleteProduct ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm(`আপনি কি '${editingProduct.banglaName}' পণ্যটি মুছে ফেলতে চান?`)) {
+                        onDeleteProduct(editingProduct.id);
+                        setIsAddProductOpen(false);
+                        setEditingProduct(null);
+                      }
+                    }}
+                    className="px-3 py-2 text-rose-600 hover:bg-rose-50 rounded-xl font-bold text-xs flex items-center gap-1 border border-rose-200 transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>পণ্য মুছুন</span>
+                  </button>
+                ) : (
+                  <div />
+                )}
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAddProductOpen(false);
+                      setEditingProduct(null);
+                    }}
+                    className="px-4 py-2 text-neutral-600 hover:bg-neutral-100 rounded-xl font-semibold"
+                  >
+                    বাতিল
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl font-bold shadow transition-colors"
+                  >
+                    {editingProduct ? 'আপডেট সেভ করুন' : 'পণ্য সংরক্ষণ করুন'}
+                  </button>
+                </div>
               </div>
             </form>
           </div>

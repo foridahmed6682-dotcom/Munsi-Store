@@ -72,6 +72,26 @@ export enum OperationType {
   WRITE = 'write',
 }
 
+// Utility to clean undefined values recursively so Firestore setDoc does not throw
+export function cleanForFirestore<T extends Record<string, any>>(obj: T): any {
+  if (obj === null || obj === undefined) return null;
+  if (typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) {
+    return obj.map((item) => (typeof item === 'object' && item !== null ? cleanForFirestore(item) : item));
+  }
+  const cleaned: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      if (value !== null && typeof value === 'object' && !(value instanceof Date)) {
+        cleaned[key] = cleanForFirestore(value);
+      } else {
+        cleaned[key] = value;
+      }
+    }
+  }
+  return cleaned;
+}
+
 export interface FirestoreErrorInfo {
   error: string;
   operation: OperationType;
@@ -401,7 +421,8 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
 export async function saveShopToCloud(shop: Shop) {
   const path = `shops/${shop.id}`;
   try {
-    await setDoc(doc(db, 'shops', shop.id), shop);
+    const cleaned = cleanForFirestore(shop);
+    await setDoc(doc(db, 'shops', shop.id), cleaned);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -419,7 +440,8 @@ export async function deleteShopFromCloud(shopId: string) {
 export async function saveProductToCloud(product: Product) {
   const path = `products/${product.id}`;
   try {
-    await setDoc(doc(db, 'products', product.id), product);
+    const cleaned = cleanForFirestore(product);
+    await setDoc(doc(db, 'products', product.id), cleaned);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -437,7 +459,8 @@ export async function deleteProductFromCloud(productId: string) {
 export async function saveOrderToCloud(order: Order) {
   const path = `orders/${order.id}`;
   try {
-    await setDoc(doc(db, 'orders', order.id), order);
+    const cleaned = cleanForFirestore(order);
+    await setDoc(doc(db, 'orders', order.id), cleaned);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -455,7 +478,8 @@ export async function deleteOrderFromCloud(orderId: string) {
 export async function saveDueCollectionToCloud(record: DueCollectionRecord) {
   const path = `dueCollections/${record.id}`;
   try {
-    await setDoc(doc(db, 'dueCollections', record.id), record);
+    const cleaned = cleanForFirestore(record);
+    await setDoc(doc(db, 'dueCollections', record.id), cleaned);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -486,7 +510,8 @@ export function subscribeToCloudCategories(onData: (categories: Category[]) => v
 export async function saveCategoryToCloud(category: Category) {
   const path = `categories/${category.id}`;
   try {
-    await setDoc(doc(db, 'categories', category.id), category);
+    const cleaned = cleanForFirestore(category);
+    await setDoc(doc(db, 'categories', category.id), cleaned);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -526,7 +551,8 @@ export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
 export async function saveRouteToCloud(route: Route) {
   const path = `routes/${route.id}`;
   try {
-    await setDoc(doc(db, 'routes', route.id), route);
+    const cleaned = cleanForFirestore(route);
+    await setDoc(doc(db, 'routes', route.id), cleaned);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -567,10 +593,11 @@ export async function saveAuthorizedEmailToCloud(authEmail: AuthorizedUserEmail)
   const safeDocId = authEmail.email.toLowerCase().replace(/[@.]/g, '_');
   const path = `authorizedEmails/${safeDocId}`;
   try {
-    await setDoc(doc(db, 'authorizedEmails', safeDocId), {
+    const cleaned = cleanForFirestore({
       ...authEmail,
       id: safeDocId,
     });
+    await setDoc(doc(db, 'authorizedEmails', safeDocId), cleaned);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }

@@ -405,6 +405,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     if (editingProduct) {
       const updated: Product = {
         ...editingProduct,
+        id: editingProduct.id,
         name: prodName.trim() || prodBanglaName.trim(),
         banglaName: prodBanglaName.trim(),
         sku: prodSku.trim() || editingProduct.sku,
@@ -414,8 +415,8 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         costPrice: costPriceNum,
         stock: stockNum,
         minStockAlert: minAlertNum,
-        tradeOfferDesc: prodTradeOffer.trim() || undefined,
-        imageUrl: prodImageUrl.trim() || editingProduct.imageUrl,
+        tradeOfferDesc: prodTradeOffer.trim() || '',
+        imageUrl: prodImageUrl.trim() || editingProduct.imageUrl || '',
       };
       onUpdateProduct(updated);
       showToast(`'${prodBanglaName}' পণ্যের তথ্য আপডেট করা হয়েছে`, 'success');
@@ -431,7 +432,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         costPrice: costPriceNum,
         stock: stockNum,
         minStockAlert: minAlertNum,
-        tradeOfferDesc: prodTradeOffer.trim() || undefined,
+        tradeOfferDesc: prodTradeOffer.trim() || '',
         imageUrl:
           prodImageUrl.trim() ||
           'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500&auto=format&fit=crop&q=80',
@@ -470,15 +471,15 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
   const openEditProductModal = (prod: Product) => {
     setEditingProduct(prod);
-    setProdName(prod.name);
-    setProdBanglaName(prod.banglaName);
-    setProdSku(prod.sku);
-    setProdCategory(prod.category);
-    setProdUnit(prod.unit);
-    setProdUnitPrice(prod.unitPrice.toString());
-    setProdCostPrice(prod.costPrice.toString());
-    setProdStock(prod.stock.toString());
-    setProdMinAlert(prod.minStockAlert.toString());
+    setProdName(prod.name || '');
+    setProdBanglaName(prod.banglaName || '');
+    setProdSku(prod.sku || '');
+    setProdCategory(prod.category || (categories[0]?.banglaName || 'তেল ও ঘি'));
+    setProdUnit(prod.unit || 'কার্টুন');
+    setProdUnitPrice(prod.unitPrice !== undefined && prod.unitPrice !== null ? prod.unitPrice.toString() : '');
+    setProdCostPrice(prod.costPrice !== undefined && prod.costPrice !== null ? prod.costPrice.toString() : '');
+    setProdStock(prod.stock !== undefined && prod.stock !== null ? prod.stock.toString() : '0');
+    setProdMinAlert(prod.minStockAlert !== undefined && prod.minStockAlert !== null ? prod.minStockAlert.toString() : '5');
     setProdTradeOffer(prod.tradeOfferDesc || '');
     setProdImageUrl(prod.imageUrl || '');
     setIsProductModalOpen(true);
@@ -2286,6 +2287,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                         {c.banglaName}
                       </option>
                     ))}
+                    {!categories.some((c) => c.banglaName === prodCategory) && prodCategory && (
+                      <option value={prodCategory}>{prodCategory}</option>
+                    )}
                   </select>
                 </div>
 
