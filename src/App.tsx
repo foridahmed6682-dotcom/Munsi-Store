@@ -69,6 +69,7 @@ import { Header } from './components/Header';
 import { Navigation, NavTab } from './components/Navigation';
 import { OrderBookingView } from './components/OrderBookingView';
 import { CustomerStoreView } from './components/CustomerStoreView';
+import { PushNotificationManager } from './components/PushNotificationManager';
 import { OrdersListView } from './components/OrdersListView';
 import { ShopsListView } from './components/ShopsListView';
 import { InventoryView } from './components/InventoryView';
@@ -79,6 +80,7 @@ import { MemoModal } from './components/MemoModal';
 import { Product, Shop, Order, UserProfile, PaymentMethod, UserRole, DueCollectionRecord, Category, AuthorizedUserEmail, Route } from './types';
 import { CheckCircle2, AlertCircle, ExternalLink, LogIn, Lock } from 'lucide-react';
 import { usePWAInstall } from './hooks/usePWAInstall';
+import { notifyNewOrderPush } from './lib/pushService';
 
 export default function App() {
   // PWA Install Hook
@@ -269,6 +271,16 @@ export default function App() {
 
       // 4. Save order to Firebase Firestore in background
       saveOrderToCloud(newOrder).catch((err) => console.log('Firestore cloud sync deferred:', err));
+
+      // Trigger Web Push Notification to all subscribed devices
+      notifyNewOrderPush({
+        memoNumber: newOrder.memoNumber,
+        customerName: newOrder.customerName || newOrder.shopName,
+        shopName: newOrder.shopName,
+        totalAmount: newOrder.netTotal,
+        itemsCount: newOrder.items.length,
+        isCustomerOrder: newOrder.orderType === 'b2c_customer' || newOrder.bookedByRole === 'customer',
+      });
 
       // Reload state
       reloadData();
@@ -743,6 +755,14 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl mx-auto w-full px-3 sm:px-4 pt-4">
+        {/* Web Push Notification Controller Banner */}
+        <PushNotificationManager
+          currentRole={activeSimulatedRole}
+          userEmail={userProfile?.email}
+          userName={userProfile?.displayName}
+          onShowToast={(msg, type) => showToast(msg, type || 'info')}
+        />
+
         {activeTab === 'order' && (
           activeSimulatedRole === 'customer' ? (
             <CustomerStoreView

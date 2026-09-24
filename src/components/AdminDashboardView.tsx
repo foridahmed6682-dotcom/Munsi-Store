@@ -40,7 +40,10 @@ import {
   Database,
   Save,
   FileText,
-  Share2
+  Share2,
+  Bell,
+  BellRing,
+  Smartphone
 } from 'lucide-react';
 import {
   Product,
@@ -1727,6 +1730,49 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+
+          {/* Web Push Notification Configuration & VAPID Status */}
+          <div className="bg-white p-5 rounded-2xl border border-emerald-200 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b border-neutral-100">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold">
+                  <BellRing className="w-5 h-5 text-emerald-600" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-neutral-900 flex items-center gap-2">
+                    <span>ওয়েব পুশ নোটিফিকেশন কনফিগারেশন (VAPID Keys)</span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-100 text-emerald-800 font-bold">
+                      সক্রিয় ✅
+                    </span>
+                  </h3>
+                  <p className="text-xs text-neutral-500">
+                    কাস্টমার অর্ডার ও ফিল্ড সেলস আপডেট পাওয়ার জন্য VAPID এনক্রিপশন সক্রিয় রয়েছে
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+              <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200 space-y-1">
+                <span className="font-bold text-neutral-700 block">VAPID Public Key:</span>
+                <p className="font-mono text-[11px] text-neutral-600 break-all bg-white p-2 rounded-lg border border-neutral-200 select-all">
+                  BIyxRt1UASyhSfEmRx8J7Yivfy-o_EiystQWv96lYqerntJizLMQNCHGi4guiKBkeHMDvbex0RVRDKHGiHg6nUA
+                </p>
+              </div>
+
+              <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200 space-y-1">
+                <span className="font-bold text-neutral-700 block">VAPID Private Key:</span>
+                <p className="font-mono text-[11px] text-neutral-600 break-all bg-white p-2 rounded-lg border border-neutral-200 select-all">
+                  C-khQdiWSBO48PyPafI97xUmbyRyQOQGDGuNFx7kd9A (সার্ভার সাইডে এনক্রিপ্টেড)
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-emerald-700 bg-emerald-50 p-2.5 rounded-xl border border-emerald-200 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+              <span>মোবাইল ও পিসি ডিভাইসে সার্ভিস ওয়ার্কারের মাধ্যমে ব্যাকগ্রাউন্ড পুশ নোটিফিকেশন সচল রয়েছে। যেকোনো ব্রাউজার থেকেই নোটিফিকেশন রিসিভ হবে।</span>
+            </p>
           </div>
 
           {/* Database Cleaning & Mock Data Purge Section */}

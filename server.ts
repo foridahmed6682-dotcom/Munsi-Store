@@ -3,8 +3,65 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
+import webpush from 'web-push';
+import fs from 'fs';
 
 dotenv.config();
+
+// Web Push VAPID Configuration
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || 'BIyxRt1UASyhSfEmRx8J7Yivfy-o_EiystQWv96lYqerntJizLMQNCHGi4guiKBkeHMDvbex0RVRDKHGiHg6nUA';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || 'C-khQdiWSBO48PyPafI97xUmbyRyQOQGDGuNFx7kd9A';
+const VAPID_SUBJECT = 'mailto:foridahmed6682@gmail.com';
+
+try {
+  webpush.setVapidDetails(
+    VAPID_SUBJECT,
+    VAPID_PUBLIC_KEY,
+    VAPID_PRIVATE_KEY
+  );
+  console.log('✅ Web Push VAPID initialized successfully with provided keys');
+} catch (e) {
+  console.error('⚠️ Failed to initialize VAPID details:', e);
+}
+
+// Subscription Store
+interface PushSubRecord {
+  endpoint: string;
+  subscription: webpush.PushSubscription;
+  role?: string;
+  userEmail?: string;
+  userName?: string;
+  userAgent?: string;
+  subscribedAt: string;
+}
+
+const SUBS_FILE = path.join(process.cwd(), '.push_subscriptions.json');
+let pushSubscriptions: Map<string, PushSubRecord> = new Map();
+
+// Load cached subscriptions from local disk if available
+try {
+  if (fs.existsSync(SUBS_FILE)) {
+    const raw = fs.readFileSync(SUBS_FILE, 'utf-8');
+    const list: PushSubRecord[] = JSON.parse(raw);
+    list.forEach(sub => {
+      if (sub && sub.endpoint) {
+        pushSubscriptions.set(sub.endpoint, sub);
+      }
+    });
+    console.log(`📦 Loaded ${pushSubscriptions.size} push subscriptions from storage`);
+  }
+} catch (err) {
+  console.warn('Could not read saved push subscriptions:', err);
+}
+
+function saveSubscriptionsToFile() {
+  try {
+    const arr = Array.from(pushSubscriptions.values());
+    fs.writeFileSync(SUBS_FILE, JSON.stringify(arr, null, 2));
+  } catch (err) {
+    console.error('Failed to save subscriptions:', err);
+  }
+}
 
 let aiClient: GoogleGenAI | null = null;
 function getAIClient(): GoogleGenAI {
@@ -174,6 +231,202 @@ Return ONLY a raw JSON object (no markdown, no backticks, no code fences):
       res.status(500).json({
         error: error.message || 'Failed to parse order text',
       });
+    }
+  });
+
+  // ----------------------------------------------------
+  // Push Notification APIs
+  // ----------------------------------------------------
+
+  // 1. Get Public VAPID Key & Status
+  app.get('/api/push/public-key', (req, res) => {
+    res.json({
+      publicKey: VAPID_PUBLIC_KEY,
+      subscribersCount: pushSubscriptions.size
+    });
+  });
+
+  // 2. Get active subscriber metrics
+  app.get('/api/push/subscribers-count', (req, res) => {
+    res.json({
+      count: pushSubscriptions.size,
+      subscribers: Array.from(pushSubscriptions.values()).map(s => ({
+        role: s.role,
+        userName: s.userName,
+        userEmail: s.userEmail,
+        subscribedAt: s.subscribedAt
+      }))
+    });
+  });
+
+  // 3. Register or Update Push Subscription
+  app.post('/api/push/subscribe', (req, res) => {
+    try {
+      const { subscription, role, userEmail, userName, userAgent } = req.body;
+      if (!subscription || !subscription.endpoint) {
+        return res.status(400).json({ error: 'Valid push subscription object is required' });
+      }
+
+      pushSubscriptions.set(subscription.endpoint, {
+        endpoint: subscription.endpoint,
+        subscription,
+        role: role || 'user',
+        userEmail: userEmail || '',
+        userName: userName || '',
+        userAgent: userAgent || '',
+        subscribedAt: new Date().toISOString()
+      });
+
+      saveSubscriptionsToFile();
+      console.log(`📱 Push subscription registered: ${userName || userEmail || 'Client'} (${pushSubscriptions.size} total)`);
+
+      res.status(201).json({
+        success: true,
+        message: 'পুশ নোটিফিকেশন সফলভাবে নিবন্ধিত হয়েছে!',
+        count: pushSubscriptions.size
+      });
+    } catch (err: any) {
+      console.error('Subscription error:', err);
+      res.status(500).json({ error: err.message || 'Failed to register push subscription' });
+    }
+  });
+
+  // 4. Unsubscribe
+  app.post('/api/push/unsubscribe', (req, res) => {
+    try {
+      const { endpoint } = req.body;
+      if (endpoint && pushSubscriptions.has(endpoint)) {
+        pushSubscriptions.delete(endpoint);
+        saveSubscriptionsToFile();
+      }
+      res.json({ success: true, count: pushSubscriptions.size });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 5. Send Test Notification to Caller or All
+  app.post('/api/push/send-test', async (req, res) => {
+    try {
+      const { endpoint, title, body } = req.body;
+      const payload = JSON.stringify({
+        title: title || '🎉 মুন্সী স্টোর পুশ নোটিফিকেশন সফল!',
+        body: body || 'আপনার ব্রাউজার ও ডিভাইসে পুশ নোটিফিকেশন সচল রয়েছে। যেকোনো অর্ডার ও আপডেট সাথে সাথে পাবেন।',
+        icon: '/pwa-192x192.png',
+        badge: '/icon.svg',
+        url: '/',
+        tag: 'munsi-test-' + Date.now()
+      });
+
+      const targets = endpoint && pushSubscriptions.has(endpoint)
+        ? [pushSubscriptions.get(endpoint)!]
+        : Array.from(pushSubscriptions.values());
+
+      if (targets.length === 0) {
+        return res.status(200).json({
+          success: true,
+          message: 'কোনো সক্রিয় সাবস্ক্রিপশন পাওয়া যায়নি। অনুগ্রহ করে আগে নোটিফিকেশন পারমিশন অন করুন।',
+          count: 0
+        });
+      }
+
+      let successCount = 0;
+      const expiredEndpoints: string[] = [];
+
+      await Promise.all(
+        targets.map(async (rec) => {
+          try {
+            await webpush.sendNotification(rec.subscription, payload);
+            successCount++;
+          } catch (err: any) {
+            console.error('Failed to send push to:', rec.endpoint, err?.statusCode || err?.message);
+            // 404 or 410 means subscription has expired/unsubscribed
+            if (err?.statusCode === 404 || err?.statusCode === 410) {
+              expiredEndpoints.push(rec.endpoint);
+            }
+          }
+        })
+      );
+
+      // Clean expired
+      if (expiredEndpoints.length > 0) {
+        expiredEndpoints.forEach(ep => pushSubscriptions.delete(ep));
+        saveSubscriptionsToFile();
+      }
+
+      res.json({
+        success: true,
+        message: `সফলভাবে ${successCount} টি ডিভাইসে নোটিফিকেশন পাঠানো হয়েছে!`,
+        count: successCount
+      });
+    } catch (err: any) {
+      console.error('Push test error:', err);
+      res.status(500).json({ error: err.message || 'Failed to send test push' });
+    }
+  });
+
+  // 6. Broadcast Notification (by Admin or System Events)
+  app.post('/api/push/broadcast', async (req, res) => {
+    try {
+      const { title, body, targetRole, url, image } = req.body;
+      if (!title || !body) {
+        return res.status(400).json({ error: 'Title and body are required for broadcast' });
+      }
+
+      const payload = JSON.stringify({
+        title,
+        body,
+        icon: '/pwa-192x192.png',
+        badge: '/icon.svg',
+        image: image || undefined,
+        url: url || '/',
+        tag: 'munsi-broadcast-' + Date.now()
+      });
+
+      let targets = Array.from(pushSubscriptions.values());
+      if (targetRole && targetRole !== 'all') {
+        targets = targets.filter(t => t.role === targetRole);
+      }
+
+      if (targets.length === 0) {
+        return res.status(200).json({
+          success: true,
+          message: 'কোনো গ্রাহক/ডিভাইস বর্তমানে এই রোলে সাবস্ক্রাইব করা নেই।',
+          count: 0
+        });
+      }
+
+      let successCount = 0;
+      const expiredEndpoints: string[] = [];
+
+      await Promise.all(
+        targets.map(async (rec) => {
+          try {
+            await webpush.sendNotification(rec.subscription, payload);
+            successCount++;
+          } catch (err: any) {
+            if (err?.statusCode === 404 || err?.statusCode === 410) {
+              expiredEndpoints.push(rec.endpoint);
+            }
+          }
+        })
+      );
+
+      if (expiredEndpoints.length > 0) {
+        expiredEndpoints.forEach(ep => pushSubscriptions.delete(ep));
+        saveSubscriptionsToFile();
+      }
+
+      console.log(`📢 Broadcasted push "${title}" to ${successCount} devices`);
+
+      res.json({
+        success: true,
+        message: `সফলভাবে ${successCount} টি ডিভাইসে পাঠানো হয়েছে`,
+        count: successCount
+      });
+    } catch (err: any) {
+      console.error('Push broadcast error:', err);
+      res.status(500).json({ error: err.message || 'Broadcast failed' });
     }
   });
 
