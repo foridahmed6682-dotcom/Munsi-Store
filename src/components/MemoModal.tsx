@@ -205,24 +205,19 @@ export const MemoModal: React.FC<MemoModalProps> = ({ order, isOpen, onClose }) 
               </div>
             )}
 
-            <div className="flex justify-between text-sm font-bold text-neutral-900 border-t border-dashed border-neutral-300 pt-1.5 pb-1">
-              <span>নিট প্রদেয় (Net Total):</span>
-              <span className="text-emerald-800">৳{order.netTotal.toLocaleString()}</span>
+            {/* Layout as requested: Mot, Agrim, Baki */}
+            <div className="grid grid-cols-2 gap-y-1 mt-2 border-t border-neutral-300 pt-2 font-bold text-neutral-900">
+              <div className="border border-neutral-300 p-1.5 bg-neutral-100">মোট (Total)</div>
+              <div className="border border-neutral-300 p-1.5 text-right">৳{order.netTotal.toLocaleString()}</div>
+              
+              <div className="border border-neutral-300 p-1.5">অগ্রিম (Paid)</div>
+              <div className="border border-neutral-300 p-1.5 text-right">৳{order.paidAmount.toLocaleString()}</div>
+              
+              <div className="border border-neutral-300 p-1.5">বাকী (Due)</div>
+              <div className="border border-neutral-300 p-1.5 text-right">৳{order.dueAmount.toLocaleString()}</div>
             </div>
 
-            <div className="flex justify-between text-neutral-700 pt-1">
-              <span>পরিশোধ (নগদ / {order.paymentMethod}):</span>
-              <span className="font-semibold text-emerald-700">৳{order.paidAmount.toLocaleString()}</span>
-            </div>
-
-            <div className="flex justify-between text-neutral-700">
-              <span>বর্তমান অর্ডারের বাকী:</span>
-              <span className={`font-semibold ${order.dueAmount > 0 ? 'text-rose-600' : 'text-neutral-700'}`}>
-                ৳{order.dueAmount.toLocaleString()}
-              </span>
-            </div>
-
-            <div className="flex justify-between text-neutral-500 text-[11px] pt-1 border-t border-neutral-200">
+            <div className="flex justify-between text-neutral-500 text-[11px] pt-2 border-t border-neutral-200">
               <span>পূর্বে অপরিশোধিত বকেয়া:</span>
               <span>৳{order.previousDueAtBooking.toLocaleString()}</span>
             </div>
