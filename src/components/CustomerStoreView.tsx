@@ -298,64 +298,6 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
 
   return (
     <div className="pb-24 max-w-7xl mx-auto">
-      {/* Top Customer Brand Header / Banner */}
-      <div className="bg-gradient-to-r from-emerald-800 via-emerald-700 to-teal-800 text-white rounded-2xl p-4 sm:p-6 mb-6 shadow-md relative overflow-hidden">
-        <div className="absolute right-0 top-0 bottom-0 opacity-10 pointer-events-none flex items-center pr-4">
-          <ShoppingBag className="w-56 h-56 text-white" />
-        </div>
-
-        <div className="relative z-10">
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
-            <div className="flex items-center gap-2">
-              <span className="bg-amber-400 text-emerald-950 text-xs font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1">
-                <Sparkles className="w-3.5 h-3.5" /> ১০০% ফ্রেশ ও নির্ভেজাল
-              </span>
-              <span className="bg-white/20 text-white text-xs font-semibold px-2.5 py-0.5 rounded-full">
-                ঘরের বাজার ও স্বপ্ন স্টাইল
-              </span>
-            </div>
-
-            {/* Quick My Orders Toggle */}
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setActiveTab(activeTab === 'my-orders' ? 'shop' : 'my-orders')}
-                className={`text-xs font-bold px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 ${
-                  activeTab === 'my-orders'
-                    ? 'bg-amber-400 text-neutral-950 shadow-sm'
-                    : 'bg-emerald-900/60 hover:bg-emerald-900 text-white border border-emerald-600/40'
-                }`}
-              >
-                <Clock className="w-3.5 h-3.5" />
-                আমার অর্ডারসমূহ ({myPastOrders.length})
-              </button>
-            </div>
-          </div>
-
-          <h1 className="text-xl sm:text-3xl font-black tracking-tight text-white mb-1">
-            {businessName} - প্রিমিয়াম অনলাইন মুদি বাজার
-          </h1>
-          <p className="text-emerald-100 text-xs sm:text-sm max-w-2xl">
-            সরাসরি পাইকারি রেটে সেরা মানের তেল, চাল, ডাল, মসলা, ঘি ও নিত্যপ্রয়োজনীয় গ্রোসারি পণ্য ঘরে বসেই অর্ডার করুন।
-          </p>
-
-          {/* Value Badges */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-4 pt-3 border-t border-emerald-600/50 text-xs">
-            <div className="flex items-center gap-2 text-emerald-100">
-              <Truck className="w-4 h-4 text-amber-300 shrink-0" />
-              <span>দ্রুত হোম ডেলিভারি</span>
-            </div>
-            <div className="flex items-center gap-2 text-emerald-100">
-              <Banknote className="w-4 h-4 text-amber-300 shrink-0" />
-              <span>ক্যাশ অন ডেলিভারি</span>
-            </div>
-            <div className="flex items-center gap-2 text-emerald-100 col-span-2 sm:col-span-1">
-              <Phone className="w-4 h-4 text-amber-300 shrink-0" />
-              <span>হটলাইন: {hotline}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
       {/* VIEW: MY PAST ORDERS */}
       {activeTab === 'my-orders' && (
         <div className="bg-white rounded-2xl border border-neutral-200 p-4 sm:p-6 shadow-sm mb-8">
@@ -569,31 +511,43 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
               )}
             </div>
 
-            {/* Category Scrollable Pills */}
-            <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none text-xs">
-              <button
-                onClick={() => setSelectedCategory('all')}
-                className={`px-3.5 py-1.5 rounded-full font-bold whitespace-nowrap transition-all ${
-                  selectedCategory === 'all'
-                    ? 'bg-emerald-800 text-white shadow-xs'
-                    : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
-                }`}
-              >
-                সব পণ্য ({products.length})
-              </button>
-              {categoryList.map((cat) => (
+            {/* Category Scrollable Pills & My Orders Toggle */}
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none text-xs flex-1">
                 <button
-                  key={cat}
-                  onClick={() => setSelectedCategory(cat)}
+                  onClick={() => setSelectedCategory('all')}
                   className={`px-3.5 py-1.5 rounded-full font-bold whitespace-nowrap transition-all ${
-                    selectedCategory === cat
+                    selectedCategory === 'all'
                       ? 'bg-emerald-800 text-white shadow-xs'
                       : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
                   }`}
                 >
-                  {cat}
+                  সব পণ্য ({products.length})
                 </button>
-              ))}
+                {categoryList.map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => setSelectedCategory(cat)}
+                    className={`px-3.5 py-1.5 rounded-full font-bold whitespace-nowrap transition-all ${
+                      selectedCategory === cat
+                        ? 'bg-emerald-800 text-white shadow-xs'
+                        : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+
+              {myPastOrders.length > 0 && (
+                <button
+                  onClick={() => setActiveTab('my-orders')}
+                  className="shrink-0 text-xs font-bold px-3 py-1.5 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1 transition-all"
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>আমার অর্ডার ({myPastOrders.length})</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -732,7 +686,7 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
             </button>
             <h2 className="text-xl sm:text-2xl font-black text-neutral-900 flex items-center gap-2">
               <ShoppingBag className="w-6 h-6 text-emerald-700" />
-              চেকআউট ও ডেলিভারি তথ্য (ঘরের বাজার ও স্বপ্ন স্টাইল)
+              চেকআউট ও ডেলিভারি তথ্য
             </h2>
             <p className="text-xs text-neutral-500">
               সঠিক নাম ও ঠিকানা দিন, যাতে আপনার অর্ডারটি দ্রুততম সময়ে বাসায় পৌঁছে দেওয়া যায়।
