@@ -205,16 +205,36 @@ export const MemoModal: React.FC<MemoModalProps> = ({ order, isOpen, onClose }) 
               </div>
             )}
 
-            {/* Layout as requested: Mot, Agrim, Baki */}
-            <div className="grid grid-cols-2 gap-y-1 mt-2 border-t border-neutral-300 pt-2 font-bold text-neutral-900">
-              <div className="border border-neutral-300 p-1.5 bg-neutral-100">মোট (Total)</div>
-              <div className="border border-neutral-300 p-1.5 text-right">৳{order.netTotal.toLocaleString()}</div>
-              
-              <div className="border border-neutral-300 p-1.5">অগ্রিম (Paid)</div>
-              <div className="border border-neutral-300 p-1.5 text-right">৳{order.paidAmount.toLocaleString()}</div>
-              
-              <div className="border border-neutral-300 p-1.5">বাকী (Due)</div>
-              <div className="border border-neutral-300 p-1.5 text-right">৳{order.dueAmount.toLocaleString()}</div>
+            {/* Layout as requested: Mot, Agrim, Baki formatted exactly like handwritten cash memo slip */}
+            <div className="flex justify-end mt-3">
+              <table className="w-56 border-collapse border border-neutral-400 text-xs font-bold">
+                <tbody>
+                  <tr className="border-b border-neutral-400">
+                    <td className="border-r border-neutral-400 px-3 py-1.5 bg-neutral-100/80 text-neutral-800 text-left w-24">
+                      মোট
+                    </td>
+                    <td className="px-3 py-1.5 text-right font-mono text-neutral-900 text-sm">
+                      ৳{order.netTotal.toLocaleString()}
+                    </td>
+                  </tr>
+                  <tr className="border-b border-neutral-400">
+                    <td className="border-r border-neutral-400 px-3 py-1.5 bg-neutral-100/80 text-neutral-800 text-left">
+                      অগ্রিম
+                    </td>
+                    <td className="px-3 py-1.5 text-right font-mono text-emerald-700 text-sm">
+                      ৳{order.paidAmount.toLocaleString()}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="border-r border-neutral-400 px-3 py-1.5 bg-neutral-100/80 text-neutral-800 text-left">
+                      বাঁকী
+                    </td>
+                    <td className={`px-3 py-1.5 text-right font-mono text-sm ${order.dueAmount > 0 ? 'text-rose-600' : 'text-neutral-900'}`}>
+                      ৳{order.dueAmount.toLocaleString()}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
 
             <div className="flex justify-between text-neutral-500 text-[11px] pt-2 border-t border-neutral-200">

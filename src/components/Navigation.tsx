@@ -16,7 +16,7 @@ export const Navigation: React.FC<NavigationProps> = ({
   activeTab,
   setActiveTab,
   cartCount,
-  userRole = 'admin',
+  userRole = 'customer',
   isLoggedIn = false,
 }) => {
   const tabs = [

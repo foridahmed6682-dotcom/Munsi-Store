@@ -53,7 +53,7 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
   // Cart
   const [cart, setCart] = useState<{ [productId: string]: { quantity: number; unitPrice: number } }>({});
   const [discountPercent, setDiscountPercent] = useState<number>(0);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('DUE');
   const [paidAmountInput, setPaidAmountInput] = useState<string>('');
   const [orderNotes, setOrderNotes] = useState<string>('');
 
@@ -1005,32 +1005,54 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                     </div>
                   )}
 
-                  {/* Calculations */}
-                  <div className="p-3 bg-neutral-50 rounded-2xl border border-neutral-200 space-y-1.5">
-                    <div className="flex justify-between text-neutral-600">
-                      <span>সাবটোটাল:</span>
-                      <span className="font-bold">৳{subTotal.toLocaleString()}</span>
-                    </div>
-                    {discountAmount > 0 && (
-                      <div className="flex justify-between text-emerald-700">
-                        <span>ডিসকাউন্ট ({discountPercent}%):</span>
-                        <span className="font-bold">-৳{discountAmount.toLocaleString()}</span>
+                  {/* Calculations - Mot, Agrim, Baki structure */}
+                  <div className="rounded-2xl border border-neutral-300 overflow-hidden bg-white shadow-xs">
+                    <div className="p-2.5 bg-neutral-50/80 border-b border-neutral-200 space-y-1 text-xs">
+                      <div className="flex justify-between text-neutral-600">
+                        <span>সাবটোটাল:</span>
+                        <span className="font-bold">৳{subTotal.toLocaleString()}</span>
                       </div>
-                    )}
-                    <div className="flex justify-between text-sm font-black text-neutral-900 pt-1 border-t border-neutral-200">
-                      <span>মোট প্রদেয়:</span>
-                      <span className="text-emerald-800">৳{netTotal.toLocaleString()}</span>
+                      {discountAmount > 0 && (
+                        <div className="flex justify-between text-emerald-700">
+                          <span>ডিসকাউন্ট ({discountPercent}%):</span>
+                          <span className="font-bold">-৳{discountAmount.toLocaleString()}</span>
+                        </div>
+                      )}
                     </div>
-                    {dueAmount > 0 && (
-                      <div className="flex justify-between text-rose-700 text-[11px] font-bold">
-                        <span>বর্তমান অর্ডারে বাকী:</span>
-                        <span>৳{dueAmount.toLocaleString()}</span>
-                      </div>
-                    )}
+
+                    <table className="w-full text-xs font-bold border-collapse">
+                      <tbody>
+                        <tr className="border-b border-neutral-200">
+                          <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 w-1/2 border-r border-neutral-200">
+                            মোট
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-emerald-800 text-sm">
+                            ৳{netTotal.toLocaleString()}
+                          </td>
+                        </tr>
+                        <tr className="border-b border-neutral-200">
+                          <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 border-r border-neutral-200">
+                            অগ্রিম
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-neutral-900 text-sm">
+                            {paymentMethod === 'DUE' ? '' : `৳${paidAmount.toLocaleString()}`}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 border-r border-neutral-200">
+                            বাঁকী
+                          </td>
+                          <td className={`px-3 py-2 text-right font-mono text-sm ${dueAmount > 0 ? 'text-rose-600' : 'text-neutral-900'}`}>
+                            {paymentMethod === 'DUE' ? `৳${netTotal.toLocaleString()}` : `৳${dueAmount.toLocaleString()}`}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+
                     {selectedShop && selectedShop.previousDue > 0 && (
-                      <div className="flex justify-between text-amber-800 text-[11px] font-bold">
-                        <span>পূর্বের বাকী সহ মোট বাকী:</span>
-                        <span>৳{totalOutstandingAfterOrder.toLocaleString()}</span>
+                      <div className="p-2 bg-amber-50/70 border-t border-amber-200 flex justify-between text-amber-900 text-[11px] font-bold">
+                        <span>পূর্বের বকেয়া সহ মোট:</span>
+                        <span className="font-mono">৳{totalOutstandingAfterOrder.toLocaleString()}</span>
                       </div>
                     )}
                   </div>
