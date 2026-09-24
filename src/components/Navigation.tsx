@@ -68,15 +68,15 @@ export const Navigation: React.FC<NavigationProps> = ({
   ];
 
   const visibleTabs = tabs.filter((t) => {
-    // If not logged in, only show the 'order' tab (acts as e-commerce catalog)
+    // If not logged in, show 'order' (customer store) and 'admin' (login barrier)
     if (!isLoggedIn) {
-      return t.id === 'order';
+      return t.id === 'order' || t.id === 'admin';
     }
-    // If logged in as customer/guest, only show the 'order' tab
+    // If logged in as customer/guest, show 'order' and 'admin'
     if (userRole === 'customer') {
-      return t.id === 'order';
+      return t.id === 'order' || t.id === 'admin';
     }
-    // For other logged-in staff roles (admin, sr, dsr)
+    // For staff roles (admin, sr, dsr)
     if (t.id === 'admin') {
       return userRole === 'admin';
     }

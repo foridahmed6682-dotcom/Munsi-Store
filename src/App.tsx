@@ -56,8 +56,11 @@ import {
   clearAllCloudMockData,
   subscribeToUserProfileDoc,
   isMainSuperAdmin,
-  subscribeToCloudBusinessInfo
+  subscribeToCloudBusinessInfo,
+  onAuthChanged,
+  fetchUserProfile
 } from './lib/firebase';
+import { getStoredGoogleToken } from './lib/firebaseAuth';
 import {
   getBusinessInfo,
   saveBusinessInfoLocal
@@ -224,7 +227,7 @@ export default function App() {
         saveAuthorizedEmails(cloudAuths);
         setAuthorizedEmails(cloudAuths);
 
-        // Immediate reactive role check for current logged in profile
+        // Reactive role check for current logged in profile
         const currentStoredUser = getUserProfile();
         if (currentStoredUser?.email) {
           const emailClean = currentStoredUser.email.toLowerCase().trim();
@@ -237,18 +240,18 @@ export default function App() {
             }
           } else {
             const matchedAuth = cloudAuths.find((a) => a.email.toLowerCase().trim() === emailClean);
-            const effectiveRole: UserRole = matchedAuth ? matchedAuth.role : 'customer';
-            if (currentStoredUser.role !== effectiveRole) {
+            // Only update if matchedAuth is explicitly configured by admin with a role
+            if (matchedAuth && matchedAuth.role && currentStoredUser.role !== matchedAuth.role) {
               const updated: UserProfile = {
                 ...currentStoredUser,
-                role: effectiveRole,
-                assignedRoute: matchedAuth?.assignedRoute || currentStoredUser.assignedRoute,
+                role: matchedAuth.role,
+                assignedRoute: matchedAuth.assignedRoute || currentStoredUser.assignedRoute,
               };
               saveUserProfile(updated);
               setUserProfileState(updated);
-              setActiveSimulatedRole(effectiveRole);
+              setActiveSimulatedRole(matchedAuth.role);
 
-              if (effectiveRole !== 'admin') {
+              if (matchedAuth.role !== 'admin') {
                 setActiveTab((prev) => (prev === 'admin' ? 'order' : prev));
               }
             }
@@ -271,6 +274,40 @@ export default function App() {
       if (unsubscribeAuthEmails) unsubscribeAuthEmails();
     };
   }, [reloadData]);
+
+  // Firebase Auth State Observer - Sync user session & accurate role on reload
+  useEffect(() => {
+    const unsubAuth = onAuthChanged(async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          const profile = await fetchUserProfile(firebaseUser.uid);
+          const emailClean = (firebaseUser.email || '').toLowerCase().trim();
+          const isSuper = isMainSuperAdmin(emailClean);
+          const resolvedRole: UserRole = isSuper ? 'admin' : (profile?.role || 'customer');
+
+          const userObj: UserProfile = {
+            uid: firebaseUser.uid,
+            email: firebaseUser.email || '',
+            displayName: firebaseUser.displayName || profile?.displayName || 'ব্যবহারকারী',
+            photoURL: firebaseUser.photoURL || profile?.photoURL || '',
+            role: resolvedRole,
+            assignedRoute: profile?.assignedRoute || 'সব রুট (All Routes)',
+            accessToken: getStoredGoogleToken() || undefined,
+          };
+
+          saveUserProfile(userObj);
+          setUserProfileState(userObj);
+          setActiveSimulatedRole(resolvedRole);
+        } catch (err) {
+          console.warn('Error syncing auth user on state change:', err);
+        }
+      }
+    });
+
+    return () => {
+      unsubAuth();
+    };
+  }, []);
 
   // Real-time listener for active user profile document in Firestore
   useEffect(() => {

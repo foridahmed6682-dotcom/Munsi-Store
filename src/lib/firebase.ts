@@ -19,7 +19,8 @@ import {
   onSnapshot,
   query,
   orderBy,
-  getDocFromServer
+  getDocFromServer,
+  addDoc
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { AppUser, UserRole, Shop, Product, Order, DueCollectionRecord, Category, AuthorizedUserEmail, Route, BusinessInfo } from '../types';
@@ -129,69 +130,125 @@ export function handleFirestoreError(error: unknown, operation: OperationType, p
   throw new Error(`Firestore Error [${operation} on ${path}]: ${err.message || String(error)}`);
 }
 
+// Role resolution helper that respects admin assignments and never overwrites SR/DSR roles
+export async function resolveUserRole(firebaseUser: User): Promise<{ role: UserRole; assignedRoute: string }> {
+  const userEmail = (firebaseUser.email || '').toLowerCase().trim();
+
+  // 1. Super Admin check
+  if (isMainSuperAdmin(userEmail)) {
+    return { role: 'admin', assignedRoute: 'সব রুট (All Routes)' };
+  }
+
+  // 2. Check existing doc in users/{uid} - Admin assigned role directly to user
+  try {
+    const userDocSnap = await getDoc(doc(db, 'users', firebaseUser.uid));
+    if (userDocSnap.exists()) {
+      const existingData = userDocSnap.data() as AppUser;
+      if (existingData?.role) {
+        return {
+          role: existingData.role,
+          assignedRoute: existingData.assignedRoute || 'সব রুট (All Routes)',
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('Could not read existing user doc from Firestore:', err);
+  }
+
+  // 3. Check authorizedEmails collection
+  try {
+    const authSnap = await getDocs(collection(db, 'authorizedEmails'));
+    let matched: AuthorizedUserEmail | null = null;
+    authSnap.forEach((docSnap) => {
+      const data = docSnap.data() as AuthorizedUserEmail;
+      if (data.email && data.email.toLowerCase().trim() === userEmail) {
+        matched = data;
+      }
+    });
+
+    if (matched) {
+      return {
+        role: (matched as any).role || 'customer',
+        assignedRoute: (matched as any).assignedRoute || 'সব রুট (All Routes)',
+      };
+    }
+  } catch (err) {
+    console.warn('Could not read authorizedEmails from Firestore:', err);
+  }
+
+  // 4. Fallback default authorized emails list
+  const defaultAuth = DEFAULT_AUTHORIZED_EMAILS.find(
+    (a) => a.email.toLowerCase().trim() === userEmail
+  );
+  if (defaultAuth) {
+    return {
+      role: defaultAuth.role || 'admin',
+      assignedRoute: defaultAuth.assignedRoute || 'সব রুট (All Routes)',
+    };
+  }
+
+  // 5. Default role is customer
+  return { role: 'customer', assignedRoute: 'সব রুট (All Routes)' };
+}
+
+// Internal helper to sync user profile safely to Firestore
+async function syncUserProfileToCloud(firebaseUser: User): Promise<AppUser> {
+  const { role, assignedRoute } = await resolveUserRole(firebaseUser);
+
+  const userDocRef = doc(db, 'users', firebaseUser.uid);
+  let existingData: AppUser | null = null;
+  let isNew = true;
+
+  try {
+    const existingSnap = await getDoc(userDocRef);
+    if (existingSnap.exists()) {
+      existingData = existingSnap.data() as AppUser;
+      isNew = false;
+    }
+  } catch (err) {
+    console.warn('Could not check existing doc:', err);
+  }
+
+  const appUser: AppUser = {
+    uid: firebaseUser.uid,
+    email: firebaseUser.email || '',
+    displayName: firebaseUser.displayName || existingData?.displayName || 'ব্যবহারকারী',
+    photoURL: firebaseUser.photoURL || existingData?.photoURL || undefined,
+    role,
+    assignedRoute: assignedRoute || existingData?.assignedRoute || 'সব রুট (All Routes)',
+    status: 'active',
+    updatedAt: new Date().toISOString(),
+    ...(isNew ? { createdAt: new Date().toISOString() } : { createdAt: existingData?.createdAt }),
+  };
+
+  try {
+    await setDoc(userDocRef, appUser, { merge: true });
+
+    if (role === 'admin') {
+      await setDoc(
+        doc(db, 'admins', firebaseUser.uid),
+        {
+          uid: firebaseUser.uid,
+          email: firebaseUser.email || '',
+          addedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+    }
+  } catch (err) {
+    console.error('Error saving user profile to Firestore:', err);
+  }
+
+  return appUser;
+}
+
 // 1. Google Sign-in for normal login
 export async function signInWithGoogle(): Promise<{ user: User; isNewUser: boolean; role: UserRole }> {
   try {
     const result = await signInWithPopup(auth, provider);
     const firebaseUser = result.user;
-
-    let role: UserRole = 'customer'; // Default role if not assigned by admin
-    let assignedRoute: string = 'সব রুট (All Routes)';
-
-    const userEmail = (firebaseUser.email || '').toLowerCase().trim();
-
-    // Check if main super admin
-    if (isMainSuperAdmin(userEmail)) {
-      role = 'admin';
-    } else {
-      // Check Firestore authorizedEmails collection
-      const authSnap = await getDocs(collection(db, 'authorizedEmails'));
-      let foundAuth = false;
-      authSnap.forEach((docSnap) => {
-        const data = docSnap.data() as AuthorizedUserEmail;
-        if (data.email && data.email.toLowerCase().trim() === userEmail) {
-          role = data.role || 'customer';
-          if (data.assignedRoute) assignedRoute = data.assignedRoute;
-          foundAuth = true;
-        }
-      });
-
-      if (!foundAuth) {
-        // Fallback default admin list
-        if (DEFAULT_AUTHORIZED_EMAILS.some((a) => a.email.toLowerCase().trim() === userEmail && a.role === 'admin')) {
-          role = 'admin';
-        }
-      }
-    }
-
-    // Sync user record to Firestore /users/{uid}
-    const userDocRef = doc(db, 'users', firebaseUser.uid);
-    const existingDoc = await getDoc(userDocRef);
-    const isNew = !existingDoc.exists();
-
-    const userData: AppUser = {
-      uid: firebaseUser.uid,
-      email: firebaseUser.email || '',
-      displayName: firebaseUser.displayName || 'ব্যবহারকারী',
-      photoURL: firebaseUser.photoURL || undefined,
-      role,
-      assignedRoute,
-      status: 'active',
-      updatedAt: new Date().toISOString(),
-      ...(isNew ? { createdAt: new Date().toISOString() } : {}),
-    };
-
-    await setDoc(userDocRef, userData, { merge: true });
-
-    if (role === 'admin') {
-      await setDoc(doc(db, 'admins', firebaseUser.uid), {
-        uid: firebaseUser.uid,
-        email: firebaseUser.email,
-        addedAt: new Date().toISOString(),
-      });
-    }
-
-    return { user: firebaseUser, isNewUser: isNew, role };
+    const appUser = await syncUserProfileToCloud(firebaseUser);
+    return { user: firebaseUser, isNewUser: false, role: appUser.role };
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, 'users');
   }
@@ -200,60 +257,22 @@ export async function signInWithGoogle(): Promise<{ user: User; isNewUser: boole
 // 2. Google Sign-in with Workspace OAuth Scopes
 export async function signInWithWorkspaceGoogle(): Promise<{ user: User; accessToken: string | null; role: UserRole }> {
   try {
-    const result = await signInWithPopup(auth, workspaceProvider);
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    const accessToken = credential?.accessToken || null;
-    const firebaseUser = result.user;
+    let resultUser: User;
+    let accessToken: string | null = null;
 
-    let role: UserRole = 'customer'; // Default role if not assigned by admin
-    let assignedRoute: string = 'সব রুট (All Routes)';
-
-    const userEmail = (firebaseUser.email || '').toLowerCase().trim();
-    if (isMainSuperAdmin(userEmail)) {
-      role = 'admin';
-    } else {
-      const authSnap = await getDocs(collection(db, 'authorizedEmails'));
-      let foundAuth = false;
-      authSnap.forEach((docSnap) => {
-        const data = docSnap.data() as AuthorizedUserEmail;
-        if (data.email && data.email.toLowerCase().trim() === userEmail) {
-          role = data.role || 'customer';
-          if (data.assignedRoute) assignedRoute = data.assignedRoute;
-          foundAuth = true;
-        }
-      });
-      if (!foundAuth && DEFAULT_AUTHORIZED_EMAILS.some((a) => a.email.toLowerCase().trim() === userEmail && a.role === 'admin')) {
-        role = 'admin';
-      }
+    try {
+      const result = await signInWithPopup(auth, workspaceProvider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      accessToken = credential?.accessToken || null;
+      resultUser = result.user;
+    } catch (workspaceErr: any) {
+      console.warn('Workspace scope signin fallback to standard provider:', workspaceErr);
+      const fallbackResult = await signInWithPopup(auth, provider);
+      resultUser = fallbackResult.user;
     }
 
-    const userDocRef = doc(db, 'users', firebaseUser.uid);
-    const existingDoc = await getDoc(userDocRef);
-    const isNew = !existingDoc.exists();
-
-    const userData: AppUser = {
-      uid: firebaseUser.uid,
-      email: firebaseUser.email || '',
-      displayName: firebaseUser.displayName || 'ব্যবহারকারী',
-      photoURL: firebaseUser.photoURL || undefined,
-      role,
-      assignedRoute,
-      status: 'active',
-      updatedAt: new Date().toISOString(),
-      ...(isNew ? { createdAt: new Date().toISOString() } : {}),
-    };
-
-    await setDoc(userDocRef, userData, { merge: true });
-
-    if (role === 'admin') {
-      await setDoc(doc(db, 'admins', firebaseUser.uid), {
-        uid: firebaseUser.uid,
-        email: firebaseUser.email,
-        addedAt: new Date().toISOString(),
-      });
-    }
-
-    return { user: firebaseUser, accessToken, role };
+    const appUser = await syncUserProfileToCloud(resultUser);
+    return { user: resultUser, accessToken, role: appUser.role };
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, 'users');
   }
@@ -350,7 +369,12 @@ export async function fetchAllUsers(): Promise<AppUser[]> {
 export async function updateUserRoleAndRoute(uid: string, role: UserRole, assignedRoute?: string) {
   const path = `users/${uid}`;
   try {
-    await updateDoc(doc(db, 'users', uid), {
+    const userDocRef = doc(db, 'users', uid);
+    const userSnap = await getDoc(userDocRef);
+    const userData = userSnap.exists() ? (userSnap.data() as AppUser) : null;
+    const userEmail = userData?.email ? userData.email.toLowerCase().trim() : '';
+
+    await updateDoc(userDocRef, {
       role,
       ...(assignedRoute ? { assignedRoute } : {}),
       updatedAt: new Date().toISOString(),
@@ -359,13 +383,46 @@ export async function updateUserRoleAndRoute(uid: string, role: UserRole, assign
     if (role === 'admin') {
       await setDoc(doc(db, 'admins', uid), {
         uid,
+        email: userEmail || '',
         addedAt: new Date().toISOString(),
-      });
+      }, { merge: true });
     } else {
       try {
         await deleteDoc(doc(db, 'admins', uid));
       } catch {
         // ignore if not admin
+      }
+    }
+
+    // Keep authorizedEmails synchronized so both collections agree
+    if (userEmail) {
+      try {
+        const authSnap = await getDocs(collection(db, 'authorizedEmails'));
+        let matchedDocId: string | null = null;
+        authSnap.forEach((d) => {
+          const authData = d.data() as AuthorizedUserEmail;
+          if (authData.email && authData.email.toLowerCase().trim() === userEmail) {
+            matchedDocId = d.id;
+          }
+        });
+
+        if (matchedDocId) {
+          await updateDoc(doc(db, 'authorizedEmails', matchedDocId), {
+            role,
+            ...(assignedRoute ? { assignedRoute } : {}),
+            updatedAt: new Date().toISOString(),
+          });
+        } else {
+          await addDoc(collection(db, 'authorizedEmails'), {
+            email: userEmail,
+            name: userData?.displayName || userEmail,
+            role,
+            assignedRoute: assignedRoute || userData?.assignedRoute || 'সব রুট (All Routes)',
+            createdAt: new Date().toISOString(),
+          });
+        }
+      } catch (authErr) {
+        console.warn('Could not sync to authorizedEmails collection:', authErr);
       }
     }
   } catch (error) {
