@@ -210,30 +210,28 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
                   </span>
                   <div className="flex items-center gap-1.5">
                     <span className="text-[10px] text-neutral-500 font-medium">{shop.category}</span>
-                    {isAdmin && (
-                      <div className="flex items-center gap-1 ml-1 bg-neutral-100 px-1 py-0.5 rounded-md shrink-0">
+                    <div className="flex items-center gap-1 ml-1 bg-neutral-100 px-1 py-0.5 rounded-md shrink-0">
+                      <button
+                        onClick={() => setEditingShop(shop)}
+                        className="p-1 hover:text-emerald-700 text-neutral-500 rounded transition-colors"
+                        title="দোকান এডিট করুন"
+                      >
+                        <Edit3 className="w-3 h-3" />
+                      </button>
+                      {onDeleteShop && isAdmin && (
                         <button
-                          onClick={() => setEditingShop(shop)}
-                          className="p-1 hover:text-emerald-700 text-neutral-500 rounded transition-colors"
-                          title="দোকান এডিট করুন"
+                          onClick={() => {
+                            if (confirm(`আপনি কি নিশ্চিতভাবে "${shop.name}" দোকানটি মুছে ফেলতে চান?`)) {
+                              onDeleteShop(shop.id);
+                            }
+                          }}
+                          className="p-1 hover:text-rose-600 text-neutral-500 rounded transition-colors"
+                          title="দোকান ডিলিট করুন"
                         >
-                          <Edit3 className="w-3 h-3" />
+                          <Trash2 className="w-3 h-3" />
                         </button>
-                        {onDeleteShop && (
-                          <button
-                            onClick={() => {
-                              if (confirm(`আপনি কি নিশ্চিতভাবে "${shop.name}" দোকানটি মুছে ফেলতে চান?`)) {
-                                onDeleteShop(shop.id);
-                              }
-                            }}
-                            className="p-1 hover:text-rose-600 text-neutral-500 rounded transition-colors"
-                            title="দোকান ডিলিট করুন"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        )}
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
                 </div>
 

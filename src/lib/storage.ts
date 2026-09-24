@@ -1,4 +1,4 @@
-import { Product, Shop, Order, DueCollectionRecord, DailyMetrics, Category, AuthorizedUserEmail, Route } from '../types';
+import { Product, Shop, Order, DueCollectionRecord, DailyMetrics, Category, AuthorizedUserEmail, Route, BusinessInfo } from '../types';
 
 const STORAGE_KEYS = {
   SHOPS: 'dsr_shops_v1',
@@ -8,6 +8,7 @@ const STORAGE_KEYS = {
   AUTHORIZED_EMAILS: 'dsr_authorized_emails_v1',
   ORDERS: 'dsr_orders_v1',
   COLLECTIONS: 'dsr_collections_v1',
+  BUSINESS_INFO: 'dsr_business_info_v1',
   LAST_MEMO_NUM: 'dsr_last_memo_v1',
   SEED_DONE: 'dsr_seed_done_v1',
   DELETED_PRODUCTS: 'dsr_deleted_products_v1',
@@ -16,6 +17,42 @@ const STORAGE_KEYS = {
   DELETED_CATEGORIES: 'dsr_deleted_categories_v1',
   DELETED_ROUTES: 'dsr_deleted_routes_v1',
 };
+
+export const DEFAULT_BUSINESS_INFO: BusinessInfo = {
+  name: 'Munsi Store & FMCG Distribution',
+  banglaName: 'মুন্সী স্টোর অ্যান্ড ডিস্ট্রিবিউশন',
+  tagline: 'পাইকারি ও খুচরা দ্রুত সাপ্লাই এবং ফিল্ড অর্ডার সল্যুশন',
+  address: 'চকবাজার / স্টেশন রোড, ঢাকা, বাংলাদেশ',
+  hotline: '০১৭১১-XXXXXX',
+  email: 'foridahmed6682@gmail.com',
+  bkashNumber: '01711000000',
+  deliveryCharge: 60,
+  minOrderAmount: 500,
+  siteNotice: '🚚 সকল অনলাইন ও রিটেইল অর্ডার ২৪ ঘণ্টার মধ্যে বিশ্বস্ত ডেলিভারি করা হয়!',
+  isNoticeActive: true,
+  memoFooterNotice: 'ধন্যবাদ! বিক্রিত মাল ফেরত নেওয়া হয় না। যেকোনো প্রয়োজনে হটলাইনে যোগাযোগ করুন।',
+};
+
+export function getBusinessInfo(): BusinessInfo {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.BUSINESS_INFO);
+    return raw ? { ...DEFAULT_BUSINESS_INFO, ...JSON.parse(raw) } : DEFAULT_BUSINESS_INFO;
+  } catch {
+    return DEFAULT_BUSINESS_INFO;
+  }
+}
+
+export function saveBusinessInfo(info: BusinessInfo): BusinessInfo {
+  try {
+    localStorage.setItem(STORAGE_KEYS.BUSINESS_INFO, JSON.stringify(info));
+  } catch (err) {
+    console.error('Failed to save business info:', err);
+  }
+  return info;
+}
+
+export const saveBusinessInfoLocal = saveBusinessInfo;
+
 
 export const DEFAULT_ROUTES: Route[] = [
   { id: 'route-1', name: 'Chawkbazar', banglaName: 'চকবাজার রুট', createdAt: '2026-01-01T00:00:00.000Z' },
@@ -273,19 +310,8 @@ export function markInitialSeedDone() {
   localStorage.setItem(STORAGE_KEYS.SEED_DONE, 'true');
 }
 
-export function saveBusinessInfoLocal(info: any) {
-  try {
-    localStorage.setItem('dsr_business_info', JSON.stringify(info));
-  } catch (e) {}
-}
-
-export function getBusinessInfoLocal(): any | null {
-  try {
-    const raw = localStorage.getItem('dsr_business_info');
-    return raw ? JSON.parse(raw) : null;
-  } catch (e) {
-    return null;
-  }
+export function getBusinessInfoLocal(): BusinessInfo | null {
+  return getBusinessInfo();
 }
 
 // Storage Helpers

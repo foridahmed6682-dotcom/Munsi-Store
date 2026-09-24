@@ -29,6 +29,7 @@ import {
   DEFAULT_PRODUCTS,
   DEFAULT_SHOPS,
   DEFAULT_ROUTES,
+  DEFAULT_BUSINESS_INFO,
   getDeletedProductIds,
   getDeletedShopIds,
   getDeletedOrderIds,
@@ -314,6 +315,24 @@ export async function fetchUserProfile(uid: string): Promise<AppUser | null> {
   }
 }
 
+// Real-time listener for current user's profile
+export function subscribeToUserProfileDoc(uid: string, onUpdate: (user: AppUser | null) => void) {
+  const path = `users/${uid}`;
+  return onSnapshot(
+    doc(db, 'users', uid),
+    (snap) => {
+      if (snap.exists()) {
+        onUpdate(snap.data() as AppUser);
+      } else {
+        onUpdate(null);
+      }
+    },
+    (error) => {
+      console.warn('User profile realtime sync offline / notice:', error.message);
+    }
+  );
+}
+
 // 6. Fetch All Registered Users
 export async function fetchAllUsers(): Promise<AppUser[]> {
   const path = 'users';
@@ -592,26 +611,120 @@ export function subscribeToAuthorizedEmails(onData: (emails: AuthorizedUserEmail
 }
 
 export async function saveAuthorizedEmailToCloud(authEmail: AuthorizedUserEmail) {
-  const safeDocId = authEmail.email.toLowerCase().replace(/[@.]/g, '_');
+  const emailClean = authEmail.email.toLowerCase().trim();
+  const safeDocId = emailClean.replace(/[@.]/g, '_');
   const path = `authorizedEmails/${safeDocId}`;
   try {
     const cleaned = cleanForFirestore({
       ...authEmail,
+      email: emailClean,
       id: safeDocId,
     });
     await setDoc(doc(db, 'authorizedEmails', safeDocId), cleaned);
+
+    // Synchronize to /users collection if user document exists for this email
+    try {
+      const usersSnap = await getDocs(collection(db, 'users'));
+      usersSnap.forEach(async (uDoc) => {
+        const uData = uDoc.data() as AppUser;
+        if (uData.email && uData.email.toLowerCase().trim() === emailClean) {
+          const effectiveRole = isMainSuperAdmin(emailClean) ? 'admin' : authEmail.role;
+          await updateDoc(doc(db, 'users', uDoc.id), {
+            role: effectiveRole,
+            ...(authEmail.assignedRoute ? { assignedRoute: authEmail.assignedRoute } : {}),
+            ...(authEmail.fullName ? { displayName: authEmail.fullName } : {}),
+            ...(authEmail.phone ? { phone: authEmail.phone } : {}),
+            updatedAt: new Date().toISOString(),
+          });
+
+          if (effectiveRole === 'admin') {
+            await setDoc(doc(db, 'admins', uDoc.id), {
+              uid: uDoc.id,
+              email: emailClean,
+              addedAt: new Date().toISOString(),
+            });
+          } else {
+            try {
+              await deleteDoc(doc(db, 'admins', uDoc.id));
+            } catch {
+              // ignore
+            }
+          }
+        }
+      });
+    } catch (userSyncErr) {
+      console.warn('Could not sync user role to /users collection:', userSyncErr);
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
 
 export async function deleteAuthorizedEmailFromCloud(email: string) {
-  const safeDocId = email.toLowerCase().replace(/[@.]/g, '_');
+  const emailClean = email.toLowerCase().trim();
+  if (isMainSuperAdmin(emailClean)) {
+    console.warn('Cannot delete main super admin:', emailClean);
+    return;
+  }
+  const safeDocId = emailClean.replace(/[@.]/g, '_');
   const path = `authorizedEmails/${safeDocId}`;
   try {
     await deleteDoc(doc(db, 'authorizedEmails', safeDocId));
+
+    // Also update any matching user in /users to 'customer' role immediately
+    try {
+      const usersSnap = await getDocs(collection(db, 'users'));
+      usersSnap.forEach(async (uDoc) => {
+        const uData = uDoc.data() as AppUser;
+        if (uData.email && uData.email.toLowerCase().trim() === emailClean) {
+          await updateDoc(doc(db, 'users', uDoc.id), {
+            role: 'customer',
+            updatedAt: new Date().toISOString(),
+          });
+          try {
+            await deleteDoc(doc(db, 'admins', uDoc.id));
+          } catch {
+            // ignore
+          }
+        }
+      });
+    } catch (userSyncErr) {
+      console.warn('Could not downgrade deleted user in /users collection:', userSyncErr);
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+// Business & Site Info Settings
+export { getBusinessInfo, getBusinessInfoLocal } from './storage';
+
+export function subscribeToBusinessInfo(onData: (info: BusinessInfo) => void) {
+  const path = 'settings/businessInfo';
+  return onSnapshot(
+    doc(db, 'settings', 'businessInfo'),
+    (snap) => {
+      if (snap.exists()) {
+        onData({ ...DEFAULT_BUSINESS_INFO, ...snap.data() } as BusinessInfo);
+      } else {
+        onData(DEFAULT_BUSINESS_INFO);
+      }
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, path);
+    }
+  );
+}
+
+export const subscribeToCloudBusinessInfo = subscribeToBusinessInfo;
+
+export async function saveBusinessInfoToCloud(info: BusinessInfo) {
+  const path = 'settings/businessInfo';
+  try {
+    const cleaned = cleanForFirestore(info);
+    await setDoc(doc(db, 'settings', 'businessInfo'), cleaned);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
 
@@ -709,55 +822,4 @@ export async function clearAllCloudMockData() {
     mockDataCleared: true,
     clearedAt: new Date().toISOString(),
   }).catch(() => {});
-}
-
-// 7. Business Info Configuration & Persistence
-export const DEFAULT_BUSINESS_INFO: BusinessInfo = {
-  name: "Munsi Store",
-  banglaName: "মুন্সী স্টোর",
-  tagline: "ডিস্ট্রিবিউশন ও হোলসেল অর্ডার বুকিং মেমো",
-  address: "চকবাজার / ঢাকা",
-  hotline: "০১৭১১-২২৩৩৪৪"
-};
-
-export function getBusinessInfo(): BusinessInfo {
-  const stored = localStorage.getItem('munsi_business_info');
-  if (stored) {
-    try {
-      return JSON.parse(stored);
-    } catch {
-      return DEFAULT_BUSINESS_INFO;
-    }
-  }
-  return DEFAULT_BUSINESS_INFO;
-}
-
-export function saveBusinessInfoLocal(info: BusinessInfo) {
-  localStorage.setItem('munsi_business_info', JSON.stringify(info));
-}
-
-export async function saveBusinessInfoToCloud(info: BusinessInfo) {
-  const path = 'settings/businessInfo';
-  try {
-    await setDoc(doc(db, 'settings', 'businessInfo'), info);
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
-  }
-}
-
-export function subscribeToCloudBusinessInfo(onData: (info: BusinessInfo) => void) {
-  const path = 'settings/businessInfo';
-  return onSnapshot(
-    doc(db, 'settings', 'businessInfo'),
-    (snap) => {
-      if (snap.exists()) {
-        const info = snap.data() as BusinessInfo;
-        saveBusinessInfoLocal(info);
-        onData(info);
-      }
-    },
-    (error) => {
-      handleFirestoreError(error, OperationType.GET, path);
-    }
-  );
 }

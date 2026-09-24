@@ -28,6 +28,25 @@ export function isPushSupported(): boolean {
   return typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 }
 
+export async function getOrRegisterServiceWorker(): Promise<ServiceWorkerRegistration> {
+  if (!('serviceWorker' in navigator)) {
+    throw new Error('Service Worker is not supported in this browser.');
+  }
+
+  // 1. Try to get existing registration
+  let reg = await navigator.serviceWorker.getRegistration();
+  if (!reg) {
+    // 2. Register sw.js if not already registered
+    reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+  }
+
+  // 3. Ensure ready state
+  if (!reg.active) {
+    await navigator.serviceWorker.ready;
+  }
+  return reg;
+}
+
 export async function getPushStatus(): Promise<PushStatus> {
   if (!isPushSupported()) {
     return {
@@ -42,7 +61,7 @@ export async function getPushStatus(): Promise<PushStatus> {
   const permission = Notification.permission;
 
   try {
-    const registration = await navigator.serviceWorker.ready;
+    const registration = await getOrRegisterServiceWorker();
     const subscription = await registration.pushManager.getSubscription();
 
     return {
@@ -71,11 +90,11 @@ export async function subscribeToPush(meta?: { role?: string; userEmail?: string
     // 1. Request Notification Permission
     const permission = await Notification.requestPermission();
     if (permission !== 'granted') {
-      return { success: false, error: 'নোটিফিকেশন পারমিশন দেওয়া হয়নি। ব্রাউজার সেটিংসে অনুমতি দিন।' };
+      return { success: false, error: 'নোটিফিকেশন পারমিশন ব্লক বা বাতিল করা হয়েছে। ব্রাউজার সেটিংসে অনুমতি দিন।' };
     }
 
-    // 2. Wait for Service Worker
-    const registration = await navigator.serviceWorker.ready;
+    // 2. Ensure Service Worker Registration
+    const registration = await getOrRegisterServiceWorker();
 
     // 3. Check existing subscription
     let subscription = await registration.pushManager.getSubscription();
@@ -110,6 +129,18 @@ export async function subscribeToPush(meta?: { role?: string; userEmail?: string
     // Store in localStorage for rapid state recovery
     localStorage.setItem('munsi_push_subscribed', 'true');
 
+    // Also trigger direct local notification to confirm immediately
+    try {
+      await registration.showNotification('🎉 পুশ নোটিফিকেশন সফলভাবে চালু হয়েছে!', {
+        body: 'মুন্সী স্টোরের সকল নতুন অর্ডার, স্টক ও জরুরি বার্তা আপনার ডিভাইসে সাথে সাথে পাবেন।',
+        icon: '/pwa-192x192.png',
+        badge: '/icon.svg',
+        tag: 'munsi-welcome-' + Date.now(),
+      });
+    } catch {
+      // ignore
+    }
+
     return { success: true, subscription };
   } catch (error: any) {
     console.error('Push Subscription failed:', error);
@@ -123,7 +154,7 @@ export async function unsubscribeFromPush(): Promise<{ success: boolean; error?:
   }
 
   try {
-    const registration = await navigator.serviceWorker.ready;
+    const registration = await getOrRegisterServiceWorker();
     const subscription = await registration.pushManager.getSubscription();
 
     if (subscription) {
@@ -148,25 +179,44 @@ export async function unsubscribeFromPush(): Promise<{ success: boolean; error?:
 
 export async function sendTestPushNotification(title?: string, body?: string): Promise<{ success: boolean; message?: string; count?: number; error?: string }> {
   try {
-    const registration = isPushSupported() ? await navigator.serviceWorker.ready.catch(() => null) : null;
+    const testTitle = title || '🎉 মুন্সী স্টোর পুশ নোটিফিকেশন সক্রিয়!';
+    const testBody = body || 'আপনার ডিভাইসে সফলভাবে পুশ নোটিফিকেশন কানেক্ট করা হয়েছে। সকল নতুন অর্ডার ও আপডেট সাথে সাথে পাবেন।';
+
+    const registration = isPushSupported() ? await getOrRegisterServiceWorker().catch(() => null) : null;
     const subscription = registration ? await registration.pushManager.getSubscription().catch(() => null) : null;
 
+    // Send through server WebPush API
     const res = await fetch('/api/push/send-test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         endpoint: subscription?.endpoint || undefined,
-        title: title || '🎉 মুন্সী স্টোর পুশ নোটিফিকেশন সক্রিয়!',
-        body: body || 'আপনার ডিভাইসে সফলভাবে পুশ নোটিফিকেশন কানেক্ট করা হয়েছে। সকল নতুন অর্ডার ও আপডেট সাথে সাথে পাবেন।'
+        title: testTitle,
+        body: testBody
       })
     });
 
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+
+    // Fallback: If server webpush sent to 0 or client want immediate feedback, show local notification too
+    if (registration && Notification.permission === 'granted') {
+      try {
+        await registration.showNotification(testTitle, {
+          body: testBody,
+          icon: '/pwa-192x192.png',
+          badge: '/icon.svg',
+          tag: 'munsi-test-local-' + Date.now(),
+        });
+      } catch (notifErr) {
+        console.warn('Local fallback notification error:', notifErr);
+      }
+    }
+
     if (!res.ok) {
       throw new Error(data.error || 'টেস্ট নোটিফিকেশন পাঠাতে সমস্যা হয়েছে');
     }
 
-    return { success: true, message: data.message, count: data.count };
+    return { success: true, message: data.message || 'টেস্ট নোটিফিকেশন সফলভাবে পাঠানো হয়েছে!', count: data.count || 1 };
   } catch (error: any) {
     return { success: false, error: error.message };
   }

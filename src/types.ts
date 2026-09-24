@@ -161,5 +161,13 @@ export interface BusinessInfo {
   tagline: string;
   address: string;
   hotline: string;
+  email?: string;
+  bkashNumber?: string;
+  deliveryCharge?: number;
+  minOrderAmount?: number;
+  siteNotice?: string;
+  isNoticeActive?: boolean;
+  memoFooterNotice?: string;
 }
+
 

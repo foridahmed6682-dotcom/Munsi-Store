@@ -16,7 +16,7 @@ import {
   LogOut
 } from 'lucide-react';
 import { googleSignIn, logout, isMainSuperAdmin } from '../lib/firebase';
-import { UserProfile, UserRole } from '../types';
+import { UserProfile, UserRole, BusinessInfo } from '../types';
 
 export interface HeaderProps {
   isOnline: boolean;
@@ -34,6 +34,7 @@ export interface HeaderProps {
   activeRole?: UserRole;
   onSwitchRole?: (role: UserRole) => void;
   onOpenAdmin?: () => void;
+  businessInfo?: BusinessInfo;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -52,6 +53,7 @@ export const Header: React.FC<HeaderProps> = ({
   activeRole = 'customer',
   onSwitchRole,
   onOpenAdmin,
+  businessInfo,
 }) => {
   const [authLoading, setAuthLoading] = React.useState(false);
   const [showRoleSelector, setShowRoleSelector] = React.useState(false);
@@ -117,7 +119,7 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="min-w-0">
             <div className="flex items-center gap-2 relative">
               <h1 className="font-bold text-base sm:text-lg tracking-tight leading-tight truncate">
-                মুন্সী স্টোর <span className="text-emerald-300 font-normal text-xs sm:text-sm">| DSR অর্ডার বুকার</span>
+                {businessInfo?.banglaName || 'মুন্সী স্টোর'} <span className="text-emerald-300 font-normal text-xs sm:text-sm">| {businessInfo?.name || 'DSR অর্ডার বুকার'}</span>
               </h1>
               {/* Interactive Role Switch Badge - ONLY for verified Admin users */}
               {isActualAdmin ? (

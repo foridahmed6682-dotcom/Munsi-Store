@@ -53,8 +53,15 @@ import {
   deleteRouteFromCloud,
   saveDueCollectionToCloud,
   seedInitialCloudDataIfEmpty,
-  clearAllCloudMockData
+  clearAllCloudMockData,
+  subscribeToUserProfileDoc,
+  isMainSuperAdmin,
+  subscribeToCloudBusinessInfo
 } from './lib/firebase';
+import {
+  getBusinessInfo,
+  saveBusinessInfoLocal
+} from './lib/storage';
 import { syncOrdersToGoogleSheets, backupAllDataToGoogleDrive } from './lib/sheetsService';
 import {
   sendBackupToGmail,
@@ -77,7 +84,7 @@ import { RouteMapView } from './components/RouteMapView';
 import { AdminDashboardView } from './components/AdminDashboardView';
 import { AdminLoginGuard } from './components/AdminLoginGuard';
 import { MemoModal } from './components/MemoModal';
-import { Product, Shop, Order, UserProfile, PaymentMethod, UserRole, DueCollectionRecord, Category, AuthorizedUserEmail, Route } from './types';
+import { Product, Shop, Order, UserProfile, PaymentMethod, UserRole, DueCollectionRecord, Category, AuthorizedUserEmail, Route, BusinessInfo } from './types';
 import { CheckCircle2, AlertCircle, ExternalLink, LogIn, Lock } from 'lucide-react';
 import { usePWAInstall } from './hooks/usePWAInstall';
 import { notifyNewOrderPush } from './lib/pushService';
@@ -104,6 +111,7 @@ export default function App() {
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
   const [userProfile, setUserProfileState] = useState<UserProfile | null>(null);
   const [activeSimulatedRole, setActiveSimulatedRole] = useState<UserRole>('customer');
+  const [businessInfo, setBusinessInfo] = useState<BusinessInfo>(getBusinessInfo());
 
   // Sync state
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
@@ -179,8 +187,14 @@ export default function App() {
     let unsubscribeCategories: (() => void) | undefined;
     let unsubscribeRoutes: (() => void) | undefined;
     let unsubscribeAuthEmails: (() => void) | undefined;
+    let unsubscribeBizInfo: (() => void) | undefined;
 
     try {
+      unsubscribeBizInfo = subscribeToCloudBusinessInfo((cloudBiz) => {
+        setBusinessInfo(cloudBiz);
+        saveBusinessInfoLocal(cloudBiz);
+      });
+
       unsubscribeShops = subscribeToCloudShops((cloudShops) => {
         saveShops(cloudShops);
         setShops(cloudShops);
@@ -209,6 +223,37 @@ export default function App() {
       unsubscribeAuthEmails = subscribeToAuthorizedEmails((cloudAuths) => {
         saveAuthorizedEmails(cloudAuths);
         setAuthorizedEmails(cloudAuths);
+
+        // Immediate reactive role check for current logged in profile
+        const currentStoredUser = getUserProfile();
+        if (currentStoredUser?.email) {
+          const emailClean = currentStoredUser.email.toLowerCase().trim();
+          if (isMainSuperAdmin(emailClean)) {
+            if (currentStoredUser.role !== 'admin') {
+              const updated = { ...currentStoredUser, role: 'admin' as UserRole };
+              saveUserProfile(updated);
+              setUserProfileState(updated);
+              setActiveSimulatedRole('admin');
+            }
+          } else {
+            const matchedAuth = cloudAuths.find((a) => a.email.toLowerCase().trim() === emailClean);
+            const effectiveRole: UserRole = matchedAuth ? matchedAuth.role : 'customer';
+            if (currentStoredUser.role !== effectiveRole) {
+              const updated: UserProfile = {
+                ...currentStoredUser,
+                role: effectiveRole,
+                assignedRoute: matchedAuth?.assignedRoute || currentStoredUser.assignedRoute,
+              };
+              saveUserProfile(updated);
+              setUserProfileState(updated);
+              setActiveSimulatedRole(effectiveRole);
+
+              if (effectiveRole !== 'admin') {
+                setActiveTab((prev) => (prev === 'admin' ? 'order' : prev));
+              }
+            }
+          }
+        }
       });
     } catch (err) {
       console.warn('Firestore subscription initialized in offline mode:', err);
@@ -217,6 +262,7 @@ export default function App() {
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      if (unsubscribeBizInfo) unsubscribeBizInfo();
       if (unsubscribeShops) unsubscribeShops();
       if (unsubscribeProducts) unsubscribeProducts();
       if (unsubscribeOrders) unsubscribeOrders();
@@ -225,6 +271,34 @@ export default function App() {
       if (unsubscribeAuthEmails) unsubscribeAuthEmails();
     };
   }, [reloadData]);
+
+  // Real-time listener for active user profile document in Firestore
+  useEffect(() => {
+    if (!userProfile?.uid) return;
+    const unsub = subscribeToUserProfileDoc(userProfile.uid, (cloudUser) => {
+      if (cloudUser) {
+        const emailClean = cloudUser.email ? cloudUser.email.toLowerCase().trim() : '';
+        const effectiveRole: UserRole = isMainSuperAdmin(emailClean) ? 'admin' : (cloudUser.role || 'customer');
+        if (userProfile.role !== effectiveRole) {
+          const updated: UserProfile = {
+            ...userProfile,
+            role: effectiveRole,
+            displayName: cloudUser.displayName || userProfile.displayName,
+            assignedRoute: cloudUser.assignedRoute || userProfile.assignedRoute,
+          };
+          saveUserProfile(updated);
+          setUserProfileState(updated);
+          setActiveSimulatedRole(effectiveRole);
+          if (effectiveRole !== 'admin') {
+            setActiveTab((prev) => (prev === 'admin' ? 'order' : prev));
+          }
+        }
+      }
+    });
+    return () => {
+      unsub();
+    };
+  }, [userProfile?.uid, userProfile?.role]);
 
   // Order Creation Handler
   const handleOrderCreated = async (orderData: any) => {
@@ -724,6 +798,7 @@ export default function App() {
         activeRole={activeSimulatedRole}
         installPrompt={deferredPrompt}
         isAppInstalled={isAppInstalled}
+        businessInfo={businessInfo}
         onInstallApp={async () => {
           const res = await installPWA();
           if (res) {
@@ -743,6 +818,16 @@ export default function App() {
           }
         }}
       />
+
+      {/* Site-wide Admin Announcement Notice Banner */}
+      {businessInfo?.isNoticeActive !== false && businessInfo?.siteNotice && (
+        <div className="bg-emerald-900 text-emerald-100 text-xs font-medium py-1.5 px-3 border-b border-emerald-950 shadow-inner">
+          <div className="max-w-7xl mx-auto w-full flex items-center justify-center gap-2 text-center">
+            <span className="text-amber-400 font-bold shrink-0">📢 নোটিশ:</span>
+            <span className="truncate">{businessInfo.siteNotice}</span>
+          </div>
+        </div>
+      )}
 
       {/* Navigation Tabs (Sticky Desktop + Mobile Bottom) */}
       <Navigation

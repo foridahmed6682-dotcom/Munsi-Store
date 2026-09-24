@@ -60,6 +60,7 @@ import {
 import { fetchAllUsers, updateUserRoleAndRoute, getBusinessInfo, saveBusinessInfoToCloud, subscribeToCloudBusinessInfo } from '../lib/firebase';
 import { saveBusinessInfoLocal } from '../lib/storage';
 import { FullBackupData, parseAndValidateBackupJSON } from '../lib/backupService';
+import { PushNotificationManager } from './PushNotificationManager';
 
 interface AdminDashboardViewProps {
   products: Product[];
@@ -99,7 +100,7 @@ interface AdminDashboardViewProps {
   onRestoreFromBackupJSON?: (data: FullBackupData) => Promise<void>;
 }
 
-type AdminSubTab = 'overview' | 'categories' | 'products' | 'routes' | 'access' | 'analytics' | 'settings' | 'backup';
+type AdminSubTab = 'overview' | 'categories' | 'products' | 'routes' | 'access' | 'analytics' | 'push' | 'settings' | 'backup';
 
 const AVAILABLE_ROUTES = [
   'সব রুট (All Routes)',
@@ -230,11 +231,32 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
   // Authorized Email Modal State
   const [isAuthEmailModalOpen, setIsAuthEmailModalOpen] = useState(false);
+  const [editingAuthEmail, setEditingAuthEmail] = useState<AuthorizedUserEmail | null>(null);
   const [authEmailInput, setAuthEmailInput] = useState('');
   const [authRoleInput, setAuthRoleInput] = useState<UserRole>('sr');
   const [authNameInput, setAuthNameInput] = useState('');
   const [authPhoneInput, setAuthPhoneInput] = useState('');
   const [authRouteInput, setAuthRouteInput] = useState('সব রুট (All Routes)');
+
+  const openCreateAuthModal = () => {
+    setEditingAuthEmail(null);
+    setAuthEmailInput('');
+    setAuthRoleInput('sr');
+    setAuthNameInput('');
+    setAuthPhoneInput('');
+    setAuthRouteInput('সব রুট (All Routes)');
+    setIsAuthEmailModalOpen(true);
+  };
+
+  const openEditAuthModal = (auth: AuthorizedUserEmail) => {
+    setEditingAuthEmail(auth);
+    setAuthEmailInput(auth.email);
+    setAuthRoleInput(auth.role || 'sr');
+    setAuthNameInput(auth.fullName || '');
+    setAuthPhoneInput(auth.phone || '');
+    setAuthRouteInput(auth.assignedRoute || 'সব রুট (All Routes)');
+    setIsAuthEmailModalOpen(true);
+  };
 
   // Route Modal State
   const [isRouteModalOpen, setIsRouteModalOpen] = useState(false);
@@ -503,7 +525,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     setStockInDelta('');
   };
 
-  // Authorized Email Submit
+  // Authorized Email Submit (Add or Edit)
   const handleAuthEmailSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const emailClean = authEmailInput.trim().toLowerCase();
@@ -513,21 +535,27 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     }
 
     const safeId = emailClean.replace(/[@.]/g, '_');
-    const newAuth: AuthorizedUserEmail = {
+    const authPayload: AuthorizedUserEmail = {
       id: safeId,
       email: emailClean,
       role: authRoleInput,
       fullName: authNameInput.trim() || emailClean.split('@')[0],
       phone: authPhoneInput.trim() || undefined,
       assignedRoute: authRouteInput,
-      addedAt: new Date().toISOString(),
+      addedAt: editingAuthEmail?.addedAt || new Date().toISOString(),
       addedBy: currentUser?.email || 'admin',
     };
 
-    onAddAuthorizedEmail(newAuth);
-    showToast(`'${emailClean}' কে ${authRoleInput.toUpperCase()} রোলে অনুমতি দেওয়া হয়েছে!`, 'success');
+    if (editingAuthEmail) {
+      onUpdateAuthorizedEmail(authPayload);
+      showToast(`'${emailClean}' এর রোল '${authRoleInput.toUpperCase()}' আপডেট করা হয়েছে!`, 'success');
+    } else {
+      onAddAuthorizedEmail(authPayload);
+      showToast(`'${emailClean}' কে ${authRoleInput.toUpperCase()} রোলে অনুমতি দেওয়া হয়েছে!`, 'success');
+    }
 
     setIsAuthEmailModalOpen(false);
+    setEditingAuthEmail(null);
     setAuthEmailInput('');
     setAuthNameInput('');
     setAuthPhoneInput('');
@@ -742,6 +770,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         </button>
 
         <button
+          onClick={() => setSubTab('push')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+            subTab === 'push'
+              ? 'bg-purple-700 text-white shadow-sm'
+              : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100'
+          }`}
+        >
+          <BellRing className="w-4 h-4" />
+          <span>পুশ নোটিফিকেশন ব্রডকাস্ট 🔔</span>
+        </button>
+
+        <button
           onClick={() => setSubTab('settings')}
           className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
             subTab === 'settings'
@@ -750,7 +790,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           }`}
         >
           <Settings className="w-4 h-4" />
-          <span>দোকান ও মেমো সেটিংস</span>
+          <span>দোকান, ব্র্যান্ড ও নোটিশ সেটিংস</span>
         </button>
 
         <button
@@ -1336,15 +1376,23 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
           {/* Authorized Emails List */}
           <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden shadow-xs">
-            <div className="p-3.5 border-b border-neutral-200 flex items-center justify-between">
+            <div className="p-3.5 border-b border-neutral-200 flex items-center justify-between gap-3">
               <div>
-                <h4 className="font-bold text-xs text-neutral-900">
-                  অনুমোদিত স্টাফ ও রোল তালিকা ({authorizedEmails.length} জন)
+                <h4 className="font-bold text-xs text-neutral-900 flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-purple-700" />
+                  <span>অনুমোদিত স্টাফ ও রোল তালিকা ({authorizedEmails.length} জন)</span>
                 </h4>
                 <p className="text-[11px] text-neutral-500">
-                  এই ইমেইলগুলোর জন্য ব্যাকএন্ডে নির্ধারিত রোল সংরক্ষিত আছে
+                  রোল পরিবর্তন বা ডিলিট করলে সঙ্গে সঙ্গে ডাটাবেজে ও ইউজারের স্ক্রিনে কার্যকর হবে
                 </p>
               </div>
+              <button
+                onClick={openCreateAuthModal}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-bold text-xs shadow-xs transition-all active:scale-95 cursor-pointer shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>নতুন রোল যুক্ত করুন</span>
+              </button>
             </div>
 
             <div className="overflow-x-auto">
@@ -1360,7 +1408,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 </thead>
                 <tbody className="divide-y divide-neutral-200">
                   {authorizedEmails.map((auth) => {
-                    const isMainAdmin = auth.email.toLowerCase().trim() === 'foridahmed6682@gmail.com';
+                    const isMainAdmin = auth.email.toLowerCase().trim() === 'foridahmed6682@gmail.com' || auth.email.toLowerCase().trim() === 'ahmedmdforid39@gmail.com';
                     return (
                       <tr
                         key={auth.id || auth.email}
@@ -1387,7 +1435,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                           {isMainAdmin ? (
                             <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-purple-700 text-white inline-flex items-center gap-1 shadow-xs">
                               <ShieldCheck className="w-3.5 h-3.5" />
-                              <span>সুপার এডমিন (Super Admin)</span>
+                              <span>প্রধান এডমিন (Super Admin)</span>
                             </span>
                           ) : (
                             <select
@@ -1398,19 +1446,21 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                                   ...auth,
                                   role: newRole,
                                 });
-                                showToast(`'${auth.email}' এর রোল '${newRole.toUpperCase()}' করা হয়েছে`, 'success');
+                                showToast(`'${auth.email}' এর রোল সফলভাবে '${newRole.toUpperCase()}' করা হয়েছে (তাৎক্ষণিক কার্যকর)`, 'success');
                               }}
                               className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
                                 auth.role === 'admin'
                                   ? 'bg-purple-50 border-purple-300 text-purple-900'
                                   : auth.role === 'sr'
                                   ? 'bg-blue-50 border-blue-300 text-blue-900'
-                                  : 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                                  : auth.role === 'dsr'
+                                  ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                                  : 'bg-neutral-100 border-neutral-300 text-neutral-800'
                               }`}
                             >
-                              <option value="admin">এডমিন (Admin)</option>
-                              <option value="sr">এসআর (SR)</option>
-                              <option value="dsr">ডিএসআর (DSR)</option>
+                              <option value="admin">এডমিন (Admin - সুপার কন্ট্রোল)</option>
+                              <option value="sr">এসআর (SR - ফিল্ড সেলস)</option>
+                              <option value="dsr">ডিএসআর (DSR - ডেলিভারি সেলস)</option>
                               <option value="customer">কাস্টমার (Customer - সাধারণ ক্রেতা)</option>
                             </select>
                           )}
@@ -1429,14 +1479,21 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                           ) : (
                             <div className="inline-flex items-center gap-1">
                               <button
+                                onClick={() => openEditAuthModal(auth)}
+                                className="p-1.5 rounded-lg hover:bg-purple-50 text-neutral-500 hover:text-purple-700 transition-colors"
+                                title="রোল ও তথ্য এডিট করুন"
+                              >
+                                <Edit3 className="w-4 h-4" />
+                              </button>
+                              <button
                                 onClick={() => {
-                                  if (confirm(`আপনি কি '${auth.email}' এর পারমিশন বাতিল করতে চান?`)) {
+                                  if (confirm(`আপনি কি নিশ্চিতভাবে '${auth.email}' এর '${auth.role.toUpperCase()}' রোল মুছে ফেলতে চান? এটি ডিলিট করলে ইউজার সাধারণ কাস্টমারে পরিণত হবে এবং এডমিন বা কর্মী প্যানেলের এক্সেস অবিলম্বে বন্ধ হবে।`)) {
                                     onDeleteAuthorizedEmail(auth.email);
-                                    showToast(`'${auth.email}' এর এক্সেস বাতিল করা হয়েছে`, 'info');
+                                    showToast(`'${auth.email}' এর রোল সফলভাবে ডিলিট করা হয়েছে`, 'info');
                                   }
                                 }}
                                 className="p-1.5 rounded-lg hover:bg-rose-50 text-neutral-400 hover:text-rose-600 transition-colors"
-                                title="অনুমতি বাতিল করুন"
+                                title="রোল মুছে ফেলুন"
                               >
                                 <Trash2 className="w-4 h-4" />
                               </button>
@@ -1460,7 +1517,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                     ফায়ারবেস সক্রিয় ইউজার প্রোফাইল ({firebaseUsers.length} জন)
                   </h4>
                   <p className="text-[11px] text-neutral-500">
-                    লগইন করা ইউজারদের লাইভ ডাটাবেজ রেকর্ড
+                    লগইন করা ইউজারদের লাইভ ডাটাবেজ রেকর্ড - রোল পরিবর্তন সঙ্গে সঙ্গে কার্যকর হয়
                   </p>
                 </div>
                 <button
@@ -1481,35 +1538,68 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                       <th className="p-3">রোল পরিবর্তন</th>
                       <th className="p-3">রুট</th>
                       <th className="p-3">স্ট্যাটাস</th>
+                      <th className="p-3 text-right">রোল প্রত্যাহার</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-200">
-                    {firebaseUsers.map((u) => (
-                      <tr key={u.uid} className="hover:bg-neutral-50/80">
-                        <td className="p-3">
-                          <div className="font-bold text-neutral-900">{u.displayName || 'ইউজার'}</div>
-                          <div className="text-[11px] text-neutral-500 font-mono">{u.email}</div>
-                        </td>
-                        <td className="p-3">
-                          <select
-                            value={u.role}
-                            onChange={(e) => handleRoleQuickChange(u.uid, e.target.value as UserRole)}
-                            className="px-2 py-1 rounded-lg text-xs font-bold border border-neutral-300 bg-white"
-                          >
-                            <option value="admin">এডমিন (Admin)</option>
-                            <option value="sr">এসআর (SR)</option>
-                            <option value="dsr">ডিএসআর (DSR)</option>
-                            <option value="customer">কাস্টমার (Customer)</option>
-                          </select>
-                        </td>
-                        <td className="p-3 text-neutral-600 font-medium">{u.assignedRoute || 'সব রুট'}</td>
-                        <td className="p-3">
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                            সক্রিয়
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
+                    {firebaseUsers.map((u) => {
+                      const isMainAdmin = (u.email && (u.email.toLowerCase().trim() === 'foridahmed6682@gmail.com' || u.email.toLowerCase().trim() === 'ahmedmdforid39@gmail.com'));
+                      return (
+                        <tr key={u.uid} className="hover:bg-neutral-50/80">
+                          <td className="p-3">
+                            <div className="font-bold text-neutral-900 flex items-center gap-1.5">
+                              <span>{u.displayName || 'ইউজার'}</span>
+                              {isMainAdmin && (
+                                <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-200 text-amber-950">মেইন এডমিন</span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-neutral-500 font-mono">{u.email}</div>
+                          </td>
+                          <td className="p-3">
+                            {isMainAdmin ? (
+                              <span className="px-2 py-1 rounded text-xs font-bold bg-purple-100 text-purple-900">
+                                সুপার এডমিন
+                              </span>
+                            ) : (
+                              <select
+                                value={u.role}
+                                onChange={(e) => handleRoleQuickChange(u.uid, e.target.value as UserRole)}
+                                className="px-2 py-1 rounded-lg text-xs font-bold border border-neutral-300 bg-white"
+                              >
+                                <option value="admin">এডমিন (Admin)</option>
+                                <option value="sr">এসআর (SR)</option>
+                                <option value="dsr">ডিএসআর (DSR)</option>
+                                <option value="customer">কাস্টমার (Customer)</option>
+                              </select>
+                            )}
+                          </td>
+                          <td className="p-3 text-neutral-600 font-medium">{u.assignedRoute || 'সব রুট'}</td>
+                          <td className="p-3">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                              সক্রিয়
+                            </span>
+                          </td>
+                          <td className="p-3 text-right">
+                            {!isMainAdmin && (
+                              <button
+                                onClick={() => {
+                                  if (confirm(`আপনি কি '${u.email || u.displayName}' এর বিশেষ রোল প্রত্যাহার করে সাধারণ কাস্টমার করতে চান?`)) {
+                                    handleRoleQuickChange(u.uid, 'customer');
+                                    if (u.email) {
+                                      onDeleteAuthorizedEmail(u.email);
+                                    }
+                                  }
+                                }}
+                                className="p-1.5 rounded-lg hover:bg-rose-50 text-neutral-400 hover:text-rose-600 transition-colors"
+                                title="রোল প্রত্যাহার করুন"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1606,17 +1696,29 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         </div>
       )}
 
-      {/* SUB-TAB 5: SHOP & MEMO CONFIGURATION */}
-      {subTab === 'settings' && (
+      {/* SUB-TAB: PUSH NOTIFICATIONS BROADCAST HUB */}
+      {subTab === 'push' && (
         <div className="space-y-4 animate-fadeIn">
+          <PushNotificationManager
+            currentRole={activeSimulatedRole || 'admin'}
+            userEmail={currentUser?.email}
+            userName={currentUser?.displayName || 'এডমিন'}
+            onShowToast={(msg, type) => showToast(msg, type || 'info')}
+          />
+        </div>
+      )}
+
+      {/* SUB-TAB 5: SHOP, BRAND, E-COMMERCE & NOTICE CONFIGURATION */}
+      {subTab === 'settings' && (
+        <div className="space-y-5 animate-fadeIn">
           <div className="bg-white p-5 rounded-2xl border border-neutral-200 shadow-xs space-y-4">
             <div>
               <h2 className="text-base font-bold text-neutral-900 flex items-center gap-2">
                 <Settings className="w-5 h-5 text-emerald-600" />
-                <span>কোম্পানি, দোকান ও মেমো সেটিংস</span>
+                <span>কোম্পানি, দোকান ও ওয়েবসাইট যাবতীয় সেটিংস</span>
               </h2>
               <p className="text-xs text-neutral-500">
-                এখানে আপনার ব্যবসা বা ডিস্ট্রিবিউটর হাউসের নাম ও লোকেশন সেট করুন। এই বিবরণটি প্রতিটি মেমোর উপরে প্রিন্ট ও ডাউনলোড ফাইলে স্বয়ংক্রিয়ভাবে জেনারেট হবে।
+                এখানে আপনার ব্যবসা, সাইট ব্যানার নোটিশ, হোম ডেলিভারি চার্জ ও পেমেন্ট নম্বর কাস্টমাইজ করুন। যা পরিবর্তন করবেন তা সাথে সাথে ক্লাউডে ও পুরো সাইটে কার্যকর হবে।
               </p>
             </div>
 
@@ -1627,94 +1729,222 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   setIsSavingBiz(true);
                   await saveBusinessInfoToCloud(bizInfo);
                   saveBusinessInfoLocal(bizInfo);
-                  showToast('মেমো ও বিজনেস সেটিংস সফলভাবে সেভ হয়েছে!', 'success');
+                  showToast('সকল সেটিংস সফলভাবে ক্লাউডে ও সাইটে সেভ হয়েছে!', 'success');
                 } catch (err) {
                   showToast('সেটিংস সেভ করতে ব্যর্থ হয়েছে', 'error');
                 } finally {
                   setIsSavingBiz(false);
                 }
               }}
-              className="space-y-4"
+              className="space-y-5"
             >
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-neutral-700 mb-1">
-                    প্রতিষ্ঠানের নাম (বাংলা) *
+              {/* Section 1: Business Identity */}
+              <div className="space-y-3 pt-1">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1.5">
+                  <Store className="w-4 h-4" />
+                  <span>১. প্রতিষ্ঠান ও ব্র্যান্ড পরিচিতি</span>
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">
+                      প্রতিষ্ঠানের নাম (বাংলা) *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={bizInfo.banglaName || ''}
+                      onChange={(e) => setBizInfo({ ...bizInfo, banglaName: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600"
+                      placeholder="যেমন: মুন্সী স্টোর"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">
+                      প্রতিষ্ঠানের নাম (ইংরেজি) *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={bizInfo.name || ''}
+                      onChange={(e) => setBizInfo({ ...bizInfo, name: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600"
+                      placeholder="যেমন: Munsi Store & FMCG"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">
+                      মেমো সাবটাইটেল / স্লোগান *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={bizInfo.tagline || ''}
+                      onChange={(e) => setBizInfo({ ...bizInfo, tagline: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600"
+                      placeholder="যেমন: পাইকারি ও খুচরা দ্রুত সাপ্লাই এবং ফিল্ড অর্ডার"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">
+                      হটলাইন / মোবাইল নম্বর *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={bizInfo.hotline || ''}
+                      onChange={(e) => setBizInfo({ ...bizInfo, hotline: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600 font-mono"
+                      placeholder="যেমন: ০১৭১১-XXXXXX"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">
+                      ইমেইল এড্রেস (ঐচ্ছিক)
+                    </label>
+                    <input
+                      type="email"
+                      value={bizInfo.email || ''}
+                      onChange={(e) => setBizInfo({ ...bizInfo, email: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600 font-mono"
+                      placeholder="যেমন: info@munsistore.com"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">
+                      ব্যবসার ঠিকানা বা লোকেশন বিবরণ *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={bizInfo.address || ''}
+                      onChange={(e) => setBizInfo({ ...bizInfo, address: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600"
+                      placeholder="যেমন: চকবাজার / স্টেশন রোড, ঢাকা"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 2: Online Customer & E-commerce Settings */}
+              <div className="space-y-3 pt-3 border-t border-neutral-200">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1.5">
+                  <Truck className="w-4 h-4" />
+                  <span>২. সাধারণ কাস্টমার ও ডেলিভারি সেটিংস</span>
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">
+                      হোম ডেলিভারি চার্জ (৳)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={bizInfo.deliveryCharge !== undefined ? bizInfo.deliveryCharge : 60}
+                      onChange={(e) => setBizInfo({ ...bizInfo, deliveryCharge: parseFloat(e.target.value) || 0 })}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600 font-mono"
+                      placeholder="যেমন: 60"
+                    />
+                    <span className="text-[10px] text-neutral-500">ফ্রি ডেলিভারি হলে 0 লিখুন</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">
+                      নূন্যতম অর্ডার মূল্য (৳)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={bizInfo.minOrderAmount !== undefined ? bizInfo.minOrderAmount : 500}
+                      onChange={(e) => setBizInfo({ ...bizInfo, minOrderAmount: parseFloat(e.target.value) || 0 })}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600 font-mono"
+                      placeholder="যেমন: 500"
+                    />
+                    <span className="text-[10px] text-neutral-500">অনলাইনে সর্বনিম্ন অর্ডার লিমিট</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">
+                      বিকাশ / নগদ পেমেন্ট নম্বর
+                    </label>
+                    <input
+                      type="text"
+                      value={bizInfo.bkashNumber || ''}
+                      onChange={(e) => setBizInfo({ ...bizInfo, bkashNumber: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600 font-mono"
+                      placeholder="যেমন: 01711000000"
+                    />
+                    <span className="text-[10px] text-neutral-500">চেকআউট পেজে কাস্টমারদের দেখাবে</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 3: Site Notice Banner */}
+              <div className="space-y-3 pt-3 border-t border-neutral-200">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1.5">
+                    <Bell className="w-4 h-4" />
+                    <span>৩. সাইটব্যাপী নোটিশ বা জরুরি বার্তা</span>
+                  </h3>
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-neutral-700">
+                    <input
+                      type="checkbox"
+                      checked={bizInfo.isNoticeActive !== false}
+                      onChange={(e) => setBizInfo({ ...bizInfo, isNoticeActive: e.target.checked })}
+                      className="w-4 h-4 text-emerald-600 rounded"
+                    />
+                    <span>সাইটের শীর্ষে নোটিশ দেখান</span>
                   </label>
-                  <input
-                    type="text"
-                    required
-                    value={bizInfo.banglaName}
-                    onChange={(e) => setBizInfo({ ...bizInfo, banglaName: e.target.value })}
+                </div>
+                <div>
+                  <textarea
+                    rows={2}
+                    value={bizInfo.siteNotice || ''}
+                    onChange={(e) => setBizInfo({ ...bizInfo, siteNotice: e.target.value })}
                     className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600"
-                    placeholder="যেমন: মুন্সী স্টোর"
+                    placeholder="যেমন: 🚚 সকল অনলাইন ও রিটেইল অর্ডার ২৪ ঘণ্টার মধ্যে বিশ্বস্ত ডেলিভারি করা হয়!"
                   />
                 </div>
+              </div>
 
+              {/* Section 4: Memo Terms & Conditions */}
+              <div className="space-y-3 pt-3 border-t border-neutral-200">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1.5">
+                  <FileText className="w-4 h-4" />
+                  <span>৪. মেমো ও ইনভয়েস ফুটার শর্তাবলী</span>
+                </h3>
                 <div>
-                  <label className="block text-xs font-bold text-neutral-700 mb-1">
-                    প্রতিষ্ঠানের নাম (ইংরেজি) *
-                  </label>
                   <input
                     type="text"
-                    required
-                    value={bizInfo.name}
-                    onChange={(e) => setBizInfo({ ...bizInfo, name: e.target.value })}
+                    value={bizInfo.memoFooterNotice || ''}
+                    onChange={(e) => setBizInfo({ ...bizInfo, memoFooterNotice: e.target.value })}
                     className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600"
-                    placeholder="যেমন: Munsi Store"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-neutral-700 mb-1">
-                    মেমো সাবটাইটেল / স্লোগান *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={bizInfo.tagline}
-                    onChange={(e) => setBizInfo({ ...bizInfo, tagline: e.target.value })}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600"
-                    placeholder="যেমন: ডিস্ট্রিবিউশন ও হোলসেল অর্ডার বুকিং মেমো"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-neutral-700 mb-1">
-                    হটলাইন / মোবাইল নম্বর *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={bizInfo.hotline}
-                    onChange={(e) => setBizInfo({ ...bizInfo, hotline: e.target.value })}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600 font-mono"
-                    placeholder="যেমন: ০১৭১১-২২৩৩৪৪"
-                  />
-                </div>
-
-                <div className="md:col-span-2">
-                  <label className="block text-xs font-bold text-neutral-700 mb-1">
-                    ব্যবসার ঠিকানা বা লোকেশন বিবরণ *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={bizInfo.address}
-                    onChange={(e) => setBizInfo({ ...bizInfo, address: e.target.value })}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600"
-                    placeholder="যেমন: চকবাজার / ঢাকা"
+                    placeholder="যেমন: ধন্যবাদ! বিক্রিত মাল ফেরত নেওয়া হয় না। যেকোনো প্রয়োজনে হটলাইনে যোগাযোগ করুন।"
                   />
                 </div>
               </div>
 
               {/* Live Preview Card */}
-              <div className="p-4 bg-neutral-50 rounded-2xl border border-neutral-200">
-                <span className="text-[10px] uppercase tracking-wider font-extrabold text-neutral-400 block mb-2">
-                  লাইভ মেমো স্লিপ হেডার প্রিভিউ (Live Preview)
+              <div className="p-4 bg-neutral-50 rounded-2xl border border-neutral-200 space-y-3">
+                <span className="text-[10px] uppercase tracking-wider font-extrabold text-neutral-400 block">
+                  লাইভ প্রিভিউ (Live Preview)
                 </span>
+                
+                {/* Notice Banner Preview */}
+                {bizInfo.isNoticeActive !== false && bizInfo.siteNotice && (
+                  <div className="p-2.5 bg-emerald-700 text-white text-xs font-medium rounded-xl flex items-center gap-2 shadow-xs">
+                    <span className="text-sm">📢</span>
+                    <span className="truncate">{bizInfo.siteNotice}</span>
+                  </div>
+                )}
+
+                {/* Memo Header Preview */}
                 <div className="text-center p-4 bg-white rounded-xl border border-neutral-300/60 max-w-sm mx-auto shadow-xs">
-                  <h3 className="text-base font-extrabold text-neutral-900">{bizInfo.banglaName || '---'}</h3>
+                  <h3 className="text-base font-extrabold text-neutral-900">{bizInfo.banglaName || 'মুন্সী স্টোর'}</h3>
                   <p className="text-[10px] text-neutral-500 font-medium mt-0.5">{bizInfo.tagline || '---'}</p>
                   <p className="text-[9px] text-neutral-400 mt-0.5">{bizInfo.address || '---'} | হটলাইন: {bizInfo.hotline || '---'}</p>
                 </div>
@@ -1724,9 +1954,10 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 <button
                   type="submit"
                   disabled={isSavingBiz}
-                  className="px-6 py-2.5 bg-emerald-800 hover:bg-emerald-700 disabled:bg-neutral-300 text-white font-bold text-xs rounded-xl shadow-md transition-all active:scale-95"
+                  className="px-6 py-2.5 bg-emerald-800 hover:bg-emerald-700 disabled:bg-neutral-300 text-white font-bold text-xs rounded-xl shadow-md transition-all active:scale-95 flex items-center gap-1.5"
                 >
-                  {isSavingBiz ? 'সেভ হচ্ছে...' : 'সেটিংস সংরক্ষণ করুন'}
+                  <Save className="w-4 h-4" />
+                  <span>{isSavingBiz ? 'সেভ হচ্ছে...' : 'সকল সেটিংস সংরক্ষণ করুন'}</span>
                 </button>
               </div>
             </form>
@@ -1751,6 +1982,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   </p>
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={() => setSubTab('push')}
+                className="px-3 py-1.5 bg-purple-700 hover:bg-purple-800 text-white text-xs font-bold rounded-xl shadow-xs flex items-center gap-1"
+              >
+                <Send className="w-3 h-3" />
+                <span>নোটিফিকেশন পাঠান</span>
+              </button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
@@ -2592,10 +2831,13 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             <div className="flex items-center justify-between pb-3 border-b border-neutral-100">
               <h3 className="font-bold text-sm text-neutral-900 flex items-center gap-2">
                 <ShieldCheck className="w-4 h-4 text-purple-600" />
-                <span>নতুন স্টাফ মেইল ও রোল অনুমতি দিন</span>
+                <span>{editingAuthEmail ? 'স্টাফ ও রোল তথ্য পরিবর্তন করুন' : 'নতুন স্টাফ মেইল ও রোল অনুমতি দিন'}</span>
               </h3>
               <button
-                onClick={() => setIsAuthEmailModalOpen(false)}
+                onClick={() => {
+                  setIsAuthEmailModalOpen(false);
+                  setEditingAuthEmail(null);
+                }}
                 className="p-1 text-neutral-400 hover:text-neutral-700"
               >
                 <X className="w-5 h-5" />
@@ -2613,10 +2855,15 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   placeholder="e.g. staff.sr@gmail.com"
                   value={authEmailInput}
                   onChange={(e) => setAuthEmailInput(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-purple-600 font-mono"
+                  disabled={Boolean(editingAuthEmail)}
+                  className={`w-full px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-purple-600 font-mono ${
+                    editingAuthEmail ? 'bg-neutral-100 text-neutral-500 cursor-not-allowed' : ''
+                  }`}
                 />
                 <span className="text-[10px] text-neutral-500 mt-1 block">
-                  কর্মী যখন এই মেইল দিয়ে গুগল সাইন-ইন করবেন, সে সরাসরি নিচের নির্ধারিত রোল পেয়ে যাবেন।
+                  {editingAuthEmail
+                    ? 'এই ইমেইলটির ভূমিকা ও রোল পরিবর্তন নিচে থেকে নির্বাচন করে সেভ করুন।'
+                    : 'কর্মী যখন এই মেইল দিয়ে গুগল সাইন-ইন করবেন, সে সরাসরি নিচের নির্ধারিত রোল পেয়ে যাবেন।'}
                 </span>
               </div>
 
@@ -2686,16 +2933,19 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               <div className="pt-2 flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setIsAuthEmailModalOpen(false)}
+                  onClick={() => {
+                    setIsAuthEmailModalOpen(false);
+                    setEditingAuthEmail(null);
+                  }}
                   className="px-4 py-2 rounded-xl text-xs font-bold text-neutral-600 hover:bg-neutral-100"
                 >
                   বাতিল
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-xl text-xs font-bold bg-purple-700 hover:bg-purple-800 text-white shadow-sm"
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-purple-700 hover:bg-purple-800 text-white shadow-sm transition-all"
                 >
-                  অনুমতি যুক্ত করুন
+                  {editingAuthEmail ? 'রোল আপডেট সেভ করুন' : 'অনুমতি যুক্ত করুন'}
                 </button>
               </div>
             </form>
