@@ -23,7 +23,7 @@ import {
   addDoc
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { AppUser, UserRole, Shop, Product, Order, DueCollectionRecord, Category, AuthorizedUserEmail, Route, BusinessInfo } from '../types';
+import { AppUser, UserRole, Shop, Product, Order, DueCollectionRecord, Category, AuthorizedUserEmail, Route, BusinessInfo, CustomerDeliveryAddress } from '../types';
 import {
   DEFAULT_CATEGORIES,
   DEFAULT_AUTHORIZED_EMAILS,
@@ -240,6 +240,24 @@ async function syncUserProfileToCloud(firebaseUser: User): Promise<AppUser> {
   }
 
   return appUser;
+}
+
+// Save customer delivery address to Firestore user profile
+export async function saveCustomerAddressToCloud(uid: string, address: CustomerDeliveryAddress): Promise<void> {
+  if (!uid) return;
+  try {
+    const userDocRef = doc(db, 'users', uid);
+    await setDoc(userDocRef, {
+      deliveryAddress: {
+        ...address,
+        updatedAt: new Date().toISOString()
+      },
+      phone: address.phone || undefined,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+  } catch (err) {
+    console.warn('Failed to save customer delivery address to Firestore:', err);
+  }
 }
 
 // 1. Google Sign-in for normal login

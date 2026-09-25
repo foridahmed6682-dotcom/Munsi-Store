@@ -137,9 +137,12 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  // Guard against non-admin viewing admin tab: immediately navigate back to 'order'
+  // Guard against unauthorized tabs
   useEffect(() => {
     if (activeTab === 'admin' && activeSimulatedRole !== 'admin') {
+      setActiveTab('order');
+    }
+    if (activeSimulatedRole !== 'customer' && (activeTab === 'cart' || activeTab === 'account')) {
       setActiveTab('order');
     }
   }, [activeTab, activeSimulatedRole]);
@@ -891,150 +894,165 @@ export default function App() {
           onShowToast={(msg, type) => showToast(msg, type || 'info')}
         />
 
-        {activeTab === 'order' && (
-          activeSimulatedRole === 'customer' ? (
-            <CustomerStoreView
-              products={products}
-              categories={categories}
-              onOrderCreated={handleOrderCreated}
-              currentUser={userProfile}
-              businessInfo={businessInfo}
-              businessName={businessInfo?.banglaName || businessInfo?.name}
-              hotline={businessInfo?.hotline}
-              onViewMemo={(order) => {
-                setSelectedMemoOrder(order);
-                setIsMemoOpen(true);
-              }}
-              pastOrders={orders}
-            />
-          ) : (
-            <OrderBookingView
-              products={products}
-              shops={shops}
-              routes={routes}
-              selectedShopIdProp={targetOrderShopId}
-              onOrderCreated={handleOrderCreated}
-              onAddShop={handleAddShop}
-              onCartCountChange={(count) => setCartCount(count)}
-            />
-          )
-        )}
-
-        {activeTab === 'orders' && (
-          <OrdersListView
-            orders={orders}
+        {activeSimulatedRole === 'customer' ? (
+          <CustomerStoreView
+            products={products}
+            categories={categories}
+            onOrderCreated={handleOrderCreated}
+            currentUser={userProfile}
+            businessInfo={businessInfo}
+            businessName={businessInfo?.banglaName || businessInfo?.name}
+            hotline={businessInfo?.hotline}
             onViewMemo={(order) => {
               setSelectedMemoOrder(order);
               setIsMemoOpen(true);
             }}
-            onUpdateDeliveryStatus={handleUpdateDeliveryStatus}
-            onSyncWithSheets={handleSyncWithSheets}
-            onBackupToDrive={handleBackupToDrive}
-            onSendEmailBackup={handleSendEmailBackup}
-            onDownloadOrdersCSV={handleDownloadOrdersCSV}
-            isSyncing={isSyncing}
-            spreadsheetUrl={spreadsheetUrl}
-            lastDriveBackupLink={lastDriveBackupLink}
+            pastOrders={orders}
+            activeCustomerTab={
+              activeTab === 'cart'
+                ? 'cart'
+                : activeTab === 'orders'
+                ? 'orders'
+                : activeTab === 'account'
+                ? 'account'
+                : 'order'
+            }
+            onCustomerTabChange={(tab) => {
+              setActiveTab(tab as NavTab);
+            }}
+            onCartCountChange={(count) => setCartCount(count)}
           />
-        )}
+        ) : (
+          <>
+            {activeTab === 'order' && (
+              <OrderBookingView
+                products={products}
+                shops={shops}
+                routes={routes}
+                selectedShopIdProp={targetOrderShopId}
+                onOrderCreated={handleOrderCreated}
+                onAddShop={handleAddShop}
+                onCartCountChange={(count) => setCartCount(count)}
+              />
+            )}
 
-        {activeTab === 'shops' && (
-          <ShopsListView
-            shops={shops}
-            routes={routes}
-            onAddShop={handleAddShop}
-            onRecordDuePayment={handleRecordDuePayment}
-            onSelectShopForOrder={(shopId) => {
-              setTargetOrderShopId(shopId);
-              setActiveTab('order');
-            }}
-            onOpenMapForShop={(shopId) => {
-              setTargetMapShopId(shopId);
-              setActiveTab('map');
-            }}
-            isAdmin={activeSimulatedRole === 'admin'}
-            onUpdateShop={handleUpdateShop}
-            onDeleteShop={handleDeleteShop}
-          />
-        )}
+            {activeTab === 'orders' && (
+              <OrdersListView
+                orders={orders}
+                onViewMemo={(order) => {
+                  setSelectedMemoOrder(order);
+                  setIsMemoOpen(true);
+                }}
+                onUpdateDeliveryStatus={handleUpdateDeliveryStatus}
+                onSyncWithSheets={handleSyncWithSheets}
+                onBackupToDrive={handleBackupToDrive}
+                onSendEmailBackup={handleSendEmailBackup}
+                onDownloadOrdersCSV={handleDownloadOrdersCSV}
+                isSyncing={isSyncing}
+                spreadsheetUrl={spreadsheetUrl}
+                lastDriveBackupLink={lastDriveBackupLink}
+              />
+            )}
 
-        {activeTab === 'map' && (
-          <RouteMapView
-            shops={shops}
-            routes={routes}
-            targetShopId={targetMapShopId}
-            onClearTargetShop={() => setTargetMapShopId(null)}
-            onSelectShopForOrder={(shopId) => {
-              setTargetOrderShopId(shopId);
-              setActiveTab('order');
-            }}
-            onRecordDuePayment={handleRecordDuePayment}
-            onUpdateShopCoordinates={(shopId, lat, lng) => {
-              const targetShop = shops.find((s) => s.id === shopId);
-              if (targetShop) {
-                const updatedShop = { ...targetShop, lat, lng };
-                saveShop(updatedShop);
-                saveShopToCloud(updatedShop);
-                setShops((prev) => prev.map((s) => (s.id === shopId ? updatedShop : s)));
-                showToast(`'${targetShop.name}' এর বর্তমান জিপিএস লোকেশন আপডেট করা হয়েছে`, 'success');
-              }
-            }}
-          />
-        )}
+            {activeTab === 'shops' && (
+              <ShopsListView
+                shops={shops}
+                routes={routes}
+                onAddShop={handleAddShop}
+                onRecordDuePayment={handleRecordDuePayment}
+                onSelectShopForOrder={(shopId) => {
+                  setTargetOrderShopId(shopId);
+                  setActiveTab('order');
+                }}
+                onOpenMapForShop={(shopId) => {
+                  setTargetMapShopId(shopId);
+                  setActiveTab('map');
+                }}
+                isAdmin={activeSimulatedRole === 'admin'}
+                onUpdateShop={handleUpdateShop}
+                onDeleteShop={handleDeleteShop}
+              />
+            )}
 
-        {activeTab === 'inventory' && (
-          <InventoryView
-            products={products}
-            categoriesList={categories}
-            onAddProduct={handleAddProduct}
-            onUpdateProduct={handleUpdateProduct}
-            onDeleteProduct={handleDeleteProduct}
-            onAdjustStock={handleAdjustStock}
-            onCleanAllMockData={handleCleanAllMockData}
-          />
-        )}
+            {activeTab === 'map' && (
+              <RouteMapView
+                shops={shops}
+                routes={routes}
+                targetShopId={targetMapShopId}
+                onClearTargetShop={() => setTargetMapShopId(null)}
+                onSelectShopForOrder={(shopId) => {
+                  setTargetOrderShopId(shopId);
+                  setActiveTab('order');
+                }}
+                onRecordDuePayment={handleRecordDuePayment}
+                onUpdateShopCoordinates={(shopId, lat, lng) => {
+                  const targetShop = shops.find((s) => s.id === shopId);
+                  if (targetShop) {
+                    const updatedShop = { ...targetShop, lat, lng };
+                    saveShop(updatedShop);
+                    saveShopToCloud(updatedShop);
+                    setShops((prev) => prev.map((s) => (s.id === shopId ? updatedShop : s)));
+                    showToast(`'${targetShop.name}' এর বর্তমান জিপিএস লোকেশন আপডেট করা হয়েছে`, 'success');
+                  }
+                }}
+              />
+            )}
 
-        {activeTab === 'admin' && activeSimulatedRole === 'admin' && (
-          <AdminDashboardView
-            products={products}
-            shops={shops}
-            orders={orders}
-            categories={categories}
-            authorizedEmails={authorizedEmails}
-            routes={routes}
-            currentUser={userProfile}
-            activeSimulatedRole={activeSimulatedRole}
-            onAddProduct={handleAddProduct}
-            onUpdateProduct={handleUpdateProduct}
-            onDeleteProduct={handleDeleteProduct}
-            onAdjustStock={handleAdjustStock}
-            onAddCategory={handleAddCategory}
-            onUpdateCategory={handleUpdateCategory}
-            onDeleteCategory={handleDeleteCategory}
-            onAddRoute={handleAddRoute}
-            onUpdateRoute={handleUpdateRoute}
-            onDeleteRoute={handleDeleteRoute}
-            onAddAuthorizedEmail={handleAddAuthorizedEmail}
-            onUpdateAuthorizedEmail={handleUpdateAuthorizedEmail}
-            onDeleteAuthorizedEmail={handleDeleteAuthorizedEmail}
-            onSimulatedRoleChange={(role) => {
-              setActiveSimulatedRole(role);
-              showToast(`${role === 'admin' ? 'এডমিন' : role === 'sr' ? 'এসআর' : 'ডিএসআর'} রোল ভিউ সক্রিয়`, 'info');
-            }}
-            onSyncWithSheets={handleSyncWithSheets}
-            onBackupToDrive={handleBackupToDrive}
-            isSyncing={isSyncing}
-            spreadsheetUrl={spreadsheetUrl}
-            lastDriveBackupLink={lastDriveBackupLink}
-            onNavigateTab={(tab) => setActiveTab(tab)}
-            onCleanAllMockData={handleCleanAllMockData}
-            onSendEmailBackup={handleSendEmailBackup}
-            onDownloadFullBackupJSON={handleDownloadFullBackupJSON}
-            onDownloadOrdersCSV={handleDownloadOrdersCSV}
-            onDownloadInventoryCSV={handleDownloadInventoryCSV}
-            onDownloadShopsCSV={handleDownloadShopsCSV}
-            onRestoreFromBackupJSON={handleRestoreFromBackupJSON}
-          />
+            {activeTab === 'inventory' && (
+              <InventoryView
+                products={products}
+                categoriesList={categories}
+                onAddProduct={handleAddProduct}
+                onUpdateProduct={handleUpdateProduct}
+                onDeleteProduct={handleDeleteProduct}
+                onAdjustStock={handleAdjustStock}
+                onCleanAllMockData={handleCleanAllMockData}
+              />
+            )}
+
+            {activeTab === 'admin' && activeSimulatedRole === 'admin' && (
+              <AdminDashboardView
+                products={products}
+                shops={shops}
+                orders={orders}
+                categories={categories}
+                authorizedEmails={authorizedEmails}
+                routes={routes}
+                currentUser={userProfile}
+                activeSimulatedRole={activeSimulatedRole}
+                onAddProduct={handleAddProduct}
+                onUpdateProduct={handleUpdateProduct}
+                onDeleteProduct={handleDeleteProduct}
+                onAdjustStock={handleAdjustStock}
+                onAddCategory={handleAddCategory}
+                onUpdateCategory={handleUpdateCategory}
+                onDeleteCategory={handleDeleteCategory}
+                onAddRoute={handleAddRoute}
+                onUpdateRoute={handleUpdateRoute}
+                onDeleteRoute={handleDeleteRoute}
+                onAddAuthorizedEmail={handleAddAuthorizedEmail}
+                onUpdateAuthorizedEmail={handleUpdateAuthorizedEmail}
+                onDeleteAuthorizedEmail={handleDeleteAuthorizedEmail}
+                onSimulatedRoleChange={(role) => {
+                  setActiveSimulatedRole(role);
+                  showToast(`${role === 'admin' ? 'এডমিন' : role === 'sr' ? 'এসআর' : 'ডিএসআর'} রোল ভিউ সক্রিয়`, 'info');
+                }}
+                onSyncWithSheets={handleSyncWithSheets}
+                onBackupToDrive={handleBackupToDrive}
+                isSyncing={isSyncing}
+                spreadsheetUrl={spreadsheetUrl}
+                lastDriveBackupLink={lastDriveBackupLink}
+                onNavigateTab={(tab) => setActiveTab(tab)}
+                onCleanAllMockData={handleCleanAllMockData}
+                onSendEmailBackup={handleSendEmailBackup}
+                onDownloadFullBackupJSON={handleDownloadFullBackupJSON}
+                onDownloadOrdersCSV={handleDownloadOrdersCSV}
+                onDownloadInventoryCSV={handleDownloadInventoryCSV}
+                onDownloadShopsCSV={handleDownloadShopsCSV}
+                onRestoreFromBackupJSON={handleRestoreFromBackupJSON}
+              />
+            )}
+          </>
         )}
       </main>
 

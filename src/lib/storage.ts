@@ -1,4 +1,4 @@
-import { Product, Shop, Order, DueCollectionRecord, DailyMetrics, Category, AuthorizedUserEmail, Route, BusinessInfo } from '../types';
+import { Product, Shop, Order, DueCollectionRecord, DailyMetrics, Category, AuthorizedUserEmail, Route, BusinessInfo, CustomerDeliveryAddress } from '../types';
 
 const STORAGE_KEYS = {
   SHOPS: 'dsr_shops_v1',
@@ -16,6 +16,7 @@ const STORAGE_KEYS = {
   DELETED_ORDERS: 'dsr_deleted_orders_v1',
   DELETED_CATEGORIES: 'dsr_deleted_categories_v1',
   DELETED_ROUTES: 'dsr_deleted_routes_v1',
+  CUSTOMER_DELIVERY_ADDRESS: 'munsi_customer_delivery_address_v1',
 };
 
 export const DEFAULT_BUSINESS_INFO: BusinessInfo = {
@@ -824,3 +825,35 @@ export function resetToDemoData() {
   localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify([]));
   localStorage.removeItem(STORAGE_KEYS.COLLECTIONS);
 }
+
+// Customer Saved Delivery Address Management
+export function getCustomerDeliveryAddress(): CustomerDeliveryAddress | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.CUSTOMER_DELIVERY_ADDRESS);
+    return raw ? JSON.parse(raw) : null;
+  } catch (err) {
+    console.warn('Failed to parse customer delivery address from localStorage:', err);
+    return null;
+  }
+}
+
+export function saveCustomerDeliveryAddress(address: CustomerDeliveryAddress): void {
+  try {
+    const dataWithTime = {
+      ...address,
+      updatedAt: new Date().toISOString(),
+    };
+    localStorage.setItem(STORAGE_KEYS.CUSTOMER_DELIVERY_ADDRESS, JSON.stringify(dataWithTime));
+  } catch (err) {
+    console.error('Failed to save customer delivery address to localStorage:', err);
+  }
+}
+
+export function deleteCustomerDeliveryAddress(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEYS.CUSTOMER_DELIVERY_ADDRESS);
+  } catch (err) {
+    console.error('Failed to remove customer delivery address from localStorage:', err);
+  }
+}
+

@@ -1,6 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   ShoppingBag,
+  ShoppingCart,
   Search,
   Plus,
   Minus,
@@ -25,10 +26,15 @@ import {
   AlertCircle,
   Copy,
   Smartphone,
-  Building
+  Building,
+  User,
+  Edit3,
+  Bookmark,
+  LogIn
 } from 'lucide-react';
-import { Product, Order, OrderItem, Category, PaymentMethod, BusinessInfo } from '../types';
-import { getBusinessInfo, DEFAULT_BUSINESS_INFO } from '../lib/storage';
+import { Product, Order, OrderItem, Category, PaymentMethod, BusinessInfo, CustomerDeliveryAddress } from '../types';
+import { getBusinessInfo, DEFAULT_BUSINESS_INFO, getCustomerDeliveryAddress, saveCustomerDeliveryAddress, deleteCustomerDeliveryAddress } from '../lib/storage';
+import { saveCustomerAddressToCloud, signInWithGoogle } from '../lib/firebase';
 
 interface CustomerStoreViewProps {
   products: Product[];
@@ -40,6 +46,9 @@ interface CustomerStoreViewProps {
   onViewMemo?: (order: Order) => void;
   pastOrders?: Order[];
   businessInfo?: BusinessInfo;
+  activeCustomerTab?: 'order' | 'cart' | 'orders' | 'account';
+  onCustomerTabChange?: (tab: 'order' | 'cart' | 'orders' | 'account') => void;
+  onCartCountChange?: (count: number) => void;
 }
 
 export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
@@ -52,25 +61,117 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
   onViewMemo,
   pastOrders = [],
   businessInfo,
+  activeCustomerTab,
+  onCustomerTabChange,
+  onCartCountChange,
 }) => {
   // State
-  const [activeTab, setActiveTab] = useState<'shop' | 'checkout' | 'success' | 'my-orders'>('shop');
+  const [activeTab, setActiveTab] = useState<'shop' | 'checkout' | 'success' | 'my-orders' | 'account'>('shop');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [cart, setCart] = useState<{ [productId: string]: number }>({});
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [placedOrder, setPlacedOrder] = useState<Order | null>(null);
 
-  // Customer Checkout Form State
-  const [customerName, setCustomerName] = useState(currentUser?.displayName || '');
-  const [customerPhone, setCustomerPhone] = useState(currentUser?.phone || '');
-  const [altPhone, setAltPhone] = useState('');
-  const [customerAddress, setCustomerAddress] = useState('');
-  const [customerCity, setCustomerCity] = useState('');
-  const [deliveryTimeSlot, setDeliveryTimeSlot] = useState('anytime');
-  const [deliveryNotes, setDeliveryNotes] = useState('');
+  // Sync internal view with parent active tab (from Bottom & Top Navigation)
+  useEffect(() => {
+    if (!activeCustomerTab) return;
+    if (activeCustomerTab === 'order') setActiveTab('shop');
+    else if (activeCustomerTab === 'cart') setActiveTab('checkout');
+    else if (activeCustomerTab === 'orders') setActiveTab('my-orders');
+    else if (activeCustomerTab === 'account') setActiveTab('account');
+  }, [activeCustomerTab]);
+
+  const handleTabSwitch = (tab: 'shop' | 'checkout' | 'my-orders' | 'account') => {
+    setActiveTab(tab);
+    if (onCustomerTabChange) {
+      if (tab === 'shop') onCustomerTabChange('order');
+      else if (tab === 'checkout') onCustomerTabChange('cart');
+      else if (tab === 'my-orders') onCustomerTabChange('orders');
+      else if (tab === 'account') onCustomerTabChange('account');
+    }
+  };
+
+  // Saved Delivery Address (loaded from local storage / cloud)
+  const [savedAddress, setSavedAddress] = useState<CustomerDeliveryAddress | null>(() => getCustomerDeliveryAddress());
+
+  // Customer Checkout Form State (Prefilled from Saved Delivery Address)
+  const [customerName, setCustomerName] = useState(savedAddress?.name || currentUser?.displayName || '');
+  const [customerPhone, setCustomerPhone] = useState(savedAddress?.phone || currentUser?.phone || '');
+  const [altPhone, setAltPhone] = useState(savedAddress?.altPhone || '');
+  const [customerAddress, setCustomerAddress] = useState(savedAddress?.address || '');
+  const [customerCity, setCustomerCity] = useState(savedAddress?.city || 'ঢাকা');
+  const [deliveryTimeSlot, setDeliveryTimeSlot] = useState(savedAddress?.deliveryTimeSlot || 'anytime');
+  const [deliveryNotes, setDeliveryNotes] = useState(savedAddress?.notes || '');
+  const [saveToAccountDefault, setSaveToAccountDefault] = useState(true);
   const [formErrors, setFormErrors] = useState<{ [key: string]: string }>({});
   const [copiedNumber, setCopiedNumber] = useState<string | null>(null);
+
+  // Account Screen Delivery Address Editor State
+  const [accName, setAccName] = useState(savedAddress?.name || currentUser?.displayName || '');
+  const [accPhone, setAccPhone] = useState(savedAddress?.phone || currentUser?.phone || '');
+  const [accAltPhone, setAccAltPhone] = useState(savedAddress?.altPhone || '');
+  const [accAddress, setAccAddress] = useState(savedAddress?.address || '');
+  const [accCity, setAccCity] = useState(savedAddress?.city || 'ঢাকা');
+  const [accSlot, setAccSlot] = useState(savedAddress?.deliveryTimeSlot || 'anytime');
+  const [accNotes, setAccNotes] = useState(savedAddress?.notes || '');
+  const [isEditingAddress, setIsEditingAddress] = useState(!savedAddress);
+  const [addressSaveSuccess, setAddressSaveSuccess] = useState('');
+  const [addressSaveError, setAddressSaveError] = useState('');
+
+  // Handle saving delivery address directly from Account view
+  const handleSaveDeliveryAddressFromAccount = () => {
+    setAddressSaveError('');
+    if (!accName.trim()) {
+      setAddressSaveError('অনুগ্রহ করে গ্রাহকের পুরো নাম লিখুন');
+      return;
+    }
+    const cleanPhone = accPhone.replace(/[-\s]/g, '');
+    if (!cleanPhone) {
+      setAddressSaveError('অনুগ্রহ করে মোবাইল নম্বর প্রদান করুন');
+      return;
+    }
+    if (!/^01[3-9]\d{8}$/.test(cleanPhone)) {
+      setAddressSaveError('সঠিক ১১ ডিজিটের মোবাইল নম্বর দিন (যেমন: 01712345678)');
+      return;
+    }
+    if (!accAddress.trim() || accAddress.trim().length < 5) {
+      setAddressSaveError('পূর্ণাঙ্গ ডেলিভারি ঠিকানা বিস্তারিত লিখুন (বাসা/রোড/এলাকা)');
+      return;
+    }
+
+    const newAddressObj: CustomerDeliveryAddress = {
+      name: accName.trim(),
+      phone: accPhone.trim(),
+      altPhone: accAltPhone.trim(),
+      address: accAddress.trim(),
+      city: accCity.trim() || 'ঢাকা',
+      deliveryTimeSlot: accSlot,
+      notes: accNotes.trim(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    saveCustomerDeliveryAddress(newAddressObj);
+    setSavedAddress(newAddressObj);
+
+    // Keep checkout form state in sync
+    setCustomerName(newAddressObj.name);
+    setCustomerPhone(newAddressObj.phone);
+    setAltPhone(newAddressObj.altPhone || '');
+    setCustomerAddress(newAddressObj.address);
+    setCustomerCity(newAddressObj.city);
+    setDeliveryTimeSlot(newAddressObj.deliveryTimeSlot || 'anytime');
+    setDeliveryNotes(newAddressObj.notes || '');
+
+    // Cloud sync if logged in
+    if (currentUser?.uid) {
+      saveCustomerAddressToCloud(currentUser.uid, newAddressObj).catch(console.warn);
+    }
+
+    setIsEditingAddress(false);
+    setAddressSaveSuccess('✓ আপনার ডেলিভারি এড্রেস সফলভাবে সেভ হয়েছে!');
+    setTimeout(() => setAddressSaveSuccess(''), 4000);
+  };
 
   // Business & Payment Settings from Admin
   const activeBizInfo = businessInfo || getBusinessInfo();
@@ -137,6 +238,12 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
   const totalCartCount = useMemo(() => {
     return Object.values(cart).reduce((sum, q) => sum + q, 0);
   }, [cart]);
+
+  useEffect(() => {
+    if (onCartCountChange) {
+      onCartCountChange(totalCartCount);
+    }
+  }, [totalCartCount, onCartCountChange]);
 
   const subTotal = useMemo(() => {
     return cartItems.reduce((sum, item) => sum + item.lineTotal, 0);
@@ -264,6 +371,26 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
 
     onOrderCreated(newOrder);
     setPlacedOrder(newOrder);
+
+    // Save or update default delivery address in account
+    if (saveToAccountDefault) {
+      const addrToSave: CustomerDeliveryAddress = {
+        name: customerName.trim(),
+        phone: customerPhone.trim(),
+        altPhone: altPhone.trim(),
+        address: customerAddress.trim(),
+        city: customerCity.trim() || 'ঢাকা',
+        deliveryTimeSlot,
+        notes: deliveryNotes.trim(),
+        updatedAt: new Date().toISOString(),
+      };
+      saveCustomerDeliveryAddress(addrToSave);
+      setSavedAddress(addrToSave);
+      if (currentUser?.uid) {
+        saveCustomerAddressToCloud(currentUser.uid, addrToSave).catch(console.warn);
+      }
+    }
+
     setCart({});
     setIsCartOpen(false);
     setActiveTab('success');
@@ -298,6 +425,388 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
 
   return (
     <div className="pb-24 max-w-7xl mx-auto">
+      {/* VIEW: CUSTOMER ACCOUNT & SAVED DELIVERY ADDRESS */}
+      {activeTab === 'account' && (
+        <div className="max-w-3xl mx-auto space-y-6 mb-8 animate-in fade-in duration-200">
+          {/* Header */}
+          <div className="flex items-center justify-between pb-3 border-b border-neutral-200">
+            <div>
+              <h2 className="text-xl sm:text-2xl font-black text-neutral-900 flex items-center gap-2">
+                <User className="w-6 h-6 text-emerald-700" />
+                আমার একাউন্ট ও ডেলিভারি তথ্য
+              </h2>
+              <p className="text-xs text-neutral-500 mt-0.5">
+                আপনার প্রোফাইল ও দ্রুততম অর্ডারের জন্য ডেলিভারি এড্রেস সেভ রাখুন
+              </p>
+            </div>
+            <button
+              onClick={() => handleTabSwitch('shop')}
+              className="text-xs font-bold bg-neutral-100 hover:bg-neutral-200 text-neutral-700 px-3 py-1.5 rounded-xl border border-neutral-200"
+            >
+              ← শপে যান
+            </button>
+          </div>
+
+          {/* Profile Card */}
+          <div className="bg-white rounded-2xl border border-neutral-200 p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3.5">
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-600 to-emerald-800 text-white flex items-center justify-center font-black text-xl shadow-md ring-4 ring-emerald-50">
+                {currentUser?.photoURL ? (
+                  <img src={currentUser.photoURL} alt="User" className="w-full h-full rounded-2xl object-cover" />
+                ) : (
+                  (currentUser?.displayName || savedAddress?.name || 'ক')[0]
+                )}
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-black text-neutral-900 text-base">
+                    {currentUser?.displayName || savedAddress?.name || 'সম্মানিত কাস্টমার'}
+                  </h3>
+                  <span className="text-[10px] font-black bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-200">
+                    কাস্টমার
+                  </span>
+                </div>
+                <p className="text-xs text-neutral-500 mt-0.5">
+                  {currentUser?.email || (savedAddress?.phone ? `মোবাইল: ${savedAddress.phone}` : 'গেস্ট প্রোফাইল (লোকাল মেমোরি)')}
+                </p>
+              </div>
+            </div>
+
+            {!currentUser ? (
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await signInWithGoogle();
+                    window.location.reload();
+                  } catch (e) {
+                    console.warn('Google sign-in:', e);
+                  }
+                }}
+                className="self-start sm:self-auto bg-neutral-900 hover:bg-neutral-800 text-white font-bold text-xs px-4 py-2.5 rounded-xl flex items-center gap-2 shadow-xs transition-all"
+              >
+                <LogIn className="w-4 h-4 text-emerald-400" />
+                গুগল দিয়ে সাইন-ইন
+              </button>
+            ) : (
+              <div className="text-[11px] text-emerald-800 font-bold bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-100 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                ক্লাউড একাউন্ট সংযুক্ত
+              </div>
+            )}
+          </div>
+
+          {/* Delivery Address Section */}
+          <div className="bg-white rounded-2xl border border-neutral-200 p-5 shadow-xs">
+            <div className="flex items-center justify-between pb-3 mb-4 border-b border-neutral-100">
+              <div className="flex items-center gap-2">
+                <MapPin className="w-5 h-5 text-emerald-700" />
+                <div>
+                  <h3 className="font-black text-neutral-900 text-base">
+                    সংরক্ষিত ডেলিভারি এড্রেস
+                  </h3>
+                  <p className="text-[11px] text-neutral-500">
+                    এখানে এড্রেস সেভ রাখলে চেকআউটে স্বয়ংক্রিয়ভাবে ব্যবহার হবে
+                  </p>
+                </div>
+              </div>
+
+              {savedAddress && !isEditingAddress && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAccName(savedAddress.name);
+                    setAccPhone(savedAddress.phone);
+                    setAccAltPhone(savedAddress.altPhone || '');
+                    setAccAddress(savedAddress.address);
+                    setAccCity(savedAddress.city);
+                    setAccSlot(savedAddress.deliveryTimeSlot || 'anytime');
+                    setAccNotes(savedAddress.notes || '');
+                    setIsEditingAddress(true);
+                  }}
+                  className="text-xs font-bold text-emerald-800 hover:bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200 flex items-center gap-1 transition-all"
+                >
+                  <Edit3 className="w-3.5 h-3.5" /> ঠিকানা পরিবর্তন করুন
+                </button>
+              )}
+            </div>
+
+            {/* Success Notification */}
+            {addressSaveSuccess && (
+              <div className="mb-4 bg-emerald-100 text-emerald-900 border border-emerald-300 p-3 rounded-xl text-xs font-bold flex items-center gap-2 animate-in fade-in">
+                <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                <span>{addressSaveSuccess}</span>
+              </div>
+            )}
+
+            {/* Error Notification */}
+            {addressSaveError && (
+              <div className="mb-4 bg-rose-50 text-rose-800 border border-rose-200 p-3 rounded-xl text-xs font-bold flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{addressSaveError}</span>
+              </div>
+            )}
+
+            {/* Case 1: Saved Address View Card */}
+            {savedAddress && !isEditingAddress ? (
+              <div className="bg-neutral-50 rounded-2xl border border-neutral-200/90 p-4 sm:p-5 relative">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="bg-emerald-600 text-white text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1">
+                    <Check className="w-3 h-3" /> ডিফল্ট ডেলিভারি ঠিকানা
+                  </span>
+                  {savedAddress.updatedAt && (
+                    <span className="text-[10px] text-neutral-400">
+                      আপডেট: {new Date(savedAddress.updatedAt).toLocaleDateString('bn-BD')}
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <span className="text-neutral-400 block text-[10px]">গ্রাহকের নাম:</span>
+                    <span className="font-bold text-neutral-900 text-sm">{savedAddress.name}</span>
+                  </div>
+                  <div>
+                    <span className="text-neutral-400 block text-[10px]">মোবাইল নম্বর:</span>
+                    <span className="font-bold text-neutral-900 text-sm">{savedAddress.phone}</span>
+                    {savedAddress.altPhone && (
+                      <span className="text-neutral-500 text-[11px] block">বিকল্প: {savedAddress.altPhone}</span>
+                    )}
+                  </div>
+                  <div className="sm:col-span-2">
+                    <span className="text-neutral-400 block text-[10px]">পূর্ণাঙ্গ ঠিকানা:</span>
+                    <span className="font-semibold text-neutral-800 text-xs sm:text-sm">{savedAddress.address}</span>
+                  </div>
+                  <div>
+                    <span className="text-neutral-400 block text-[10px]">শহর / জেলা:</span>
+                    <span className="font-bold text-neutral-800">{savedAddress.city}</span>
+                  </div>
+                  <div>
+                    <span className="text-neutral-400 block text-[10px]">পছন্দের ডেলিভারি সময়:</span>
+                    <span className="font-medium text-neutral-700">
+                      {savedAddress.deliveryTimeSlot === 'morning'
+                        ? 'সকাল ৯টা - দুপুর ১টা'
+                        : savedAddress.deliveryTimeSlot === 'evening'
+                        ? 'বিকাল ৩টা - রাত ৮টা'
+                        : 'দ্রুততম সময়ে (যে কোনো সময়)'}
+                    </span>
+                  </div>
+                  {savedAddress.notes && (
+                    <div className="sm:col-span-2 bg-white rounded-xl p-2.5 border border-neutral-200/80">
+                      <span className="text-neutral-400 block text-[10px]">ল্যান্ডমার্ক / বিশেষ নোট:</span>
+                      <span className="text-neutral-700">{savedAddress.notes}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-4 pt-3 border-t border-neutral-200/70 flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm('আপনি কি সংরক্ষিত ঠিকানাটি মুছে ফেলতে চান?')) {
+                        deleteCustomerDeliveryAddress();
+                        setSavedAddress(null);
+                        setIsEditingAddress(true);
+                        setAddressSaveSuccess('ঠিকানা মুছে ফেলা হয়েছে।');
+                        setTimeout(() => setAddressSaveSuccess(''), 3000);
+                      }
+                    }}
+                    className="text-xs text-rose-600 hover:text-rose-700 font-bold flex items-center gap-1"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> ঠিকানা মুছুন
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleTabSwitch('checkout')}
+                    className="bg-emerald-800 hover:bg-emerald-900 text-white font-bold text-xs px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-xs"
+                  >
+                    <ShoppingBag className="w-3.5 h-3.5" /> এখনই অর্ডার করুন
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* Case 2: Address Editor Form */
+              <div className="space-y-4">
+                <div className="bg-emerald-50/70 border border-emerald-100 rounded-xl p-3 text-xs text-emerald-900 flex items-start gap-2">
+                  <MapPin className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+                  <span>
+                    আপনার ডেলিভারি এড্রেস একবার সেভ করে রাখলে পরবর্তীতে আর বারবার ঠিকানা টাইপ করার প্রয়োজন হবে না।
+                  </span>
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">
+                      আপনার নাম <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={accName}
+                      onChange={(e) => setAccName(e.target.value)}
+                      placeholder="যেমন: মোঃ জাহিদুল ইসলাম"
+                      className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-neutral-700 mb-1">
+                        মোবাইল নম্বর <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        type="tel"
+                        value={accPhone}
+                        onChange={(e) => setAccPhone(e.target.value)}
+                        placeholder="017XXXXXXXX"
+                        className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-neutral-700 mb-1">
+                        বিকল্প মোবাইল নম্বর (ঐচ্ছিক)
+                      </label>
+                      <input
+                        type="tel"
+                        value={accAltPhone}
+                        onChange={(e) => setAccAltPhone(e.target.value)}
+                        placeholder="01XXXXXXXXX"
+                        className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">
+                      পূর্ণাঙ্গ ডেলিভারি ঠিকানা <span className="text-rose-500">*</span>
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={accAddress}
+                      onChange={(e) => setAccAddress(e.target.value)}
+                      placeholder="বাসা/হোল্ডিং নং, রোড নং, এলাকা/গ্রাম, থানা, জেলা (বিস্তারিত লিখুন)"
+                      className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-neutral-700 mb-1">
+                        শহর / জেলা <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={accCity}
+                        onChange={(e) => setAccCity(e.target.value)}
+                        placeholder="যেমন: ঢাকা, চট্টগ্রাম, সিলেট..."
+                        className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white"
+                      />
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {['ঢাকা', 'চট্টগ্রাম', 'সিলেট', 'রাজশাহী', 'খুলনা'].map((city) => (
+                          <button
+                            key={city}
+                            type="button"
+                            onClick={() => setAccCity(city)}
+                            className={`text-[10px] px-2 py-0.5 rounded-md border font-medium ${
+                              accCity === city
+                                ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                : 'bg-neutral-100 text-neutral-600 border-neutral-200'
+                            }`}
+                          >
+                            {city}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-neutral-700 mb-1">
+                        পছন্দের ডেলিভারি সময়
+                      </label>
+                      <select
+                        value={accSlot}
+                        onChange={(e) => setAccSlot(e.target.value)}
+                        className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white"
+                      >
+                        <option value="anytime">দ্রুততম সময়ে (যে কোনো সময়)</option>
+                        <option value="morning">সকাল ৯টা - দুপুর ১টা</option>
+                        <option value="evening">বিকাল ৩টা - রাত ৮টা</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">
+                      বিশেষ ল্যান্ডমার্ক / নোট (ঐচ্ছিক)
+                    </label>
+                    <input
+                      type="text"
+                      value={accNotes}
+                      onChange={(e) => setAccNotes(e.target.value)}
+                      placeholder="যেমন: ৩য় তলা, স্কুলের বিপরীত পাশে..."
+                      className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={handleSaveDeliveryAddressFromAccount}
+                      className="bg-emerald-800 hover:bg-emerald-900 text-white font-black text-sm px-6 py-3 rounded-xl shadow-md flex items-center gap-2 transition-all active:scale-95"
+                    >
+                      <Check className="w-4 h-4 text-emerald-200" />
+                      ডেলিভারি এড্রেস সেভ করুন
+                    </button>
+
+                    {savedAddress && (
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingAddress(false)}
+                        className="bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold text-sm px-4 py-3 rounded-xl transition-all"
+                      >
+                        বাতিল
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Quick Navigation Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => handleTabSwitch('my-orders')}
+              className="bg-white rounded-2xl border border-neutral-200 p-4 shadow-xs text-left hover:border-emerald-300 transition-all flex items-center justify-between group"
+            >
+              <div>
+                <h4 className="font-bold text-neutral-900 text-sm group-hover:text-emerald-800">
+                  📦 আমার অর্ডার সমূহ
+                </h4>
+                <p className="text-[11px] text-neutral-500 mt-0.5">পূর্ববর্তী সকল অর্ডার ও ক্যাশ মেমো দেখুন</p>
+              </div>
+              <ArrowRight className="w-4 h-4 text-neutral-400 group-hover:text-emerald-700 group-hover:translate-x-1 transition-all" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleTabSwitch('shop')}
+              className="bg-white rounded-2xl border border-neutral-200 p-4 shadow-xs text-left hover:border-emerald-300 transition-all flex items-center justify-between group"
+            >
+              <div>
+                <h4 className="font-bold text-neutral-900 text-sm group-hover:text-emerald-800">
+                  🛍️ শপিং চালিয়ে যান
+                </h4>
+                <p className="text-[11px] text-neutral-500 mt-0.5">মুন্সী স্টোরের সম্পূর্ণ পণ্য সম্ভার দেখুন</p>
+              </div>
+              <ArrowRight className="w-4 h-4 text-neutral-400 group-hover:text-emerald-700 group-hover:translate-x-1 transition-all" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* VIEW: MY PAST ORDERS */}
       {activeTab === 'my-orders' && (
         <div className="bg-white rounded-2xl border border-neutral-200 p-4 sm:p-6 shadow-sm mb-8">
@@ -676,168 +1185,219 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
 
       {/* VIEW: DEDICATED CHECKOUT PAGE (Shwapno / Ghorer Bazar Style 1-Page Checkout) */}
       {activeTab === 'checkout' && (
-        <div className="max-w-4xl mx-auto">
-          <div className="mb-4">
-            <button
-              onClick={() => setActiveTab('shop')}
-              className="text-xs font-bold text-neutral-600 hover:text-emerald-800 flex items-center gap-1 mb-2"
-            >
-              <ArrowLeft className="w-4 h-4" /> শপে ফিরে যান ও পণ্য পরিবর্তন করুন
-            </button>
-            <h2 className="text-xl sm:text-2xl font-black text-neutral-900 flex items-center gap-2">
-              <ShoppingBag className="w-6 h-6 text-emerald-700" />
-              চেকআউট ও ডেলিভারি তথ্য
-            </h2>
-            <p className="text-xs text-neutral-500">
-              সঠিক নাম ও ঠিকানা দিন, যাতে আপনার অর্ডারটি দ্রুততম সময়ে বাসায় পৌঁছে দেওয়া যায়।
+        cartItems.length === 0 ? (
+          <div className="bg-white rounded-3xl border border-neutral-200 p-8 sm:p-12 text-center max-w-lg mx-auto shadow-sm my-6 animate-in fade-in zoom-in-95">
+            <div className="w-16 h-16 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto mb-4 ring-8 ring-emerald-50/50">
+              <ShoppingCart className="w-8 h-8" />
+            </div>
+            <h3 className="text-lg sm:text-xl font-black text-neutral-800 mb-1">আপনার কার্ড বর্তমানে খালি!</h3>
+            <p className="text-xs text-neutral-500 mb-6">
+              আপনার শপিং কার্ডে কোনো পণ্য যোগ করা হয়নি। শপ থেকে আপনার পছন্দের তাজা ও সেরা পণ্য বেছে নিন।
             </p>
+            <button
+              type="button"
+              onClick={() => handleTabSwitch('shop')}
+              className="bg-emerald-800 hover:bg-emerald-900 text-white font-bold px-6 py-2.5 rounded-xl text-sm shadow-md transition-all active:scale-95"
+            >
+              শপে পণ্য দেখুন
+            </button>
           </div>
+        ) : (
+          <div className="max-w-4xl mx-auto">
+            <div className="mb-4">
+              <button
+                type="button"
+                onClick={() => handleTabSwitch('shop')}
+                className="text-xs font-bold text-neutral-600 hover:text-emerald-800 flex items-center gap-1 mb-2"
+              >
+                <ArrowLeft className="w-4 h-4" /> শপে ফিরে যান ও পণ্য পরিবর্তন করুন
+              </button>
+              <h2 className="text-xl sm:text-2xl font-black text-neutral-900 flex items-center gap-2">
+                <ShoppingBag className="w-6 h-6 text-emerald-700" />
+                চেকআউট ও ডেলিভারি তথ্য
+              </h2>
+              <p className="text-xs text-neutral-500">
+                সঠিক নাম ও ঠিকানা দিন, যাতে আপনার অর্ডারটি দ্রুততম সময়ে বাসায় পৌঁছে দেওয়া যায়।
+              </p>
+            </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-            {/* Left Column: Customer Information & Delivery Form */}
-            <div className="md:col-span-7 space-y-4">
-              {/* 1. Customer Personal Details */}
-              <div className="bg-white rounded-2xl border border-neutral-200 p-4 sm:p-5 shadow-xs">
-                <h3 className="font-bold text-neutral-900 text-sm sm:text-base mb-3 flex items-center gap-2 pb-2 border-b border-neutral-100">
-                  <span className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-800 text-xs font-black flex items-center justify-center">
-                    ১
-                  </span>
-                  আপনার নাম ও মোবাইল নম্বর
-                </h3>
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+              {/* Left Column: Customer Information & Delivery Form */}
+              <div className="md:col-span-7 space-y-4">
+                {/* 1. Customer Personal Details */}
+                <div className="bg-white rounded-2xl border border-neutral-200 p-4 sm:p-5 shadow-xs">
+                  <h3 className="font-bold text-neutral-900 text-sm sm:text-base mb-3 flex items-center gap-2 pb-2 border-b border-neutral-100">
+                    <span className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-800 text-xs font-black flex items-center justify-center">
+                      ১
+                    </span>
+                    আপনার নাম ও মোবাইল নম্বর
+                  </h3>
 
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-xs font-bold text-neutral-700 mb-1">
-                      আপনার পুরো নাম <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={customerName}
-                      onChange={(e) => setCustomerName(e.target.value)}
-                      placeholder="যেমন: মোঃ জাহিদুল ইসলাম"
-                      className={`w-full p-2.5 bg-neutral-50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white ${
-                        formErrors.customerName ? 'border-red-500' : 'border-neutral-200'
-                      }`}
-                    />
-                    {formErrors.customerName && (
-                      <p className="text-red-500 text-[11px] mt-1 flex items-center gap-1">
-                        <AlertCircle className="w-3 h-3" /> {formErrors.customerName}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-3">
                     <div>
                       <label className="block text-xs font-bold text-neutral-700 mb-1">
-                        মোবাইল নম্বর <span className="text-red-500">*</span>
+                        আপনার পুরো নাম <span className="text-red-500">*</span>
                       </label>
                       <input
-                        type="tel"
-                        value={customerPhone}
-                        onChange={(e) => setCustomerPhone(e.target.value)}
-                        placeholder="017XXXXXXXX"
+                        type="text"
+                        value={customerName}
+                        onChange={(e) => setCustomerName(e.target.value)}
+                        placeholder="যেমন: মোঃ জাহিদুল ইসলাম"
                         className={`w-full p-2.5 bg-neutral-50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white ${
-                          formErrors.customerPhone ? 'border-red-500' : 'border-neutral-200'
+                          formErrors.customerName ? 'border-red-500' : 'border-neutral-200'
                         }`}
                       />
-                      {formErrors.customerPhone && (
+                      {formErrors.customerName && (
                         <p className="text-red-500 text-[11px] mt-1 flex items-center gap-1">
-                          <AlertCircle className="w-3 h-3" /> {formErrors.customerPhone}
+                          <AlertCircle className="w-3 h-3" /> {formErrors.customerName}
                         </p>
                       )}
                     </div>
 
-                    <div>
-                      <label className="block text-xs font-bold text-neutral-700 mb-1">
-                        বিকল্প মোবাইল (ঐচ্ছিক)
-                      </label>
-                      <input
-                        type="tel"
-                        value={altPhone}
-                        onChange={(e) => setAltPhone(e.target.value)}
-                        placeholder="01XXXXXXXXX"
-                        className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white"
-                      />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-bold text-neutral-700 mb-1">
+                          মোবাইল নম্বর <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="tel"
+                          value={customerPhone}
+                          onChange={(e) => setCustomerPhone(e.target.value)}
+                          placeholder="017XXXXXXXX"
+                          className={`w-full p-2.5 bg-neutral-50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white ${
+                            formErrors.customerPhone ? 'border-red-500' : 'border-neutral-200'
+                          }`}
+                        />
+                        {formErrors.customerPhone && (
+                          <p className="text-red-500 text-[11px] mt-1 flex items-center gap-1">
+                            <AlertCircle className="w-3 h-3" /> {formErrors.customerPhone}
+                          </p>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-neutral-700 mb-1">
+                          বিকল্প মোবাইল নম্বর (ঐচ্ছিক)
+                        </label>
+                        <input
+                          type="tel"
+                          value={altPhone}
+                          onChange={(e) => setAltPhone(e.target.value)}
+                          placeholder="01XXXXXXXXX"
+                          className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white"
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              {/* 2. Delivery Address & Information */}
-              <div className="bg-white rounded-2xl border border-neutral-200 p-4 sm:p-5 shadow-xs">
-                <h3 className="font-bold text-neutral-900 text-sm sm:text-base mb-3 flex items-center gap-2 pb-2 border-b border-neutral-100">
-                  <span className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-800 text-xs font-black flex items-center justify-center">
-                    ২
-                  </span>
-                  ডেলিভারি ঠিকানা ও তথ্য
-                </h3>
-
-                <div className="space-y-3">
-                  {/* Detailed Address Field */}
-                  <div>
-                    <label className="block text-xs font-bold text-neutral-700 mb-1">
-                      পূর্ণাঙ্গ ডেলিভারি ঠিকানা <span className="text-red-500">*</span>
-                    </label>
-                    <textarea
-                      rows={2}
-                      value={customerAddress}
-                      onChange={(e) => setCustomerAddress(e.target.value)}
-                      placeholder="বাসা/হোল্ডিং নং, রোড নং, এলাকা/গ্রাম, থানা, জেলা (বিস্তারিত লিখুন যাতে সহজেই ডেলিভারি করা যায়)"
-                      className={`w-full p-2.5 bg-neutral-50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white ${
-                        formErrors.customerAddress ? 'border-red-500' : 'border-neutral-200'
-                      }`}
-                    />
-                    {formErrors.customerAddress && (
-                      <p className="text-red-500 text-[11px] mt-1 flex items-center gap-1">
-                        <AlertCircle className="w-3 h-3" /> {formErrors.customerAddress}
-                      </p>
+                {/* 2. Delivery Address & Information */}
+                <div className="bg-white rounded-2xl border border-neutral-200 p-4 sm:p-5 shadow-xs">
+                  <div className="flex items-center justify-between mb-3 pb-2 border-b border-neutral-100">
+                    <h3 className="font-bold text-neutral-900 text-sm sm:text-base flex items-center gap-2">
+                      <span className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-800 text-xs font-black flex items-center justify-center">
+                        ২
+                      </span>
+                      ডেলিভারি ঠিকানা ও তথ্য
+                    </h3>
+                    {savedAddress && (
+                      <button
+                        type="button"
+                        onClick={() => handleTabSwitch('account')}
+                        className="text-[11px] font-bold text-emerald-800 hover:underline flex items-center gap-1"
+                      >
+                        <Edit3 className="w-3 h-3" /> একাউন্টে ঠিকানা পরিবর্তন
+                      </button>
                     )}
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Saved Address Notification Banner */}
+                  {savedAddress && (
+                    <div className="mb-3 bg-emerald-50/80 border border-emerald-200 rounded-xl p-2.5 flex items-center gap-2 text-xs text-emerald-900">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>আপনার একাউন্টের সংরক্ষিত ডেলিভারি ঠিকানা স্বয়ংক্রিয়ভাবে লোড করা হয়েছে।</span>
+                    </div>
+                  )}
+
+                  <div className="space-y-3">
+                    {/* Detailed Address Field */}
                     <div>
                       <label className="block text-xs font-bold text-neutral-700 mb-1">
-                        শহর / জেলা (ঐচ্ছিক)
+                        পূর্ণাঙ্গ ডেলিভারি ঠিকানা <span className="text-red-500">*</span>
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={customerAddress}
+                        onChange={(e) => setCustomerAddress(e.target.value)}
+                        placeholder="বাসা/হোল্ডিং নং, রোড নং, এলাকা/গ্রাম, থানা, জেলা (বিস্তারিত লিখুন যাতে সহজেই ডেলিভারি করা যায়)"
+                        className={`w-full p-2.5 bg-neutral-50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white ${
+                          formErrors.customerAddress ? 'border-red-500' : 'border-neutral-200'
+                        }`}
+                      />
+                      {formErrors.customerAddress && (
+                        <p className="text-red-500 text-[11px] mt-1 flex items-center gap-1">
+                          <AlertCircle className="w-3 h-3" /> {formErrors.customerAddress}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-bold text-neutral-700 mb-1">
+                          শহর / জেলা (ঐচ্ছিক)
+                        </label>
+                        <input
+                          type="text"
+                          value={customerCity}
+                          onChange={(e) => setCustomerCity(e.target.value)}
+                          placeholder="যেমন: ঢাকা, চট্টগ্রাম, সিলেট..."
+                          className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-neutral-700 mb-1">
+                          পছন্দসই সময় (ডেলিভারি স্লট)
+                        </label>
+                        <select
+                          value={deliveryTimeSlot}
+                          onChange={(e) => setDeliveryTimeSlot(e.target.value)}
+                          className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        >
+                          <option value="anytime">যত দ্রুত সম্ভব (রেগুলার)</option>
+                          <option value="morning">সকাল ৯:০০ - দুপুর ১:০০</option>
+                          <option value="evening">বিকাল ৩:০০ - রাত ৮:০০</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-neutral-700 mb-1">
+                        স্পেশাল নোট (ঐচ্ছিক)
                       </label>
                       <input
                         type="text"
-                        value={customerCity}
-                        onChange={(e) => setCustomerCity(e.target.value)}
-                        placeholder="যেমন: ঢাকা, চট্টগ্রাম, সিলেট..."
+                        value={deliveryNotes}
+                        onChange={(e) => setDeliveryNotes(e.target.value)}
+                        placeholder="যেমন: কল দিয়ে গেট খুলবেন বা কেয়ারটেকারের কাছে রাখবেন"
                         className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
                       />
                     </div>
 
-                    <div>
-                      <label className="block text-xs font-bold text-neutral-700 mb-1">
-                        পছন্দসই সময় (ডেলিভারি স্লট)
+                    {/* Checkbox to update saved address in account default */}
+                    <div className="pt-2 border-t border-neutral-100">
+                      <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-neutral-700 hover:text-neutral-900">
+                        <input
+                          type="checkbox"
+                          checked={saveToAccountDefault}
+                          onChange={(e) => setSaveToAccountDefault(e.target.checked)}
+                          className="w-4 h-4 rounded text-emerald-700 focus:ring-emerald-500"
+                        />
+                        <span>এই ডেলিভারি ঠিকানাটি আমার একাউন্টের ডিফল্ট হিসেবে সেভ/আপডেট রাখুন</span>
                       </label>
-                      <select
-                        value={deliveryTimeSlot}
-                        onChange={(e) => setDeliveryTimeSlot(e.target.value)}
-                        className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                      >
-                        <option value="anytime">যত দ্রুত সম্ভব (রেগুলার)</option>
-                        <option value="morning">সকাল ৯:০০ - দুপুর ১:০০</option>
-                        <option value="evening">বিকাল ৩:০০ - রাত ৮:০০</option>
-                      </select>
                     </div>
                   </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-neutral-700 mb-1">
-                      স্পেশাল নোট (ঐচ্ছিক)
-                    </label>
-                    <input
-                      type="text"
-                      value={deliveryNotes}
-                      onChange={(e) => setDeliveryNotes(e.target.value)}
-                      placeholder="যেমন: কল দিয়ে গেট খুলবেন বা কেয়ারটেকারের কাছে রাখবেন"
-                      className="w-full p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                  </div>
                 </div>
-              </div>
 
               {/* 3. Payment Method Selection (Controlled by Admin) */}
               <div className="bg-white rounded-2xl border border-neutral-200 p-4 sm:p-5 shadow-xs">
@@ -1166,7 +1726,7 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
             </div>
           </div>
         </div>
-      )}
+      ))}
 
       {/* Floating Bottom Cart Bar (Mobile & Desktop) */}
       {totalCartCount > 0 && activeTab === 'shop' && (
@@ -1188,7 +1748,8 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
             </div>
 
             <button
-              onClick={() => setActiveTab('checkout')}
+              type="button"
+              onClick={() => handleTabSwitch('checkout')}
               className="bg-amber-400 hover:bg-amber-300 text-neutral-950 font-black px-5 py-2.5 rounded-xl text-xs sm:text-sm flex items-center gap-1.5 shadow-md active:scale-95 transition-all"
             >
               চেকআউটে যান <ArrowRight className="w-4 h-4" />

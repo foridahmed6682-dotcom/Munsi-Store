@@ -31,6 +31,17 @@ export interface AuthorizedUserEmail {
   addedBy?: string;
 }
 
+export interface CustomerDeliveryAddress {
+  name: string;
+  phone: string;
+  altPhone?: string;
+  address: string;
+  city: string;
+  deliveryTimeSlot?: string;
+  notes?: string;
+  updatedAt?: string;
+}
+
 export interface AppUser {
   uid: string;
   email: string;
@@ -39,6 +50,7 @@ export interface AppUser {
   role: UserRole;
   assignedRoute?: string;
   phone?: string;
+  deliveryAddress?: CustomerDeliveryAddress;
   status: 'active' | 'inactive';
   createdAt?: string;
   updatedAt?: string;
@@ -153,6 +165,8 @@ export interface UserProfile {
   role?: UserRole;
   assignedRoute?: string;
   accessToken?: string;
+  phone?: string;
+  deliveryAddress?: CustomerDeliveryAddress;
 }
 
 export interface PaymentMethodConfig {

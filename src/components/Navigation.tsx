@@ -1,8 +1,19 @@
 import React from 'react';
-import { ShoppingCart, FileText, Store, Package, MapPin, ShieldCheck, Lock } from 'lucide-react';
+import { ShoppingCart, FileText, Store, Package, MapPin, ShieldCheck, Lock, User } from 'lucide-react';
 import { UserRole } from '../types';
 
-export type NavTab = 'order' | 'orders' | 'shops' | 'map' | 'inventory' | 'admin';
+export type NavTab = 'order' | 'cart' | 'orders' | 'account' | 'shops' | 'map' | 'inventory' | 'admin';
+
+export interface NavItem {
+  id: NavTab;
+  label: string;
+  shortLabel: string;
+  icon: React.ComponentType<{ className?: string }>;
+  badge?: number | null;
+  adminPill?: boolean;
+  highlight?: boolean;
+  roles?: string[];
+}
 
 interface NavigationProps {
   activeTab: NavTab;
@@ -19,7 +30,40 @@ export const Navigation: React.FC<NavigationProps> = ({
   userRole = 'customer',
   isLoggedIn = false,
 }) => {
-  const tabs = [
+  // Tabs for Customer Role
+  const customerTabs: NavItem[] = [
+    {
+      id: 'order',
+      label: 'শপ',
+      shortLabel: 'শপ',
+      icon: Store,
+      badge: null,
+    },
+    {
+      id: 'cart',
+      label: 'কার্ড',
+      shortLabel: 'কার্ড',
+      icon: ShoppingCart,
+      badge: cartCount > 0 ? cartCount : null,
+    },
+    {
+      id: 'orders',
+      label: 'অর্ডার লিষ্ট',
+      shortLabel: 'অর্ডার লিষ্ট',
+      icon: FileText,
+      badge: null,
+    },
+    {
+      id: 'account',
+      label: 'একাউন্ট',
+      shortLabel: 'একাউন্ট',
+      icon: User,
+      badge: null,
+    },
+  ];
+
+  // Tabs for Staff Roles (admin, sr, dsr)
+  const staffTabs: NavItem[] = [
     {
       id: 'order' as NavTab,
       label: userRole === 'dsr' ? 'ফিল্ড অর্ডার ও কার্ড' : 'অর্ডার ও প্রডাক্ট কার্ড',
@@ -67,22 +111,14 @@ export const Navigation: React.FC<NavigationProps> = ({
     },
   ];
 
-  const visibleTabs = tabs.filter((t) => {
-    // Admin tab is strictly for authenticated users with role 'admin'
-    if (t.id === 'admin') {
-      return isLoggedIn && userRole === 'admin';
-    }
-    // If not logged in, only show 'order' (Customer Store)
-    if (!isLoggedIn) {
-      return t.id === 'order';
-    }
-    // If customer role, only show 'order' (Customer Store)
-    if (userRole === 'customer') {
-      return t.id === 'order';
-    }
-    // For staff roles (admin, sr, dsr)
-    return t.roles.includes(userRole);
-  });
+  const visibleTabs = userRole === 'customer'
+    ? customerTabs
+    : staffTabs.filter((t) => {
+        if (t.id === 'admin') {
+          return isLoggedIn && userRole === 'admin';
+        }
+        return t.roles ? t.roles.includes(userRole) : false;
+      });
 
   return (
     <>
