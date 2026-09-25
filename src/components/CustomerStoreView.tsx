@@ -67,7 +67,14 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
 }) => {
   // State
   const [activeTab, setActiveTab] = useState<'shop' | 'checkout' | 'success' | 'my-orders' | 'account'>('shop');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('product') || '';
+    } catch {
+      return '';
+    }
+  });
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [cart, setCart] = useState<{ [productId: string]: number }>({});
   const [isCartOpen, setIsCartOpen] = useState(false);
@@ -396,10 +403,22 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
     setActiveTab('success');
   };
 
+  // Helper to normalize phone number for WhatsApp (converts Bangla digits and prefixes 88)
+  const rawAdminWhatsApp = activeBizInfo.whatsappNumber || activeBizInfo.hotline || hotline || '01768826682';
+  const normalizeWhatsAppNumber = (raw: string) => {
+    const banglaToEng = raw.replace(/[০-৯]/g, (d) => '০১২৩৪৫৬৭৮৯'.indexOf(d).toString());
+    const digitsOnly = banglaToEng.replace(/[^0-9]/g, '');
+    if (!digitsOnly) return '8801768826682';
+    if (digitsOnly.startsWith('880')) return digitsOnly;
+    if (digitsOnly.startsWith('0')) return `88${digitsOnly}`;
+    return `880${digitsOnly}`;
+  };
+
   // Open WhatsApp with Order details
   const handleOpenWhatsApp = (order: Order) => {
     const itemsList = order.items.map((i) => `• ${i.productName} (${i.quantity} ${i.unit}) - ৳${i.lineTotal}`).join('\n');
-    const msg = `🛒 *মুন্সী স্টোর - নতুন কাস্টমার অর্ডার #${order.memoNumber}*\n\n` +
+    const storeTitle = activeBizInfo.banglaName || businessName || 'মুন্সী স্টোর';
+    const msg = `🛒 *${storeTitle} - নতুন কাস্টমার অর্ডার #${order.memoNumber}*\n\n` +
       `👤 *নাম:* ${order.customerName || order.shopName}\n` +
       `📞 *ফোন:* ${order.customerPhone || order.shopPhone}\n` +
       `📍 *ঠিকানা:* ${order.customerAddress || order.shopAddress}\n\n` +
@@ -408,8 +427,8 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
       `💳 *পেমেন্ট মেথড:* ${order.paymentMethod === 'CASH' ? 'ক্যাশ অন ডেলিভারি (হাতে পেয়ে টাকা দিন)' : order.paymentMethod}\n\n` +
       `অনুগ্রহ করে আমার অর্ডারটি কনফার্ম করুন। ধন্যবাদ!`;
 
-    const cleanHotline = hotline.replace(/[^0-9]/g, '');
-    const waUrl = `https://wa.me/88${cleanHotline}?text=${encodeURIComponent(msg)}`;
+    const cleanWaNumber = normalizeWhatsAppNumber(rawAdminWhatsApp);
+    const waUrl = `https://wa.me/${cleanWaNumber}?text=${encodeURIComponent(msg)}`;
     window.open(waUrl, '_blank');
   };
 
@@ -975,7 +994,7 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
               onClick={() => handleOpenWhatsApp(placedOrder)}
               className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-6 rounded-xl flex items-center justify-center gap-2 shadow-md transition-all text-sm"
             >
-              <Send className="w-4 h-4" /> WhatsApp এ কনফার্মেশন পাঠান
+              <Send className="w-4 h-4" /> WhatsApp এ কনফার্মেশন পাঠান ({rawAdminWhatsApp})
             </button>
             {onViewMemo && (
               <button

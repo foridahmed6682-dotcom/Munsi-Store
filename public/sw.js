@@ -22,10 +22,21 @@ self.addEventListener('push', (event) => {
 
   if (event.data) {
     try {
-      const parsed = event.data.json();
-      data = { ...data, ...parsed };
+      const rawText = event.data.text();
+      if (rawText) {
+        try {
+          const parsed = JSON.parse(rawText);
+          if (parsed && typeof parsed === 'object') {
+            data = { ...data, ...parsed };
+          } else {
+            data.body = rawText;
+          }
+        } catch {
+          data.body = rawText;
+        }
+      }
     } catch (e) {
-      data.body = event.data.text() || data.body;
+      console.warn('Push payload read notice:', e);
     }
   }
 

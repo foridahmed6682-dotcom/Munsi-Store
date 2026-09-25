@@ -891,6 +891,7 @@ export default function App() {
           currentRole={activeSimulatedRole}
           userEmail={userProfile?.email}
           userName={userProfile?.displayName}
+          products={products}
           onShowToast={(msg, type) => showToast(msg, type || 'info')}
         />
 

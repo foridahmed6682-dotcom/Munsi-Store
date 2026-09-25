@@ -311,6 +311,7 @@ export async function broadcastPushNotification(payload: {
         body,
         targetRole: targetRole || 'all',
         url: url || '/',
+        image: image || null,
         createdAt: new Date().toISOString(),
       });
     } catch (fsErr) {

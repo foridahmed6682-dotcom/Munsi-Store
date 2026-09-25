@@ -1705,6 +1705,8 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             currentRole={activeSimulatedRole || 'admin'}
             userEmail={currentUser?.email}
             userName={currentUser?.displayName || 'এডমিন'}
+            products={products}
+            isEmbeddedInAdminTab={true}
             onShowToast={(msg, type) => showToast(msg, type || 'info')}
           />
         </div>
@@ -1799,8 +1801,28 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                       value={bizInfo.hotline || ''}
                       onChange={(e) => setBizInfo({ ...bizInfo, hotline: e.target.value })}
                       className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-emerald-600 font-mono"
-                      placeholder="যেমন: ০১৭১১-XXXXXX"
+                      placeholder="যেমন: 01768-826682"
                     />
+                  </div>
+
+                  <div className="bg-emerald-50/70 p-3 rounded-xl border border-emerald-200 md:col-span-2">
+                    <label className="block text-xs font-bold text-emerald-900 mb-1 flex items-center gap-1.5">
+                      <Send className="w-3.5 h-3.5 text-emerald-700" />
+                      <span>কাস্টমার অর্ডার কনফার্মেশন হোয়াটসঅ্যাপ (WhatsApp) নম্বর *</span>
+                    </label>
+                    <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                      <input
+                        type="text"
+                        required
+                        value={bizInfo.whatsappNumber ?? bizInfo.hotline ?? ''}
+                        onChange={(e) => setBizInfo({ ...bizInfo, whatsappNumber: e.target.value })}
+                        className="w-full sm:max-w-xs px-3.5 py-2 rounded-xl border border-emerald-300 bg-white text-xs font-bold text-emerald-950 focus:outline-none focus:border-emerald-600 font-mono"
+                        placeholder="যেমন: 01768826682"
+                      />
+                      <span className="text-[11px] text-emerald-800 font-medium">
+                        কাস্টমার অর্ডার দেওয়ার পর "WhatsApp এ কনফার্মেশন পাঠান" বাটনে ক্লিক করলে সরাসরি এই নাম্বারে অর্ডারের মেমো ও ডিটেইলস চলে যাবে।
+                      </span>
+                    </div>
                   </div>
 
                   <div>

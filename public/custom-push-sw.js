@@ -12,10 +12,21 @@ self.addEventListener('push', function (event) {
 
   if (event.data) {
     try {
-      const parsed = event.data.json();
-      notificationData = { ...notificationData, ...parsed };
+      const rawText = event.data.text();
+      if (rawText) {
+        try {
+          const parsed = JSON.parse(rawText);
+          if (parsed && typeof parsed === 'object') {
+            notificationData = { ...notificationData, ...parsed };
+          } else {
+            notificationData.body = rawText;
+          }
+        } catch {
+          notificationData.body = rawText;
+        }
+      }
     } catch (e) {
-      notificationData.body = event.data.text() || notificationData.body;
+      console.warn('Custom push payload read notice:', e);
     }
   }
 

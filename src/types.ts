@@ -185,6 +185,7 @@ export interface BusinessInfo {
   tagline: string;
   address: string;
   hotline: string;
+  whatsappNumber?: string;
   email?: string;
   bkashNumber?: string;
   nagadNumber?: string;

@@ -81,6 +81,15 @@ async function startServer() {
 
   app.use(express.json({ limit: '10mb' }));
 
+  // Safe JSON parse error handler - prevents HTML 400 error responses
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (err instanceof SyntaxError && 'body' in err) {
+      console.warn('⚠️ Malformed JSON payload caught:', err.message);
+      return res.status(400).json({ error: 'অবৈধ JSON ডাটা পাঠানো হয়েছে।', details: err.message });
+    }
+    next(err);
+  });
+
   // API Routes
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -261,10 +270,18 @@ Return ONLY a raw JSON object (no markdown, no backticks, no code fences):
 
   // 3. Register or Update Push Subscription
   app.post('/api/push/subscribe', (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
     try {
-      const { subscription, role, userEmail, userName, userAgent } = req.body;
+      let { subscription, role, userEmail, userName, userAgent } = req.body || {};
+      if (typeof subscription === 'string') {
+        try {
+          subscription = JSON.parse(subscription);
+        } catch {
+          return res.status(400).json({ error: 'অবৈধ পুশ সাবস্ক্রিপশন ডাটা ফরম্যাট' });
+        }
+      }
       if (!subscription || !subscription.endpoint) {
-        return res.status(400).json({ error: 'Valid push subscription object is required' });
+        return res.status(400).json({ error: 'সঠিক পুশ সাবস্ক্রিপশন অবজেক্ট প্রয়োজন।' });
       }
 
       pushSubscriptions.set(subscription.endpoint, {
@@ -293,8 +310,9 @@ Return ONLY a raw JSON object (no markdown, no backticks, no code fences):
 
   // 4. Unsubscribe
   app.post('/api/push/unsubscribe', (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
     try {
-      const { endpoint } = req.body;
+      const { endpoint } = req.body || {};
       if (endpoint && pushSubscriptions.has(endpoint)) {
         pushSubscriptions.delete(endpoint);
         saveSubscriptionsToFile();
@@ -307,8 +325,9 @@ Return ONLY a raw JSON object (no markdown, no backticks, no code fences):
 
   // 5. Send Test Notification to Caller or All
   app.post('/api/push/send-test', async (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
     try {
-      const { endpoint, title, body } = req.body;
+      const { endpoint, title, body } = req.body || {};
       const payload = JSON.stringify({
         title: title || '🎉 মুন্সী স্টোর পুশ নোটিফিকেশন সফল!',
         body: body || 'আপনার ব্রাউজার ও ডিভাইসে পুশ নোটিফিকেশন সচল রয়েছে। যেকোনো অর্ডার ও আপডেট সাথে সাথে পাবেন।',
@@ -419,6 +438,7 @@ Return ONLY a raw JSON object (no markdown, no backticks, no code fences):
 
       console.log(`📢 Broadcasted push "${title}" to ${successCount} devices`);
 
+      res.setHeader('Content-Type', 'application/json');
       res.json({
         success: true,
         message: `সফলভাবে ${successCount} টি ডিভাইসে পাঠানো হয়েছে`,
@@ -426,8 +446,18 @@ Return ONLY a raw JSON object (no markdown, no backticks, no code fences):
       });
     } catch (err: any) {
       console.error('Push broadcast error:', err);
+      res.setHeader('Content-Type', 'application/json');
       res.status(500).json({ error: err.message || 'Broadcast failed' });
     }
+  });
+
+  // 404 handler for any unmatched /api/* routes so they NEVER fall through to HTML/Vite
+  app.all('/api/*', (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.status(404).json({
+      error: `API রুট '${req.method} ${req.path}' পাওয়া যায়নি।`,
+      status: 404
+    });
   });
 
   // Vite middleware for development vs static build in production
