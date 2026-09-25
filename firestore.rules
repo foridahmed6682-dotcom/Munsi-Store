@@ -152,5 +152,16 @@ service cloud.firestore {
       allow get, list: if true;
       allow create, update, delete: if true;
     }
+
+    // 11. Push Subscriptions & Broadcast Alerts
+    match /push_subscriptions/{subId} {
+      allow get, list: if true;
+      allow create, update, delete: if true;
+    }
+
+    match /broadcast_alerts/{alertId} {
+      allow get, list: if true;
+      allow create, update, delete: if true;
+    }
   }
 }

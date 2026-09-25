@@ -61,8 +61,11 @@ export const PushNotificationManager: React.FC<PushNotificationManagerProps> = (
     try {
       const res = await fetch('/api/push/subscribers-count');
       if (res.ok) {
-        const data = await res.json();
-        setSubscribersCount(data.count ?? 0);
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const data = await res.json().catch(() => ({}));
+          setSubscribersCount(data.count ?? 0);
+        }
       }
     } catch {
       // ignore
