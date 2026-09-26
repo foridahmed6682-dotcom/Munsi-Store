@@ -44,15 +44,8 @@ export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
 export const auth = getAuth(app);
 
-// Standard provider with full Google Sheets & Drive OAuth scopes
+// Standard Google Auth provider (clean login without Drive or Sheets scopes)
 const provider = new GoogleAuthProvider();
-provider.addScope('https://www.googleapis.com/auth/spreadsheets');
-provider.addScope('https://www.googleapis.com/auth/drive.file');
-
-// Workspace provider for sheet/drive sync
-const workspaceProvider = new GoogleAuthProvider();
-workspaceProvider.addScope('https://www.googleapis.com/auth/spreadsheets');
-workspaceProvider.addScope('https://www.googleapis.com/auth/drive.file');
 
 // Verification & Connection test as required by firebase-skill
 export async function testConnection() {
@@ -272,22 +265,13 @@ export async function signInWithGoogle(): Promise<{ user: User; isNewUser: boole
   }
 }
 
-// 2. Google Sign-in with Workspace OAuth Scopes
+// 2. Google Sign-in (Standard clean login without Drive/Sheets scopes)
 export async function signInWithWorkspaceGoogle(): Promise<{ user: User; accessToken: string | null; role: UserRole }> {
   try {
-    let resultUser: User;
-    let accessToken: string | null = null;
-
-    try {
-      const result = await signInWithPopup(auth, workspaceProvider);
-      const credential = GoogleAuthProvider.credentialFromResult(result);
-      accessToken = credential?.accessToken || null;
-      resultUser = result.user;
-    } catch (workspaceErr: any) {
-      console.warn('Workspace scope signin fallback to standard provider:', workspaceErr);
-      const fallbackResult = await signInWithPopup(auth, provider);
-      resultUser = fallbackResult.user;
-    }
+    const result = await signInWithPopup(auth, provider);
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    const accessToken = credential?.accessToken || null;
+    const resultUser = result.user;
 
     const appUser = await syncUserProfileToCloud(resultUser);
     return { user: resultUser, accessToken, role: appUser.role };

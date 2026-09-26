@@ -12,13 +12,9 @@ import firebaseConfig from '../../firebase-applet-config.json';
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
 
-// Standard provider for general login (email/profile)
+// Standard provider for general login (email/profile only, no Drive/Sheets scopes)
 const provider = new GoogleAuthProvider();
-
-// Workspace provider for sheet/drive sync
-const workspaceProvider = new GoogleAuthProvider();
-workspaceProvider.addScope('https://www.googleapis.com/auth/spreadsheets');
-workspaceProvider.addScope('https://www.googleapis.com/auth/drive.file');
+const workspaceProvider = provider;
 
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;

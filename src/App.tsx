@@ -888,6 +888,8 @@ export default function App() {
           showToast(`${role === 'admin' ? 'এডমিন' : role === 'sr' ? 'এসআর' : 'ডিএসআর'} রোল প্যানেল সক্রিয়`, 'info');
         }}
         onOpenAdmin={() => setActiveTab('admin')}
+        activeTab={activeTab}
+        onSelectTab={(tab) => setActiveTab(tab)}
         isPushSubscribed={isPushSubscribed}
         onOpenNotificationModal={() => setIsNotificationModalOpen(true)}
         setUserProfile={(user: UserProfile | null) => {

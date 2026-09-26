@@ -972,25 +972,16 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               {/* Cloud Sync & Backup Status */}
               <div className="pt-3 border-t border-neutral-100 flex items-center justify-between flex-wrap gap-2 text-xs">
                 <div className="flex items-center gap-2">
-                  <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-                  <span className="font-medium text-neutral-700">গুগল শিট ও ড্রাইভ ইন্টিগ্রেশন</span>
+                  <Database className="w-4 h-4 text-emerald-600" />
+                  <span className="font-medium text-neutral-700">ফায়ারবেস ক্লাউড ও অফলাইন ব্যাকআপ</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <button
-                    onClick={onSyncWithSheets}
-                    disabled={isSyncing}
-                    className="px-2.5 py-1 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-800 font-bold text-[11px] flex items-center gap-1"
+                    onClick={() => setSubTab('backup')}
+                    className="px-2.5 py-1 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-800 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
                   >
-                    <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
-                    <span>শিট সিঙ্ক</span>
-                  </button>
-                  <button
-                    onClick={onBackupToDrive}
-                    disabled={isSyncing}
-                    className="px-2.5 py-1 rounded-lg bg-neutral-100 hover:bg-neutral-200 text-neutral-800 font-bold text-[11px] flex items-center gap-1"
-                  >
-                    <HardDrive className="w-3 h-3 text-neutral-600" />
-                    <span>ড্রাইভ ব্যাকআপ</span>
+                    <Download className="w-3 h-3" />
+                    <span>ব্যাকআপ হাব</span>
                   </button>
                 </div>
               </div>
