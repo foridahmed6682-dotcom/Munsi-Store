@@ -35,16 +35,9 @@ export const MemoModal: React.FC<MemoModalProps> = ({ order, isOpen, onClose }) 
         (it, idx) => `${idx + 1}. ${it.productName} - ${it.quantity} ${it.unit} @ ৳${it.unitPrice} = ৳${it.lineTotal}`
       ),
       `---------------------------------`,
-      `সাবটোটাল: ৳${order.subTotal}`,
-      order.discountAmount > 0 ? `ছাড়/ডিসকাউন্ট: ৳${order.discountAmount}` : null,
-      `নিট মোট: ৳${order.netTotal}`,
-      `জমা/নগদ: ৳${order.paidAmount}`,
-      `বর্তমান বাকী: ৳${order.dueAmount}`,
-      `পূর্বের বকেয়া: ৳${order.previousDueAtBooking}`,
-      `*মোট বকেয়া জের: ৳${order.totalOutstandingAfterOrder}*`,
-      `পেমেন্ট ধরন: ${order.paymentMethod}`,
-      `---------------------------------`,
-      `${biz.banglaName} এর সাথে থাকার জন্য ধন্যবাদ!`,
+      `মোট: ৳${order.netTotal}`,
+      `অগ্রিম: `,
+      `বাঁকী: `,
     ].filter(Boolean);
 
     return lines.join('\n');
@@ -144,12 +137,6 @@ export const MemoModal: React.FC<MemoModalProps> = ({ order, isOpen, onClose }) 
               <p className="text-neutral-500">
                 {new Date(order.orderDate).toLocaleDateString('en-GB')} {new Date(order.orderDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </p>
-              <p className="text-[11px]">
-                স্ট্যাটাস:{' '}
-                <span className={`font-semibold ${order.deliveryStatus === 'DELIVERED' ? 'text-emerald-700' : 'text-amber-700'}`}>
-                  {order.deliveryStatus === 'DELIVERED' ? 'ডেলিভারি সম্পন্ন' : 'ডেলিভারি অপেক্ষমান'}
-                </span>
-              </p>
             </div>
           </div>
 
@@ -191,22 +178,9 @@ export const MemoModal: React.FC<MemoModalProps> = ({ order, isOpen, onClose }) 
             </table>
           </div>
 
-          {/* Financial Breakdown */}
-          <div className="border-t border-neutral-200 pt-3 space-y-1 text-xs">
-            <div className="flex justify-between text-neutral-600">
-              <span>সাবটোটাল মূল্য:</span>
-              <span className="font-semibold">৳{order.subTotal.toLocaleString()}</span>
-            </div>
-
-            {order.discountAmount > 0 && (
-              <div className="flex justify-between text-emerald-700 font-medium">
-                <span>ছাড় / ক্যাশ ডিসকাউন্ট ({order.discountPercent}%):</span>
-                <span>-৳{order.discountAmount.toLocaleString()}</span>
-              </div>
-            )}
-
-            {/* Layout as requested: Mot, Agrim, Baki formatted exactly like handwritten cash memo slip */}
-            <div className="flex justify-end mt-3">
+          {/* Financial Breakdown: Only Total calculated, Advance & Due blank */}
+          <div className="border-t border-neutral-200 pt-3 text-xs">
+            <div className="flex justify-end">
               <table className="w-56 border-collapse border border-neutral-400 text-xs font-bold">
                 <tbody>
                   <tr className="border-b border-neutral-400">
@@ -221,54 +195,30 @@ export const MemoModal: React.FC<MemoModalProps> = ({ order, isOpen, onClose }) 
                     <td className="border-r border-neutral-400 px-3 py-1.5 bg-neutral-100/80 text-neutral-800 text-left">
                       অগ্রিম
                     </td>
-                    <td className="px-3 py-1.5 text-right font-mono text-emerald-700 text-sm">
-                      ৳{order.paidAmount.toLocaleString()}
-                    </td>
+                    <td className="px-3 py-1.5 text-right font-mono text-sm h-7"></td>
                   </tr>
                   <tr>
                     <td className="border-r border-neutral-400 px-3 py-1.5 bg-neutral-100/80 text-neutral-800 text-left">
                       বাঁকী
                     </td>
-                    <td className={`px-3 py-1.5 text-right font-mono text-sm ${order.dueAmount > 0 ? 'text-rose-600' : 'text-neutral-900'}`}>
-                      ৳{order.dueAmount.toLocaleString()}
-                    </td>
+                    <td className="px-3 py-1.5 text-right font-mono text-sm h-7"></td>
                   </tr>
                 </tbody>
               </table>
             </div>
-
-            <div className="flex justify-between text-neutral-500 text-[11px] pt-2 border-t border-neutral-200">
-              <span>পূর্বে অপরিশোধিত বকেয়া:</span>
-              <span>৳{order.previousDueAtBooking.toLocaleString()}</span>
-            </div>
-
-            <div className="flex justify-between text-sm font-extrabold text-neutral-900 bg-neutral-100 p-2 rounded-lg mt-1.5">
-              <span>মোট বকেয়া জের (Current Due):</span>
-              <span className="text-rose-700">৳{order.totalOutstandingAfterOrder.toLocaleString()}</span>
-            </div>
           </div>
 
-          {order.notes && (
-            <div className="mt-3 p-2 bg-neutral-50 rounded-lg text-xs text-neutral-600 border border-neutral-200">
-              <span className="font-semibold text-neutral-700">বিশেষ দ্রষ্টব্য:</span> {order.notes}
-            </div>
-          )}
-
-          {/* Footer Signature Notice */}
-          <div className="mt-6 pt-4 border-t border-dashed border-neutral-300 grid grid-cols-2 text-center text-[10px] text-neutral-500">
+          {/* Footer Signature Only - No other words below Total */}
+          <div className="mt-10 pt-4 grid grid-cols-2 text-center text-xs text-neutral-700 font-semibold">
             <div>
-              <div className="w-24 border-b border-neutral-400 mx-auto mb-1"></div>
-              <span>দোকানদারের স্বাক্ষর</span>
+              <div className="w-28 border-b border-neutral-400 mx-auto mb-1.5"></div>
+              <span>স্বাক্ষর</span>
             </div>
             <div>
-              <div className="w-24 border-b border-neutral-400 mx-auto mb-1"></div>
-              <span>বিক্রয় প্রতিনিধির স্বাক্ষর</span>
+              <div className="w-28 border-b border-neutral-400 mx-auto mb-1.5"></div>
+              <span>স্বাক্ষর</span>
             </div>
           </div>
-
-          <p className="text-center text-[10px] text-neutral-400 mt-4">
-            সফটওয়্যার জেনারেটেড মেমো | অফলাইন ও ক্লাউড সিঙ্কড
-          </p>
         </div>
 
         {/* Modal Bottom Close */}

@@ -1007,19 +1007,6 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
 
                   {/* Calculations - Mot, Agrim, Baki structure */}
                   <div className="rounded-2xl border border-neutral-300 overflow-hidden bg-white shadow-xs">
-                    <div className="p-2.5 bg-neutral-50/80 border-b border-neutral-200 space-y-1 text-xs">
-                      <div className="flex justify-between text-neutral-600">
-                        <span>সাবটোটাল:</span>
-                        <span className="font-bold">৳{subTotal.toLocaleString()}</span>
-                      </div>
-                      {discountAmount > 0 && (
-                        <div className="flex justify-between text-emerald-700">
-                          <span>ডিসকাউন্ট ({discountPercent}%):</span>
-                          <span className="font-bold">-৳{discountAmount.toLocaleString()}</span>
-                        </div>
-                      )}
-                    </div>
-
                     <table className="w-full text-xs font-bold border-collapse">
                       <tbody>
                         <tr className="border-b border-neutral-200">
@@ -1034,27 +1021,16 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                           <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 border-r border-neutral-200">
                             অগ্রিম
                           </td>
-                          <td className="px-3 py-2 text-right font-mono text-neutral-900 text-sm">
-                            {paymentMethod === 'DUE' ? '' : `৳${paidAmount.toLocaleString()}`}
-                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-neutral-900 text-sm h-8"></td>
                         </tr>
                         <tr>
                           <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 border-r border-neutral-200">
                             বাঁকী
                           </td>
-                          <td className={`px-3 py-2 text-right font-mono text-sm ${dueAmount > 0 ? 'text-rose-600' : 'text-neutral-900'}`}>
-                            {paymentMethod === 'DUE' ? `৳${netTotal.toLocaleString()}` : `৳${dueAmount.toLocaleString()}`}
-                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-neutral-900 text-sm h-8"></td>
                         </tr>
                       </tbody>
                     </table>
-
-                    {selectedShop && selectedShop.previousDue > 0 && (
-                      <div className="p-2 bg-amber-50/70 border-t border-amber-200 flex justify-between text-amber-900 text-[11px] font-bold">
-                        <span>পূর্বের বকেয়া সহ মোট:</span>
-                        <span className="font-mono">৳{totalOutstandingAfterOrder.toLocaleString()}</span>
-                      </div>
-                    )}
                   </div>
 
                   {/* Order Notes */}
