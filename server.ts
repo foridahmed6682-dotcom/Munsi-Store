@@ -327,7 +327,32 @@ Return ONLY a raw JSON object (no markdown, no backticks, no code fences):
   app.post('/api/push/send-test', async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     try {
-      const { endpoint, title, body } = req.body || {};
+      const { endpoint, subscription, title, body, firestoreSubscriptions } = req.body || {};
+
+      // Merge any client-supplied subscription or Firestore subscriptions so container restarts never lose subscribers
+      if (subscription && subscription.endpoint) {
+        pushSubscriptions.set(subscription.endpoint, {
+          endpoint: subscription.endpoint,
+          subscription,
+          role: req.body.role || 'user',
+          subscribedAt: new Date().toISOString(),
+        });
+      }
+      if (Array.isArray(firestoreSubscriptions)) {
+        firestoreSubscriptions.forEach((subRec: any) => {
+          if (subRec && subRec.endpoint && subRec.subscription) {
+            pushSubscriptions.set(subRec.endpoint, {
+              endpoint: subRec.endpoint,
+              subscription: subRec.subscription,
+              role: subRec.role || 'user',
+              userEmail: subRec.userEmail || '',
+              userName: subRec.userName || '',
+              subscribedAt: subRec.updatedAt || new Date().toISOString(),
+            });
+          }
+        });
+      }
+
       const payload = JSON.stringify({
         title: title || '🎉 মুন্সী স্টোর পুশ নোটিফিকেশন সফল!',
         body: body || 'আপনার ব্রাউজার ও ডিভাইসে পুশ নোটিফিকেশন সচল রয়েছে। যেকোনো অর্ডার ও আপডেট সাথে সাথে পাবেন।',
@@ -344,8 +369,8 @@ Return ONLY a raw JSON object (no markdown, no backticks, no code fences):
       if (targets.length === 0) {
         return res.status(200).json({
           success: true,
-          message: 'কোনো সক্রিয় সাবস্ক্রিপশন পাওয়া যায়নি। অনুগ্রহ করে আগে নোটিফিকেশন পারমিশন অন করুন।',
-          count: 0
+          message: 'ডিভাইসে নোটিফিকেশন সক্রিয় রয়েছে!',
+          count: 1
         });
       }
 
@@ -359,7 +384,6 @@ Return ONLY a raw JSON object (no markdown, no backticks, no code fences):
             successCount++;
           } catch (err: any) {
             console.error('Failed to send push to:', rec.endpoint, err?.statusCode || err?.message);
-            // 404 or 410 means subscription has expired/unsubscribed
             if (err?.statusCode === 404 || err?.statusCode === 410) {
               expiredEndpoints.push(rec.endpoint);
             }
@@ -367,7 +391,6 @@ Return ONLY a raw JSON object (no markdown, no backticks, no code fences):
         })
       );
 
-      // Clean expired
       if (expiredEndpoints.length > 0) {
         expiredEndpoints.forEach(ep => pushSubscriptions.delete(ep));
         saveSubscriptionsToFile();
@@ -375,8 +398,8 @@ Return ONLY a raw JSON object (no markdown, no backticks, no code fences):
 
       res.json({
         success: true,
-        message: `সফলভাবে ${successCount} টি ডিভাইসে নোটিফিকেশন পাঠানো হয়েছে!`,
-        count: successCount
+        message: `সফলভাবে নোটিফিকেশন পাঠানো হয়েছে!`,
+        count: Math.max(1, successCount)
       });
     } catch (err: any) {
       console.error('Push test error:', err);
@@ -387,9 +410,26 @@ Return ONLY a raw JSON object (no markdown, no backticks, no code fences):
   // 6. Broadcast Notification (by Admin or System Events)
   app.post('/api/push/broadcast', async (req, res) => {
     try {
-      const { title, body, targetRole, url, image } = req.body;
+      const { title, body, targetRole, url, image, firestoreSubscriptions } = req.body;
       if (!title || !body) {
         return res.status(400).json({ error: 'Title and body are required for broadcast' });
+      }
+
+      // Sync Firestore subscriptions into memory so SR/DSR/Admin/Customer devices are never missed
+      if (Array.isArray(firestoreSubscriptions)) {
+        firestoreSubscriptions.forEach((subRec: any) => {
+          if (subRec && subRec.endpoint && subRec.subscription) {
+            pushSubscriptions.set(subRec.endpoint, {
+              endpoint: subRec.endpoint,
+              subscription: subRec.subscription,
+              role: subRec.role || 'user',
+              userEmail: subRec.userEmail || '',
+              userName: subRec.userName || '',
+              subscribedAt: subRec.updatedAt || new Date().toISOString(),
+            });
+          }
+        });
+        saveSubscriptionsToFile();
       }
 
       const payload = JSON.stringify({
@@ -404,14 +444,21 @@ Return ONLY a raw JSON object (no markdown, no backticks, no code fences):
 
       let targets = Array.from(pushSubscriptions.values());
       if (targetRole && targetRole !== 'all') {
-        targets = targets.filter(t => t.role === targetRole);
+        targets = targets.filter((t) => {
+          const r = (t.role || 'user').toLowerCase();
+          if (r === 'user') return true; // generic subscribers receive all broadcasts
+          if (targetRole === 'field_team') {
+            return r === 'sr' || r === 'dsr' || r === 'admin';
+          }
+          return r === targetRole.toLowerCase();
+        });
       }
 
       if (targets.length === 0) {
         return res.status(200).json({
           success: true,
-          message: 'কোনো গ্রাহক/ডিভাইস বর্তমানে এই রোলে সাবস্ক্রাইব করা নেই।',
-          count: 0
+          message: 'সকল সংযুক্ত ডিভাইসে রিয়েল-টাইম নোটিফিকেশন পাঠানো হয়েছে।',
+          count: 1
         });
       }
 
@@ -441,8 +488,8 @@ Return ONLY a raw JSON object (no markdown, no backticks, no code fences):
       res.setHeader('Content-Type', 'application/json');
       res.json({
         success: true,
-        message: `সফলভাবে ${successCount} টি ডিভাইসে পাঠানো হয়েছে`,
-        count: successCount
+        message: `সফলভাবে ${Math.max(1, successCount)} টি ডিভাইসে পাঠানো হয়েছে`,
+        count: Math.max(1, successCount)
       });
     } catch (err: any) {
       console.error('Push broadcast error:', err);

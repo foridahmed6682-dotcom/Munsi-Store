@@ -18,13 +18,15 @@ import {
   Mail,
   Download,
   Edit3,
-  Trash2
+  Trash2,
+  Navigation
 } from 'lucide-react';
-import { Order } from '../types';
+import { Order, Shop } from '../types';
 import { getBusinessInfo } from '../lib/firebase';
 
 interface OrdersListViewProps {
   orders: Order[];
+  shops?: Shop[];
   onViewMemo: (order: Order, editMode?: boolean) => void;
   onUpdateDeliveryStatus: (orderId: string, status: Order['deliveryStatus']) => void;
   onDeleteOrder?: (orderId: string) => void;
@@ -40,6 +42,7 @@ interface OrdersListViewProps {
 
 export const OrdersListView: React.FC<OrdersListViewProps> = ({
   orders,
+  shops = [],
   onViewMemo,
   onUpdateDeliveryStatus,
   onDeleteOrder,
@@ -52,6 +55,23 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
   spreadsheetUrl,
   lastDriveBackupLink,
 }) => {
+  const getOrderDirectionUrl = (order: Order) => {
+    const matchedShop = shops.find(
+      (s) => s.id === order.shopId || s.name.trim().toLowerCase() === (order.shopName || '').trim().toLowerCase()
+    );
+    if (matchedShop && matchedShop.lat && matchedShop.lng) {
+      return `https://www.google.com/maps/dir/?api=1&destination=${matchedShop.lat},${matchedShop.lng}`;
+    }
+    const addressParts = [
+      order.shopName,
+      order.shopAddress,
+      order.customerArea,
+      order.customerDistrict,
+      order.shopRoute ? order.shopRoute.replace(/রুট/g, '').trim() : '',
+      'Bangladesh',
+    ].filter(Boolean);
+    return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addressParts.join(', '))}`;
+  };
   const sendOrderToWhatsApp = (order: Order) => {
     const biz = getBusinessInfo();
     const lines = [
@@ -457,6 +477,18 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                   </div>
 
                   <div className="flex flex-wrap items-center gap-1.5">
+                    {/* Direction Button beside each memo */}
+                    <a
+                      href={getOrderDirectionUrl(order)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1 shadow-xs cursor-pointer"
+                      title="গুগল ম্যাপসে দোকানের লোকেশন ও ডিরেকশন দেখুন"
+                    >
+                      <Navigation className="w-3.5 h-3.5" />
+                      <span>ডিরেকশন</span>
+                    </a>
+
                     {/* 1-Click WhatsApp Memo Button */}
                     <button
                       onClick={() => sendOrderToWhatsApp(order)}

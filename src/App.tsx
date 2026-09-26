@@ -101,6 +101,10 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<NavTab>('order');
   const [targetOrderShopId, setTargetOrderShopId] = useState<string | undefined>(undefined);
   const [targetMapShopId, setTargetMapShopId] = useState<string | null>(null);
+  const [isNotificationModalOpen, setIsNotificationModalOpen] = useState<boolean>(false);
+  const [isPushSubscribed, setIsPushSubscribed] = useState<boolean>(
+    () => typeof window !== 'undefined' && localStorage.getItem('munsi_push_subscribed') === 'true'
+  );
 
   // Application Data State
   const [products, setProducts] = useState<Product[]>([]);
@@ -884,6 +888,8 @@ export default function App() {
           showToast(`${role === 'admin' ? 'এডমিন' : role === 'sr' ? 'এসআর' : 'ডিএসআর'} রোল প্যানেল সক্রিয়`, 'info');
         }}
         onOpenAdmin={() => setActiveTab('admin')}
+        isPushSubscribed={isPushSubscribed}
+        onOpenNotificationModal={() => setIsNotificationModalOpen(true)}
         setUserProfile={(user: UserProfile | null) => {
           setUserProfileState(user);
           saveUserProfile(user);
@@ -910,16 +916,21 @@ export default function App() {
         cartCount={cartCount}
         userRole={activeSimulatedRole}
         isLoggedIn={!!userProfile}
+        isPushSubscribed={isPushSubscribed}
+        onOpenNotificationModal={() => setIsNotificationModalOpen(true)}
       />
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl mx-auto w-full px-3 sm:px-4 pt-4">
-        {/* Web Push Notification Controller Banner */}
+        {/* Web Push Notification Controller (Modals only, no inline banner on Order/Cart page) */}
         <PushNotificationManager
           currentRole={activeSimulatedRole}
           userEmail={userProfile?.email}
           userName={userProfile?.displayName}
           products={products}
+          externalIsOpen={isNotificationModalOpen}
+          onExternalClose={() => setIsNotificationModalOpen(false)}
+          onSubscriptionChange={(subState) => setIsPushSubscribed(subState)}
           onShowToast={(msg, type) => showToast(msg, type || 'info')}
         />
 
@@ -968,6 +979,7 @@ export default function App() {
             {activeTab === 'orders' && (
               <OrdersListView
                 orders={orders}
+                shops={shops}
                 onViewMemo={(order, editMode = false) => {
                   setSelectedMemoOrder(order);
                   setIsMemoEditMode(editMode);

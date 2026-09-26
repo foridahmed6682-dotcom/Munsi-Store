@@ -13,7 +13,10 @@ import {
   UserCheck,
   Truck,
   User,
-  LogOut
+  LogOut,
+  Bell,
+  BellRing,
+  BellOff
 } from 'lucide-react';
 import { googleSignIn, logout, isMainSuperAdmin } from '../lib/firebase';
 import { UserProfile, UserRole, BusinessInfo } from '../types';
@@ -35,6 +38,8 @@ export interface HeaderProps {
   onSwitchRole?: (role: UserRole) => void;
   onOpenAdmin?: () => void;
   businessInfo?: BusinessInfo;
+  isPushSubscribed?: boolean;
+  onOpenNotificationModal?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -54,6 +59,8 @@ export const Header: React.FC<HeaderProps> = ({
   onSwitchRole,
   onOpenAdmin,
   businessInfo,
+  isPushSubscribed = false,
+  onOpenNotificationModal,
 }) => {
   const [authLoading, setAuthLoading] = React.useState(false);
   const [showRoleSelector, setShowRoleSelector] = React.useState(false);
@@ -186,6 +193,40 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Status & Actions */}
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* Universal Notification Symbol Button (Top Navigation) */}
+          {onOpenNotificationModal && (
+            <button
+              id="btn-header-notification-toggle"
+              type="button"
+              onClick={onOpenNotificationModal}
+              className={`relative p-2 rounded-xl border transition-all cursor-pointer flex items-center justify-center shadow-xs active:scale-95 ${
+                isPushSubscribed
+                  ? 'bg-emerald-700/90 hover:bg-emerald-600 border-emerald-400/60 text-white'
+                  : 'bg-emerald-900/70 hover:bg-emerald-700 border-amber-400/60 text-amber-200'
+              }`}
+              title={
+                isPushSubscribed
+                  ? 'নোটিফিকেশন চালু আছে (অন/অফ করতে ক্লিক করুন)'
+                  : 'নোটিফিকেশন বন্ধ আছে (চালু করতে ক্লিক করুন)'
+              }
+              aria-label="নোটিফিকেশন অন/অফ"
+            >
+              {isPushSubscribed ? (
+                <BellRing className="w-4 h-4 text-emerald-200" />
+              ) : (
+                <Bell className="w-4 h-4 text-amber-300" />
+              )}
+              <span
+                className={`absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-emerald-900 ${
+                  isPushSubscribed ? 'bg-emerald-400' : 'bg-rose-500 animate-ping'
+                }`}
+              />
+              {!isPushSubscribed && (
+                <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-emerald-900 bg-rose-500" />
+              )}
+            </button>
+          )}
+
           {/* Online / Offline status badge */}
           <div
             id="network-status-badge"

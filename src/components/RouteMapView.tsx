@@ -233,109 +233,147 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
     }
   }, [filteredShops]);
 
-  // Locate User
-  const handleLocateMe = () => {
-    if (!navigator.geolocation) {
-      setLocationError('আপনার ব্রাউজারে জিপিএস লোকেশন সাপোর্ট নেই');
-      return;
-    }
+  const applyUserLocationOnMap = (latitude: number, longitude: number) => {
+    setUserLocation({ lat: latitude, lng: longitude });
+    const map = mapInstanceRef.current;
+    if (map) {
+      map.setView([latitude, longitude], 15);
+      if (userMarkerRef.current) {
+        userMarkerRef.current.setLatLng([latitude, longitude]);
+      } else {
+        const userIcon = L.divIcon({
+          className: 'user-live-pin',
+          html: `
+            <div style="
+              width: 20px;
+              height: 20px;
+              background: #2563eb;
+              border: 3px solid white;
+              border-radius: 50%;
+              box-shadow: 0 0 14px rgba(37, 99, 235, 0.8);
+              position: relative;
+            ">
+              <div style="
+                position: absolute;
+                inset: -8px;
+                border-radius: 50%;
+                border: 2px solid #3b82f6;
+                animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
+              "></div>
+            </div>
+          `,
+          iconSize: [20, 20],
+          iconAnchor: [10, 10],
+        });
 
+        const marker = L.marker([latitude, longitude], { icon: userIcon }).addTo(map);
+        marker.bindPopup('<b>আপনার বর্তমান অবস্থান</b>').openPopup();
+        userMarkerRef.current = marker;
+      }
+    }
+  };
+
+  // Locate User with multi-stage fallback
+  const handleLocateMe = () => {
     setIsLocating(true);
     setLocationError(null);
+
+    const tryIPFallback = async () => {
+      try {
+        const res = await fetch('https://get.geojs.io/v1/ip/geo.json');
+        if (res.ok) {
+          const data = await res.json();
+          const ipLat = parseFloat(data.latitude);
+          const ipLng = parseFloat(data.longitude);
+          if (!isNaN(ipLat) && !isNaN(ipLng)) {
+            setIsLocating(false);
+            applyUserLocationOnMap(ipLat, ipLng);
+            return;
+          }
+        }
+      } catch {
+        // ignore
+      }
+      setIsLocating(false);
+      setLocationError('লোকেশন পাওয়া যায়নি। অনুগ্রহ করে ডিভাইসের GPS অন করুন।');
+    };
+
+    if (!navigator.geolocation) {
+      tryIPFallback();
+      return;
+    }
 
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setIsLocating(false);
-        const { latitude, longitude } = pos.coords;
-        setUserLocation({ lat: latitude, lng: longitude });
-
-        const map = mapInstanceRef.current;
-        if (map) {
-          map.setView([latitude, longitude], 15);
-
-          if (userMarkerRef.current) {
-            userMarkerRef.current.setLatLng([latitude, longitude]);
-          } else {
-            const userIcon = L.divIcon({
-              className: 'user-live-pin',
-              html: `
-                <div style="
-                  width: 20px;
-                  height: 20px;
-                  background: #2563eb;
-                  border: 3px solid white;
-                  border-radius: 50%;
-                  box-shadow: 0 0 14px rgba(37, 99, 235, 0.8);
-                  position: relative;
-                ">
-                  <div style="
-                    position: absolute;
-                    inset: -8px;
-                    border-radius: 50%;
-                    border: 2px solid #3b82f6;
-                    animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
-                  "></div>
-                </div>
-              `,
-              iconSize: [20, 20],
-              iconAnchor: [10, 10],
-            });
-
-            const marker = L.marker([latitude, longitude], { icon: userIcon }).addTo(map);
-            marker.bindPopup('<b>আপনার বর্তমান অবস্থান</b>').openPopup();
-            userMarkerRef.current = marker;
-          }
-        }
+        applyUserLocationOnMap(pos.coords.latitude, pos.coords.longitude);
       },
-      (err) => {
-        setIsLocating(false);
-        setLocationError('লোকেশন পাওয়া যায়নি। অনুগ্রহ করে ডিভাইসের GPS অন করুন।');
+      () => {
+        navigator.geolocation.getCurrentPosition(
+          (pos2) => {
+            setIsLocating(false);
+            applyUserLocationOnMap(pos2.coords.latitude, pos2.coords.longitude);
+          },
+          () => {
+            tryIPFallback();
+          },
+          { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 }
+        );
       },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
     );
   };
 
-  // High Accuracy Shop GPS Position Updater
+  // High Accuracy Shop GPS Position Updater with fallback
   const handleUpdateShopGPS = (shopId: string) => {
     if (!navigator.geolocation) {
       alert('আপনার ডিভাইসে জিপিএস সাপোর্ট নেই');
       return;
     }
 
+    const applyShopGPS = (latitude: number, longitude: number) => {
+      setIsUpdatingGPS(false);
+      const preciseLat = Number(latitude.toFixed(6));
+      const preciseLng = Number(longitude.toFixed(6));
+
+      if (onUpdateShopCoordinates) {
+        onUpdateShopCoordinates(shopId, preciseLat, preciseLng);
+        setSelectedShop((prev) =>
+          prev && prev.id === shopId ? { ...prev, lat: preciseLat, lng: preciseLng } : prev
+        );
+        setUserLocation({ lat: preciseLat, lng: preciseLng });
+        if (mapInstanceRef.current) {
+          mapInstanceRef.current.setView([preciseLat, preciseLng], 17);
+        }
+      }
+    };
+
     setIsUpdatingGPS(true);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        setIsUpdatingGPS(false);
-        const { latitude, longitude, accuracy } = pos.coords;
-        const preciseLat = Number(latitude.toFixed(6));
-        const preciseLng = Number(longitude.toFixed(6));
-        
-        if (onUpdateShopCoordinates) {
-          onUpdateShopCoordinates(shopId, preciseLat, preciseLng);
-          setSelectedShop((prev) => 
-            prev && prev.id === shopId ? { ...prev, lat: preciseLat, lng: preciseLng } : prev
-          );
-          
-          setUserLocation({ lat: preciseLat, lng: preciseLng });
-          
-          if (mapInstanceRef.current) {
-            mapInstanceRef.current.setView([preciseLat, preciseLng], 17);
-          }
-        }
+        applyShopGPS(pos.coords.latitude, pos.coords.longitude);
       },
-      (err) => {
-        setIsUpdatingGPS(false);
-        let msg = 'জিপিএস লোকেশন রিড করা যায়নি।';
-        if (err.code === 1) {
-          msg = 'লোকেশন পারমিশন ডিনাই করা হয়েছে। অনুগ্রহ করে ব্রাউজার সেটিংসে জিপিএস অনুমতি দিন।';
-        } else if (err.code === 2) {
-          msg = 'ফোনের জিপিএস সিগন্যাল পাওয়া যাচ্ছে না।';
-        } else if (err.code === 3) {
-          msg = 'জিপিএস রিকোয়েস্ট টাইমআউট হয়েছে। খোলা জায়গায় গিয়ে আবার চেষ্টা করুন।';
-        }
-        alert(msg);
+      () => {
+        navigator.geolocation.getCurrentPosition(
+          (pos2) => {
+            applyShopGPS(pos2.coords.latitude, pos2.coords.longitude);
+          },
+          (err) => {
+            setIsUpdatingGPS(false);
+            let msg = 'জিপিএস লোকেশন রিড করা যায়নি।';
+            if (err.code === 1) {
+              msg = 'লোকেশন পারমিশন ডিনাই করা হয়েছে। অনুগ্রহ করে ব্রাউজার সেটিংসে জিপিএস অনুমতি দিন।';
+            } else if (err.code === 2) {
+              msg = 'ফোনের জিপিএস সিগন্যাল পাওয়া যাচ্ছে না।';
+            } else if (err.code === 3) {
+              msg = 'জিপিএস রিকোয়েস্ট টাইমআউট হয়েছে।';
+            }
+            alert(msg);
+          },
+          { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 }
+        );
       },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
     );
   };
 

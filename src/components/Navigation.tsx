@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShoppingCart, FileText, Store, Package, MapPin, ShieldCheck, Lock, User } from 'lucide-react';
+import { ShoppingCart, FileText, Store, Package, MapPin, ShieldCheck, Lock, User, Bell, BellRing } from 'lucide-react';
 import { UserRole } from '../types';
 
 export type NavTab = 'order' | 'cart' | 'orders' | 'account' | 'shops' | 'map' | 'inventory' | 'admin';
@@ -21,6 +21,8 @@ interface NavigationProps {
   cartCount: number;
   userRole?: UserRole;
   isLoggedIn?: boolean;
+  isPushSubscribed?: boolean;
+  onOpenNotificationModal?: () => void;
 }
 
 export const Navigation: React.FC<NavigationProps> = ({
@@ -29,6 +31,8 @@ export const Navigation: React.FC<NavigationProps> = ({
   cartCount,
   userRole = 'customer',
   isLoggedIn = false,
+  isPushSubscribed = false,
+  onOpenNotificationModal,
 }) => {
   // Tabs for Customer Role
   const customerTabs: NavItem[] = [
@@ -174,6 +178,39 @@ export const Navigation: React.FC<NavigationProps> = ({
                 );
               })}
             </div>
+
+            {/* Notification Symbol on the Right Side of Top Navigation */}
+            {onOpenNotificationModal && (
+              <div className="pl-2 py-1.5 shrink-0 flex items-center">
+                <button
+                  id="btn-topnav-notification-symbol"
+                  type="button"
+                  onClick={onOpenNotificationModal}
+                  className={`relative p-2 rounded-xl border transition-all cursor-pointer flex items-center justify-center shadow-xs active:scale-95 ${
+                    isPushSubscribed
+                      ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-300'
+                      : 'bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-300'
+                  }`}
+                  title={
+                    isPushSubscribed
+                      ? 'নোটিফিকেশন চালু আছে (অন/অফ করতে ক্লিক করুন)'
+                      : 'নোটিফিকেশন বন্ধ আছে (চালু করতে ক্লিক করুন)'
+                  }
+                  aria-label="নোটিফিকেশন অন/অফ"
+                >
+                  {isPushSubscribed ? (
+                    <BellRing className="w-4 h-4 text-emerald-600" />
+                  ) : (
+                    <Bell className="w-4 h-4 text-amber-600" />
+                  )}
+                  <span
+                    className={`absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white ${
+                      isPushSubscribed ? 'bg-emerald-500' : 'bg-rose-500'
+                    }`}
+                  />
+                </button>
+              </div>
+            )}
           </div>
         </nav>
       )}
