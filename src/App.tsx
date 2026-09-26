@@ -5,6 +5,7 @@ import {
   getShops,
   getOrders,
   saveOrder,
+  deleteOrder,
   updateOrderStatus,
   saveShop,
   saveProduct,
@@ -40,6 +41,7 @@ import {
   subscribeToCloudCategories,
   subscribeToAuthorizedEmails,
   saveOrderToCloud,
+  deleteOrderFromCloud,
   saveShopToCloud,
   deleteShopFromCloud,
   saveProductToCloud,
@@ -128,6 +130,7 @@ export default function App() {
   // Memo Modal
   const [selectedMemoOrder, setSelectedMemoOrder] = useState<Order | null>(null);
   const [isMemoOpen, setIsMemoOpen] = useState<boolean>(false);
+  const [isMemoEditMode, setIsMemoEditMode] = useState<boolean>(false);
 
   // Cart count for badge
   const [cartCount, setCartCount] = useState<number>(0);
@@ -427,6 +430,7 @@ export default function App() {
       // Open printable memo modal if not customer checkout (customer has its own success screen)
       if (activeSimulatedRole !== 'customer') {
         setSelectedMemoOrder(newOrder);
+        setIsMemoEditMode(false);
         setIsMemoOpen(true);
       }
     } catch (err: any) {
@@ -640,6 +644,30 @@ export default function App() {
         : 'অর্ডার অপেক্ষমান স্ট্যাটাসে রাখা হয়েছে',
       'info'
     );
+  };
+
+  // Update Order / Memo Edit Handler
+  const handleUpdateOrder = (updatedOrder: Order) => {
+    saveOrder(updatedOrder);
+    saveOrderToCloud(updatedOrder).catch(() => {});
+    setOrders((prev) => prev.map((o) => (o.id === updatedOrder.id ? updatedOrder : o)));
+    setSelectedMemoOrder(updatedOrder);
+    reloadData();
+    showToast(`মেমো #${updatedOrder.memoNumber} সফলভাবে আপডেট করা হয়েছে!`, 'success');
+  };
+
+  // Delete Order Handler (Admin)
+  const handleDeleteOrder = (orderId: string) => {
+    const target = orders.find((o) => o.id === orderId);
+    deleteOrder(orderId);
+    deleteOrderFromCloud(orderId).catch(() => {});
+    setOrders((prev) => prev.filter((o) => o.id !== orderId));
+    if (selectedMemoOrder?.id === orderId) {
+      setIsMemoOpen(false);
+      setSelectedMemoOrder(null);
+    }
+    reloadData();
+    showToast(`মেমো ${target?.memoNumber ? `#${target.memoNumber}` : ''} সফলভাবে ডিলিট করা হয়েছে`, 'info');
   };
 
   // Manual Sync with Google Sheets
@@ -940,11 +968,14 @@ export default function App() {
             {activeTab === 'orders' && (
               <OrdersListView
                 orders={orders}
-                onViewMemo={(order) => {
+                onViewMemo={(order, editMode = false) => {
                   setSelectedMemoOrder(order);
+                  setIsMemoEditMode(editMode);
                   setIsMemoOpen(true);
                 }}
                 onUpdateDeliveryStatus={handleUpdateDeliveryStatus}
+                onDeleteOrder={handleDeleteOrder}
+                isAdmin={activeSimulatedRole === 'admin'}
                 onSyncWithSheets={handleSyncWithSheets}
                 onBackupToDrive={handleBackupToDrive}
                 onSendEmailBackup={handleSendEmailBackup}
@@ -1051,6 +1082,12 @@ export default function App() {
                 onDownloadInventoryCSV={handleDownloadInventoryCSV}
                 onDownloadShopsCSV={handleDownloadShopsCSV}
                 onRestoreFromBackupJSON={handleRestoreFromBackupJSON}
+                onViewMemo={(order, editMode = false) => {
+                  setSelectedMemoOrder(order);
+                  setIsMemoEditMode(editMode);
+                  setIsMemoOpen(true);
+                }}
+                onDeleteOrder={handleDeleteOrder}
               />
             )}
           </>
@@ -1061,7 +1098,15 @@ export default function App() {
       <MemoModal
         order={selectedMemoOrder}
         isOpen={isMemoOpen}
-        onClose={() => setIsMemoOpen(false)}
+        onClose={() => {
+          setIsMemoOpen(false);
+          setIsMemoEditMode(false);
+        }}
+        onUpdateOrder={handleUpdateOrder}
+        onDeleteOrder={handleDeleteOrder}
+        isAdmin={activeSimulatedRole === 'admin'}
+        products={products}
+        initialEditMode={isMemoEditMode}
       />
     </div>
   );

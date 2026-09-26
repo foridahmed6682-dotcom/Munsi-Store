@@ -100,6 +100,8 @@ interface AdminDashboardViewProps {
   onDownloadInventoryCSV?: () => void;
   onDownloadShopsCSV?: () => void;
   onRestoreFromBackupJSON?: (data: FullBackupData) => Promise<void>;
+  onViewMemo?: (order: Order, editMode?: boolean) => void;
+  onDeleteOrder?: (orderId: string) => void;
 }
 
 type AdminSubTab = 'overview' | 'categories' | 'products' | 'routes' | 'access' | 'analytics' | 'push' | 'settings' | 'backup';
@@ -163,6 +165,8 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   onDownloadInventoryCSV,
   onDownloadShopsCSV,
   onRestoreFromBackupJSON,
+  onViewMemo,
+  onDeleteOrder,
 }) => {
   const [subTab, setSubTab] = useState<AdminSubTab>('overview');
 
@@ -1038,6 +1042,116 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 ))}
               </div>
             </div>
+          </div>
+
+          {/* Admin Order & Memo Management (View, Edit, 1-Click WhatsApp, Delete) */}
+          <div className="bg-white rounded-2xl border border-neutral-200 p-4 sm:p-5 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-neutral-100">
+              <div>
+                <h3 className="font-bold text-neutral-900 text-sm flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-emerald-600" />
+                  <span>অর্ডার ও মেমো কন্ট্রোল প্যানেল (মেমো এডিট ও ডিলিট)</span>
+                </h3>
+                <p className="text-xs text-neutral-500">
+                  এডমিন প্যানেল থেকে সরাসরি যেকোনো মেমো দেখুন, এডিট করুন, হোয়াটসঅ্যাপে পাঠান অথবা ডিলিট করুন
+                </p>
+              </div>
+              <button
+                onClick={() => onNavigateTab('orders')}
+                className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold text-xs flex items-center gap-1 self-start sm:self-auto"
+              >
+                <span>সকল মেমো তালিকা ({orders.length})</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {orders.length === 0 ? (
+              <div className="text-center py-8 text-neutral-400 text-xs">
+                কোনো অর্ডার বা মেমো পাওয়া যায়নি
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-neutral-50 text-neutral-600 border-b border-neutral-200 font-bold">
+                      <th className="p-2.5">মেমো নং ও তারিখ</th>
+                      <th className="p-2.5">দোকান / ক্রেতা</th>
+                      <th className="p-2.5 text-center">পণ্য</th>
+                      <th className="p-2.5 text-right">মোট টাকা</th>
+                      <th className="p-2.5 text-right">অ্যাকশন (এডিট / ডিলিট)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100">
+                    {orders.slice(0, 20).map((ord) => (
+                      <tr key={ord.id} className="hover:bg-neutral-50/80 transition-colors">
+                        <td className="p-2.5">
+                          <span className="font-mono font-bold text-emerald-800 block">{ord.memoNumber}</span>
+                          <span className="text-[10px] text-neutral-500">
+                            {new Date(ord.orderDate).toLocaleString('bn-BD', {
+                              day: '2-digit',
+                              month: 'short',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
+                        </td>
+                        <td className="p-2.5">
+                          <span className="font-bold text-neutral-900 block">{ord.shopName}</span>
+                          <span className="text-[10px] text-neutral-500">{ord.shopPhone} • {ord.shopAddress}</span>
+                        </td>
+                        <td className="p-2.5 text-center font-bold text-neutral-700">
+                          {ord.items.length} পদ
+                        </td>
+                        <td className="p-2.5 text-right font-extrabold font-mono text-emerald-800">
+                          ৳{ord.netTotal.toLocaleString()}
+                        </td>
+                        <td className="p-2.5 text-right">
+                          <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                            {onViewMemo && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => onViewMemo(ord, false)}
+                                  className="px-2.5 py-1 rounded-lg bg-neutral-100 hover:bg-neutral-200 text-neutral-800 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
+                                  title="মেমো দেখুন"
+                                >
+                                  <Eye className="w-3 h-3" />
+                                  <span>মেমো</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => onViewMemo(ord, true)}
+                                  className="px-2.5 py-1 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
+                                  title="মেমো এডিট করুন"
+                                >
+                                  <Edit3 className="w-3 h-3" />
+                                  <span>এডিট</span>
+                                </button>
+                              </>
+                            )}
+                            {onDeleteOrder && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (window.confirm(`আপনি কি নিশ্চিত যে মেমো #${ord.memoNumber} (${ord.shopName}) স্থায়ীভাবে ডিলিট করতে চান?`)) {
+                                    onDeleteOrder(ord.id);
+                                  }
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-800 border border-rose-200 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
+                                title="মেমো ডিলিট করুন"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span>ডিলিট</span>
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}

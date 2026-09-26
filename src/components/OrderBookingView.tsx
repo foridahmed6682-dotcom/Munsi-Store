@@ -15,10 +15,12 @@ import {
   Layers,
   FileCheck,
   Package,
-  X
+  X,
+  Send
 } from 'lucide-react';
 import { Product, Shop, OrderItem, PaymentMethod, Route } from '../types';
 import { AddShopModal } from './AddShopModal';
+import { getBusinessInfo } from '../lib/firebase';
 
 interface OrderBookingViewProps {
   products: Product[];
@@ -64,6 +66,50 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
   // Modals
   const [isAddShopModalOpen, setIsAddShopModalOpen] = useState(false);
   const [isCartDrawerOpen, setIsCartDrawerOpen] = useState(false);
+  const [lastBookedOrder, setLastBookedOrder] = useState<any | null>(null);
+
+  const handleOneClickWhatsAppLastOrder = (ord: any) => {
+    if (!ord) return;
+    const biz = getBusinessInfo();
+    const lines = [
+      `*${biz.banglaName} - সেলস অর্ডার মেমো*`,
+      ord.memoNumber ? `মেমো নং: ${ord.memoNumber}` : '',
+      `তারিখ: ${new Date().toLocaleString('en-GB')}`,
+      `---------------------------------`,
+      `দোকান/ক্রেতা: ${ord.shopName}`,
+      `মোবাইল: ${ord.shopPhone}`,
+      `ঠিকানা: ${ord.shopAddress}`,
+      `---------------------------------`,
+      `পণ্যসমূহ:`,
+      ...ord.items.map(
+        (it: any, idx: number) =>
+          `${idx + 1}. ${it.productName} - ${it.quantity} ${it.unit} @ ৳${it.unitPrice} = ৳${it.lineTotal}`
+      ),
+      `---------------------------------`,
+      `*মোট: ৳${ord.netTotal}*`,
+      `অগ্রিম: `,
+      `বাঁকী: `,
+    ].filter(Boolean);
+
+    const text = encodeURIComponent(lines.join('\n'));
+    const rawPhone = ord.shopPhone || '';
+    const banglaToEng = rawPhone.replace(/[০-৯]/g, (d: string) =>
+      '০১২৩৪৫৬৭৮৯'.indexOf(d).toString()
+    );
+    const digitsOnly = banglaToEng.replace(/[^0-9]/g, '');
+    const cleanPhone = !digitsOnly
+      ? ''
+      : digitsOnly.startsWith('880')
+      ? digitsOnly
+      : digitsOnly.startsWith('0')
+      ? `88${digitsOnly}`
+      : `880${digitsOnly}`;
+
+    const url = cleanPhone
+      ? `https://wa.me/${cleanPhone}?text=${text}`
+      : `https://wa.me/?text=${text}`;
+    window.open(url, '_blank');
+  };
 
   // Distinct routes derived from shops and the dynamic routes prop
   const availableRouteNames = useMemo(() => {
@@ -268,7 +314,9 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
       return;
     }
 
+    const memoNumber = `MS-${Date.now().toString().slice(-6)}`;
     const orderData = {
+      memoNumber,
       shopId: selectedShop.id,
       shopName: selectedShop.name,
       shopPhone: selectedShop.phone,
@@ -288,6 +336,7 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
       notes: orderNotes,
     };
 
+    setLastBookedOrder(orderData);
     onOrderCreated(orderData);
 
     // Reset form
@@ -299,6 +348,42 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
 
   return (
     <div className="max-w-7xl mx-auto px-3 sm:px-4 py-4 space-y-4">
+      {/* 1-Click WhatsApp Memo Send Banner right after booking an order */}
+      {lastBookedOrder && (
+        <div className="bg-emerald-900 text-white rounded-2xl p-3.5 sm:p-4 shadow-lg border border-emerald-700 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-in fade-in">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-emerald-700 flex items-center justify-center shrink-0">
+              <CheckCircle2 className="w-5 h-5 text-emerald-200" />
+            </div>
+            <div>
+              <h4 className="font-extrabold text-xs sm:text-sm">
+                অর্ডার সফলভাবে কাটা হয়েছে! ({lastBookedOrder.shopName} - ৳{lastBookedOrder.netTotal.toLocaleString()})
+              </h4>
+              <p className="text-[11px] text-emerald-200">
+                মেমো #{lastBookedOrder.memoNumber} ক্রেতার হোয়াটসঅ্যাপে পাঠাতে নিচের বাটনে ক্লিক করুন
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <button
+              type="button"
+              onClick={() => handleOneClickWhatsAppLastOrder(lastBookedOrder)}
+              className="flex-1 sm:flex-initial px-4 py-2.5 bg-[#25D366] hover:bg-[#1ebd5a] text-white font-black text-xs rounded-xl shadow-md flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+            >
+              <Send className="w-4 h-4" />
+              <span>হোয়াটসঅ্যাপে এক ক্লিকে মেমো পাঠান</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setLastBookedOrder(null)}
+              className="p-2 rounded-xl bg-emerald-800 hover:bg-emerald-700 text-emerald-200 cursor-pointer"
+              title="বন্ধ করুন"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
       {/* Top Shop Selector & Quick Info Bar */}
       <div className="bg-white rounded-2xl shadow-xs border border-neutral-200/90 p-3 sm:p-4">
         <div className="flex flex-col md:flex-row gap-3 items-start md:items-center justify-between pb-3 border-b border-neutral-200">
@@ -747,20 +832,32 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                   </div>
                 )}
 
-                {/* Financial Summary */}
-                <div className="bg-neutral-50 p-2.5 rounded-xl border border-neutral-200 space-y-1 text-[11px]">
-                  <div className="flex justify-between">
-                    <span className="text-neutral-600">নগদ আদায়:</span>
-                    <span className="font-bold text-emerald-700">৳{paidAmount.toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-neutral-600">এই অর্ডারের বাকী:</span>
-                    <span className="font-bold text-rose-600">৳{dueAmount.toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between border-t border-neutral-200 pt-1 font-bold text-neutral-900">
-                    <span>মোট বকেয়া জের:</span>
-                    <span className="text-rose-700">৳{totalOutstandingAfterOrder.toLocaleString()}</span>
-                  </div>
+                {/* Financial Summary - Mot, Agrim, Baki */}
+                <div className="rounded-xl border border-neutral-300 overflow-hidden bg-white shadow-xs">
+                  <table className="w-full text-xs font-bold border-collapse">
+                    <tbody>
+                      <tr className="border-b border-neutral-200">
+                        <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 w-1/2 border-r border-neutral-200">
+                          মোট
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono text-emerald-800 text-sm">
+                          ৳{netTotal.toLocaleString()}
+                        </td>
+                      </tr>
+                      <tr className="border-b border-neutral-200">
+                        <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 border-r border-neutral-200">
+                          অগ্রিম
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono text-neutral-900 text-sm h-7"></td>
+                      </tr>
+                      <tr>
+                        <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 border-r border-neutral-200">
+                          বাঁকী
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono text-neutral-900 text-sm h-7"></td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
 
                 {/* Notes Input */}

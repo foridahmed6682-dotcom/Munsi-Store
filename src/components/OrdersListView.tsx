@@ -16,15 +16,19 @@ import {
   Share2,
   Printer,
   Mail,
-  Download
+  Download,
+  Edit3,
+  Trash2
 } from 'lucide-react';
 import { Order } from '../types';
 import { getBusinessInfo } from '../lib/firebase';
 
 interface OrdersListViewProps {
   orders: Order[];
-  onViewMemo: (order: Order) => void;
+  onViewMemo: (order: Order, editMode?: boolean) => void;
   onUpdateDeliveryStatus: (orderId: string, status: Order['deliveryStatus']) => void;
+  onDeleteOrder?: (orderId: string) => void;
+  isAdmin?: boolean;
   onSyncWithSheets: () => void;
   onBackupToDrive: () => void;
   onSendEmailBackup?: () => void;
@@ -38,6 +42,8 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
   orders,
   onViewMemo,
   onUpdateDeliveryStatus,
+  onDeleteOrder,
+  isAdmin = false,
   onSyncWithSheets,
   onBackupToDrive,
   onSendEmailBackup,
@@ -46,6 +52,47 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
   spreadsheetUrl,
   lastDriveBackupLink,
 }) => {
+  const sendOrderToWhatsApp = (order: Order) => {
+    const biz = getBusinessInfo();
+    const lines = [
+      `*${biz.banglaName} - সেলস অর্ডার মেমো*`,
+      `মেমো নং: ${order.memoNumber}`,
+      `তারিখ: ${new Date(order.orderDate).toLocaleString('en-GB')}`,
+      `---------------------------------`,
+      `দোকান/ক্রেতা: ${order.shopName}`,
+      `মোবাইল: ${order.shopPhone}`,
+      `ঠিকানা: ${order.shopAddress}`,
+      `---------------------------------`,
+      `পণ্যসমূহ:`,
+      ...order.items.map(
+        (it, idx) =>
+          `${idx + 1}. ${it.productName} - ${it.quantity} ${it.unit} @ ৳${it.unitPrice} = ৳${it.lineTotal}`
+      ),
+      `---------------------------------`,
+      `*মোট: ৳${order.netTotal}*`,
+      `অগ্রিম: `,
+      `বাঁকী: `,
+    ].filter(Boolean);
+
+    const text = encodeURIComponent(lines.join('\n'));
+    const rawPhone = order.shopPhone || order.customerPhone || '';
+    const banglaToEng = rawPhone.replace(/[০-৯]/g, (d) =>
+      '০১২৩৪৫৬৭৮৯'.indexOf(d).toString()
+    );
+    const digitsOnly = banglaToEng.replace(/[^0-9]/g, '');
+    const cleanPhone = !digitsOnly
+      ? ''
+      : digitsOnly.startsWith('880')
+      ? digitsOnly
+      : digitsOnly.startsWith('0')
+      ? `88${digitsOnly}`
+      : `880${digitsOnly}`;
+
+    const url = cleanPhone
+      ? `https://wa.me/${cleanPhone}?text=${text}`
+      : `https://wa.me/?text=${text}`;
+    window.open(url, '_blank');
+  };
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING' | 'DELIVERED' | 'CANCELLED'>('ALL');
   const [timeFilter, setTimeFilter] = useState<'TODAY' | 'WEEK' | 'CUSTOM' | 'ALL'>('TODAY');
@@ -409,13 +456,23 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {/* 1-Click WhatsApp Memo Button */}
+                    <button
+                      onClick={() => sendOrderToWhatsApp(order)}
+                      className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1 shadow-xs cursor-pointer"
+                      title="এক ক্লিকে হোয়াটসঅ্যাপে মেমো পাঠান"
+                    >
+                      <Share2 className="w-3.5 h-3.5" />
+                      <span>হোয়াটসঅ্যাপ</span>
+                    </button>
+
                     {/* Delivery status toggle */}
                     <button
                       onClick={() =>
                         onUpdateDeliveryStatus(order.id, isDelivered ? 'PENDING' : 'DELIVERED')
                       }
-                      className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-colors flex items-center gap-1 ${
+                      className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-colors flex items-center gap-1 cursor-pointer ${
                         isDelivered
                           ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
                           : isCancelled
@@ -428,15 +485,40 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                       <span>{isDelivered ? 'ডেলিভার্ড' : 'অপেক্ষমান'}</span>
                     </button>
 
+                    {/* Edit Memo Button */}
+                    <button
+                      onClick={() => onViewMemo(order, true)}
+                      className="px-2.5 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-950 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer"
+                      title="মেমো এডিট করুন"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                      <span>এডিট</span>
+                    </button>
+
                     {/* View Memo Button */}
                     <button
-                      onClick={() => onViewMemo(order)}
-                      className="px-2.5 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-xl text-xs font-bold flex items-center gap-1"
+                      onClick={() => onViewMemo(order, false)}
+                      className="px-2.5 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer"
                       title="মেমো দেখুন ও প্রিন্ট করুন"
                     >
                       <Eye className="w-3.5 h-3.5" />
                       <span>মেমো</span>
                     </button>
+
+                    {/* Admin Delete Button */}
+                    {isAdmin && onDeleteOrder && (
+                      <button
+                        onClick={() => {
+                          if (window.confirm(`আপনি কি নিশ্চিত যে মেমো #${order.memoNumber} স্থায়ীভাবে ডিলিট করতে চান?`)) {
+                            onDeleteOrder(order.id);
+                          }
+                        }}
+                        className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-xl text-xs font-bold flex items-center justify-center cursor-pointer"
+                        title="মেমো ডিলিট করুন (এডমিন)"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -514,45 +596,46 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                 </tbody>
               </table>
 
-              {/* Summary */}
-              <div className="mt-4 flex justify-end">
-                <div className="w-64 space-y-1 text-[11px] text-neutral-700">
-                  <div className="flex justify-between">
-                    <span>উপমোট (Subtotal):</span>
-                    <span className="font-mono">৳{order.subTotal}</span>
-                  </div>
-                  {order.discountAmount > 0 && (
-                    <div className="flex justify-between text-emerald-700">
-                      <span>ছাড় (Discount):</span>
-                      <span className="font-mono">-৳{order.discountAmount}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between border-t border-neutral-200 pt-1 text-xs font-bold text-neutral-900">
-                    <span>নিট মোট (Net Total):</span>
-                    <span className="font-mono">৳{order.netTotal}</span>
-                  </div>
-                  <div className="flex justify-between text-emerald-800 font-medium">
-                    <span>জমা/নগদ আদায়:</span>
-                    <span className="font-mono">৳{order.paidAmount}</span>
-                  </div>
-                  <div className="flex justify-between text-rose-700 font-medium">
-                    <span>বাকী/বকেয়া (Due):</span>
-                    <span className="font-mono">৳{order.dueAmount}</span>
-                  </div>
-                  <div className="flex justify-between text-neutral-500 border-t border-dashed border-neutral-200 pt-1">
-                    <span>পূর্বের বকেয়া:</span>
-                    <span className="font-mono">৳{order.previousDueAtBooking}</span>
-                  </div>
-                  <div className="flex justify-between text-xs font-black text-neutral-900 border-t border-neutral-300 pt-1">
-                    <span>মোট বকেয়া জের:</span>
-                    <span className="font-mono">৳{order.totalOutstandingAfterOrder}</span>
-                  </div>
+              {/* Summary: Only Total calculated, Advance & Due blank */}
+              <div className="border-t border-neutral-200 pt-3 text-xs">
+                <div className="flex justify-end">
+                  <table className="w-56 border-collapse border border-neutral-400 text-xs font-bold">
+                    <tbody>
+                      <tr className="border-b border-neutral-400">
+                        <td className="border-r border-neutral-400 px-3 py-1.5 bg-neutral-100/80 text-neutral-800 text-left w-24">
+                          মোট
+                        </td>
+                        <td className="px-3 py-1.5 text-right font-mono text-neutral-900 text-sm">
+                          ৳{order.netTotal.toLocaleString()}
+                        </td>
+                      </tr>
+                      <tr className="border-b border-neutral-400">
+                        <td className="border-r border-neutral-400 px-3 py-1.5 bg-neutral-100/80 text-neutral-800 text-left">
+                          অগ্রিম
+                        </td>
+                        <td className="px-3 py-1.5 text-right font-mono text-sm h-7"></td>
+                      </tr>
+                      <tr>
+                        <td className="border-r border-neutral-400 px-3 py-1.5 bg-neutral-100/80 text-neutral-800 text-left">
+                          বাঁকী
+                        </td>
+                        <td className="px-3 py-1.5 text-right font-mono text-sm h-7"></td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               </div>
 
-              {/* Footer Note */}
-              <div className="text-center mt-6 pt-4 border-t border-neutral-200 text-[10px] text-neutral-500">
-                <p>{biz.banglaName} এর সাথে থাকার জন্য ধন্যবাদ!</p>
+              {/* Footer Signature Only - Buyer & Seller Signature pushed down */}
+              <div className="mt-24 pt-6 grid grid-cols-2 text-center text-xs text-neutral-800 font-bold">
+                <div>
+                  <div className="w-32 border-b border-neutral-500 mx-auto mb-1.5"></div>
+                  <span>ক্রেতার স্বাক্ষর</span>
+                </div>
+                <div>
+                  <div className="w-32 border-b border-neutral-500 mx-auto mb-1.5"></div>
+                  <span>বিক্রেতার স্বাক্ষর</span>
+                </div>
               </div>
             </div>
           );
