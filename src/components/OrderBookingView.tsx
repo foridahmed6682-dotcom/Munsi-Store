@@ -16,9 +16,10 @@ import {
   FileCheck,
   Package,
   X,
-  Send
+  Send,
+  RotateCcw
 } from 'lucide-react';
-import { Product, Shop, OrderItem, PaymentMethod, Route } from '../types';
+import { Product, Shop, OrderItem, PaymentMethod, Route, Order } from '../types';
 import { AddShopModal } from './AddShopModal';
 import { getBusinessInfo } from '../lib/firebase';
 
@@ -26,6 +27,7 @@ interface OrderBookingViewProps {
   products: Product[];
   shops: Shop[];
   routes?: Route[];
+  orders?: Order[];
   onOrderCreated: (order: any) => void;
   onAddShop: (shop: Shop) => void;
   selectedShopIdProp?: string;
@@ -36,6 +38,7 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
   products,
   shops,
   routes = [],
+  orders = [],
   onOrderCreated,
   onAddShop,
   selectedShopIdProp,
@@ -157,6 +160,55 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
   const selectedShop = useMemo(() => {
     return filteredShops.find((s) => s.id === selectedShopId) || filteredShops[0] || null;
   }, [filteredShops, selectedShopId]);
+
+  // Tool #5: Find most recent order for the selected shop
+  const lastShopOrder = useMemo(() => {
+    if (!selectedShop || !orders || orders.length === 0) return null;
+    const shopOrders = orders
+      .filter(
+        (o) =>
+          o.deliveryStatus !== 'CANCELLED' &&
+          o.items &&
+          o.items.length > 0 &&
+          (o.shopId === selectedShop.id ||
+            (o.shopName && o.shopName.trim().toLowerCase() === selectedShop.name.trim().toLowerCase()))
+      )
+      .sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
+    return shopOrders[0] || null;
+  }, [selectedShop, orders]);
+
+  const [repeatNotice, setRepeatNotice] = useState<string | null>(null);
+
+  const handleRepeatLastOrder = () => {
+    if (!lastShopOrder) return;
+    const nextCart: { [productId: string]: { quantity: number; unitPrice: number } } = { ...cart };
+    let addedCount = 0;
+
+    lastShopOrder.items.forEach((it) => {
+      const matchedProd =
+        products.find((p) => p.id === it.productId) ||
+        products.find((p) => p.banglaName === it.productName || p.name === it.productName);
+      if (matchedProd && matchedProd.stock > 0) {
+        const safeQty = Math.min(it.quantity, matchedProd.stock);
+        if (safeQty > 0) {
+          nextCart[matchedProd.id] = {
+            quantity: safeQty,
+            unitPrice: matchedProd.unitPrice,
+          };
+          addedCount++;
+        }
+      }
+    });
+
+    if (addedCount > 0) {
+      setCart(nextCart);
+      setRepeatNotice(`${lastShopOrder.shopName}-এর আগের মেমো (#${lastShopOrder.memoNumber}) থেকে ${addedCount}টি পণ্য কার্টে যুক্ত হয়েছে!`);
+      setTimeout(() => setRepeatNotice(null), 4000);
+    } else {
+      setRepeatNotice('আগের অর্ডারের পণ্যগুলোর স্টক বর্তমানে শেষ অথবা ক্যাটালগে নেই।');
+      setTimeout(() => setRepeatNotice(null), 4000);
+    }
+  };
 
   // Filtered products
   const filteredProducts = useMemo(() => {
@@ -479,31 +531,62 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
 
         {/* Selected Shop Info Card */}
         {selectedShop && (
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs">
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-sm text-neutral-900">{selectedShop.name}</span>
-              <span className="text-neutral-500">|</span>
-              <span className="text-neutral-600 flex items-center gap-1">
-                <Phone className="w-3 h-3 text-neutral-400" /> {selectedShop.phone}
-              </span>
-              <span className="hidden sm:inline text-neutral-500">|</span>
-              <span className="hidden sm:inline text-neutral-500">{selectedShop.address}</span>
-            </div>
+          <div className="mt-3 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-bold text-sm text-neutral-900">{selectedShop.name}</span>
+                <span className="text-neutral-500">|</span>
+                <span className="text-neutral-600 flex items-center gap-1">
+                  <Phone className="w-3 h-3 text-neutral-400" /> {selectedShop.phone}
+                </span>
+                <span className="hidden sm:inline text-neutral-500">|</span>
+                <span className="hidden sm:inline text-neutral-500">{selectedShop.address}</span>
+              </div>
 
-            <div className="flex items-center gap-2">
-              <div
-                className={`px-3 py-1 rounded-xl font-bold flex items-center gap-1.5 ${
-                  selectedShop.previousDue > 8000
-                    ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                    : selectedShop.previousDue > 0
-                    ? 'bg-amber-50 text-amber-800 border border-amber-200'
-                    : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                }`}
-              >
-                {selectedShop.previousDue > 8000 && <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />}
-                <span>পূর্বের বকেয়া: ৳{selectedShop.previousDue.toLocaleString()}</span>
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Tool #5: 1-Click Repeat Last Order Button */}
+                {lastShopOrder && (
+                  <button
+                    type="button"
+                    onClick={handleRepeatLastOrder}
+                    className="px-3 py-1 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-900 border border-teal-300 font-extrabold text-xs flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
+                    title={`সর্বশেষ মেমো #${lastShopOrder.memoNumber} (${lastShopOrder.items.length}টি পণ্য, ৳${lastShopOrder.netTotal}) এক ক্লিকে কার্টে কপি করুন`}
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-teal-700" />
+                    <span>আগের অর্ডার কপি করুন ({lastShopOrder.items.length} পদ)</span>
+                  </button>
+                )}
+
+                <div
+                  className={`px-3 py-1 rounded-xl font-bold flex items-center gap-1.5 ${
+                    selectedShop.previousDue > 8000
+                      ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                      : selectedShop.previousDue > 0
+                      ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                      : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                  }`}
+                >
+                  {selectedShop.previousDue > 8000 && <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />}
+                  <span>পূর্বের বকেয়া: ৳{selectedShop.previousDue.toLocaleString()}</span>
+                </div>
               </div>
             </div>
+
+            {repeatNotice && (
+              <div className="px-3 py-2 rounded-xl bg-teal-900 text-white text-xs font-bold flex items-center justify-between animate-in fade-in">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-teal-300 shrink-0" />
+                  <span>{repeatNotice}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRepeatNotice(null)}
+                  className="text-teal-200 hover:text-white cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

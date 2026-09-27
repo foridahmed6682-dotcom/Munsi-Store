@@ -23,7 +23,7 @@ import {
   addDoc
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { AppUser, UserRole, Shop, Product, Order, DueCollectionRecord, Category, AuthorizedUserEmail, Route, BusinessInfo, CustomerDeliveryAddress } from '../types';
+import { AppUser, UserRole, Shop, Product, Order, DueCollectionRecord, Category, AuthorizedUserEmail, Route, BusinessInfo, CustomerDeliveryAddress, DailyExpenseRecord, StaffTargetConfig } from '../types';
 import { compressDataUrlIfNeeded } from './imageUtils';
 import {
   DEFAULT_CATEGORIES,
@@ -383,7 +383,7 @@ export async function resolveRoleByEmailAndUid(
         return {
           role: foundInCatalog.role || 'customer',
           assignedRoute: foundInCatalog.assignedRoute || 'সব রুট (All Routes)',
-          matchedName: foundInCatalog.fullName || foundInCatalog.name,
+          matchedName: foundInCatalog.fullName,
         };
       }
     }
@@ -398,7 +398,7 @@ export async function resolveRoleByEmailAndUid(
         return {
           role: localMatched.role || 'customer',
           assignedRoute: localMatched.assignedRoute || 'সব রুট (All Routes)',
-          matchedName: localMatched.fullName || localMatched.name,
+          matchedName: localMatched.fullName,
         };
       }
     } catch {
@@ -414,7 +414,7 @@ export async function resolveRoleByEmailAndUid(
     return {
       role: defaultAuth.role || 'admin',
       assignedRoute: defaultAuth.assignedRoute || 'সব রুট (All Routes)',
-      matchedName: defaultAuth.name,
+      matchedName: defaultAuth.fullName,
     };
   }
 
@@ -1319,6 +1319,154 @@ export async function saveBusinessInfoToCloud(info: BusinessInfo) {
   pushBulkDataToServerMirror({ businessInfo: cleaned });
   try {
     await setDoc(doc(db, 'settings', 'businessInfo'), cleaned);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+// Due Collections Cloud Subscription
+export function subscribeToCloudDueCollections(onData: (collections: DueCollectionRecord[]) => void) {
+  const path = 'dueCollections';
+  const pollFirebaseDirect = async () => {
+    const directCols = await readFirestoreCatalogDirect<DueCollectionRecord>('dueCollections');
+    if (directCols.length > 0) {
+      const sorted = [...directCols].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      onData(sorted);
+    }
+  };
+
+  const unsub = onSnapshot(
+    collection(db, path),
+    (snapshot) => {
+      if (snapshot.empty) {
+        pollFirebaseDirect();
+        return;
+      }
+      const list: DueCollectionRecord[] = [];
+      snapshot.forEach((d) => {
+        list.push(d.data() as DueCollectionRecord);
+      });
+      if (list.length > 0) {
+        list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        writeFirestoreCatalogDirect('dueCollections', list);
+        onData(list);
+      }
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, path);
+      pollFirebaseDirect();
+    }
+  );
+
+  return () => {
+    unsub();
+  };
+}
+
+// Daily Expenses Cloud Sync (Tool #3)
+export function subscribeToCloudDailyExpenses(onData: (expenses: DailyExpenseRecord[]) => void) {
+  const path = 'dailyExpenses';
+  const pollFirebaseDirect = async () => {
+    const directExps = await readFirestoreCatalogDirect<DailyExpenseRecord>('dailyExpenses');
+    if (directExps.length > 0) {
+      const sorted = [...directExps].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      onData(sorted);
+    }
+  };
+
+  const unsub = onSnapshot(
+    collection(db, path),
+    (snapshot) => {
+      if (snapshot.empty) {
+        pollFirebaseDirect();
+        return;
+      }
+      const list: DailyExpenseRecord[] = [];
+      snapshot.forEach((d) => {
+        list.push(d.data() as DailyExpenseRecord);
+      });
+      if (list.length > 0) {
+        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        writeFirestoreCatalogDirect('dailyExpenses', list);
+        onData(list);
+      }
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, path);
+      pollFirebaseDirect();
+    }
+  );
+
+  return () => {
+    unsub();
+  };
+}
+
+export async function saveDailyExpenseToCloud(expense: DailyExpenseRecord) {
+  const path = `dailyExpenses/${expense.id}`;
+  const cleaned = cleanForFirestore(expense);
+  try {
+    await setDoc(doc(db, 'dailyExpenses', expense.id), cleaned);
+    await upsertItemInFirebaseCatalog('dailyExpenses', cleaned, 'id');
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function deleteDailyExpenseFromCloud(expenseId: string) {
+  const path = `dailyExpenses/${expenseId}`;
+  try {
+    await deleteDoc(doc(db, 'dailyExpenses', expenseId));
+    await removeItemFromFirebaseCatalog('dailyExpenses', expenseId, 'id');
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+// Staff Targets & Commission Cloud Sync (Tool #8)
+export function subscribeToCloudStaffTargets(onData: (targets: StaffTargetConfig[]) => void) {
+  const path = 'staffTargets';
+  const pollFirebaseDirect = async () => {
+    const directTargets = await readFirestoreCatalogDirect<StaffTargetConfig>('staffTargets');
+    if (directTargets.length > 0) {
+      onData(directTargets);
+    }
+  };
+
+  const unsub = onSnapshot(
+    collection(db, path),
+    (snapshot) => {
+      if (snapshot.empty) {
+        pollFirebaseDirect();
+        return;
+      }
+      const list: StaffTargetConfig[] = [];
+      snapshot.forEach((d) => {
+        list.push(d.data() as StaffTargetConfig);
+      });
+      if (list.length > 0) {
+        writeFirestoreCatalogDirect('staffTargets', list);
+        onData(list);
+      }
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, path);
+      pollFirebaseDirect();
+    }
+  );
+
+  return () => {
+    unsub();
+  };
+}
+
+export async function saveStaffTargetToCloud(target: StaffTargetConfig) {
+  const safeId = target.id || target.email.toLowerCase().trim().replace(/[@.]/g, '_');
+  const path = `staffTargets/${safeId}`;
+  const cleaned = cleanForFirestore({ ...target, id: safeId });
+  try {
+    await setDoc(doc(db, 'staffTargets', safeId), cleaned);
+    await upsertItemInFirebaseCatalog('staffTargets', cleaned, 'id');
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }

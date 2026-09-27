@@ -21,14 +21,23 @@ import {
   Trash2,
   Navigation,
   X,
-  Banknote
+  Banknote,
+  PackageCheck,
+  Wallet,
+  RotateCcw,
+  Plus,
+  ClipboardList
 } from 'lucide-react';
-import { Order, Shop, PaymentMethod } from '../types';
+import { Order, Shop, PaymentMethod, DueCollectionRecord, DailyExpenseRecord } from '../types';
 import { getBusinessInfo } from '../lib/firebase';
 
 interface OrdersListViewProps {
   orders: Order[];
   shops?: Shop[];
+  dueCollections?: DueCollectionRecord[];
+  dailyExpenses?: DailyExpenseRecord[];
+  onAddDailyExpense?: (expense: Omit<DailyExpenseRecord, 'id' | 'createdAt'>) => void;
+  onDeleteDailyExpense?: (id: string) => void;
   onViewMemo: (order: Order, editMode?: boolean) => void;
   onUpdateDeliveryStatus: (orderId: string, status: Order['deliveryStatus']) => void;
   onSettleOrderDelivery?: (
@@ -36,7 +45,9 @@ interface OrdersListViewProps {
     paidAmount: number,
     dueAmount: number,
     paymentMethod: PaymentMethod,
-    notes?: string
+    notes?: string,
+    returnAmount?: number,
+    returnReason?: string
   ) => void;
   onDeleteOrder?: (orderId: string) => void;
   isAdmin?: boolean;
@@ -52,6 +63,10 @@ interface OrdersListViewProps {
 export const OrdersListView: React.FC<OrdersListViewProps> = ({
   orders,
   shops = [],
+  dueCollections = [],
+  dailyExpenses = [],
+  onAddDailyExpense,
+  onDeleteDailyExpense,
   onViewMemo,
   onUpdateDeliveryStatus,
   onSettleOrderDelivery,
@@ -134,9 +149,26 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
   const [settlePaidInput, setSettlePaidInput] = useState<string>('');
   const [settleMethod, setSettleMethod] = useState<PaymentMethod>('CASH');
   const [settleNotes, setSettleNotes] = useState<string>('');
+  const [settleReturnAmountInput, setSettleReturnAmountInput] = useState<string>('0');
+  const [settleReturnReason, setSettleReturnReason] = useState<string>('');
+
+  // Tool #1: DSR Delivery Load Sheet / Chalan Modal State
+  const [isLoadSheetOpen, setIsLoadSheetOpen] = useState(false);
+  const [loadSheetScope, setLoadSheetScope] = useState<'PENDING' | 'TODAY' | 'YESTERDAY' | 'FILTERED'>('PENDING');
+  const [loadSheetRoute, setLoadSheetRoute] = useState<string>('ALL');
+
+  // Tool #3: Daily Cash Closing & Expense Ledger Modal State
+  const [isCashClosingOpen, setIsCashClosingOpen] = useState(false);
+  const [cashClosingDate, setCashClosingDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [expCategory, setExpCategory] = useState<DailyExpenseRecord['category']>('ভ্যান/গাড়ি ভাড়া');
+  const [expAmount, setExpAmount] = useState<string>('');
+  const [expNote, setExpNote] = useState<string>('');
 
   const openSettleModal = (order: Order) => {
     setSettlingOrder(order);
+    const existingReturn = order.returnAmount || 0;
+    setSettleReturnAmountInput(existingReturn > 0 ? existingReturn.toString() : '');
+    setSettleReturnReason(order.returnReason || '');
     if (order.deliveryStatus === 'DELIVERED') {
       if (order.dueAmount === 0) {
         setSettleType('FULL_CASH');
@@ -214,6 +246,134 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
     return { count, totalSales, totalCash, totalDue, pendingSync };
   }, [filteredOrders]);
 
+  // Distinct Routes across orders for Load Sheet
+  const orderRoutes = useMemo(() => {
+    const s = new Set<string>();
+    orders.forEach((o) => {
+      if (o.shopRoute) s.add(o.shopRoute);
+    });
+    return Array.from(s);
+  }, [orders]);
+
+  // Tool #1: Load Sheet Aggregation
+  const loadSheetData = useMemo(() => {
+    const targetOrders = orders.filter((o) => {
+      if (o.deliveryStatus === 'CANCELLED') return false;
+      if (loadSheetRoute !== 'ALL' && o.shopRoute !== loadSheetRoute) return false;
+      if (loadSheetScope === 'PENDING') return o.deliveryStatus === 'PENDING';
+      if (loadSheetScope === 'TODAY') return o.orderDate.startsWith(todayStr);
+      if (loadSheetScope === 'YESTERDAY') return o.orderDate.startsWith(yesterdayStr);
+      return filteredOrders.some((fo) => fo.id === o.id);
+    });
+
+    const itemMap = new Map<
+      string,
+      {
+        productId: string;
+        productName: string;
+        unit: string;
+        unitPrice: number;
+        totalQty: number;
+        totalFreeQty: number;
+        totalLoadQty: number;
+        totalValue: number;
+        shopsSet: Set<string>;
+      }
+    >();
+
+    const uniqueShops = new Set<string>();
+    let grandTotalValue = 0;
+
+    targetOrders.forEach((ord) => {
+      uniqueShops.add(ord.shopId || ord.shopName);
+      grandTotalValue += ord.netTotal;
+      ord.items.forEach((it) => {
+        const key = `${it.productId}__${it.unit}`;
+        const prev = itemMap.get(key);
+        const freeQty = it.tradeOfferQty || 0;
+        if (prev) {
+          prev.totalQty += it.quantity;
+          prev.totalFreeQty += freeQty;
+          prev.totalLoadQty += it.quantity + freeQty;
+          prev.totalValue += it.lineTotal;
+          prev.shopsSet.add(ord.shopId || ord.shopName);
+        } else {
+          itemMap.set(key, {
+            productId: it.productId,
+            productName: it.productName,
+            unit: it.unit,
+            unitPrice: it.unitPrice,
+            totalQty: it.quantity,
+            totalFreeQty: freeQty,
+            totalLoadQty: it.quantity + freeQty,
+            totalValue: it.lineTotal,
+            shopsSet: new Set([ord.shopId || ord.shopName]),
+          });
+        }
+      });
+    });
+
+    const items = Array.from(itemMap.values()).sort((a, b) => b.totalLoadQty - a.totalLoadQty);
+    return {
+      ordersCount: targetOrders.length,
+      shopsCount: uniqueShops.size,
+      grandTotalValue,
+      items,
+      targetOrders,
+    };
+  }, [orders, filteredOrders, loadSheetScope, loadSheetRoute, todayStr, yesterdayStr]);
+
+  // Tool #3: Daily Cash Closing & Expense Summary for cashClosingDate
+  const cashClosingSummary = useMemo(() => {
+    const dayOrders = orders.filter(
+      (o) => o.orderDate.startsWith(cashClosingDate) || (o.deliveryStatus === 'DELIVERED' && o.orderDate.startsWith(cashClosingDate))
+    );
+    const deliveredDayOrders = dayOrders.filter((o) => o.deliveryStatus === 'DELIVERED');
+
+    let orderCashReceived = 0;
+    let orderDigitalReceived = 0; // BKASH / NAGAD
+    let totalReturnedValue = 0;
+
+    deliveredDayOrders.forEach((o) => {
+      if (o.paymentMethod === 'BKASH' || o.paymentMethod === 'NAGAD') {
+        orderDigitalReceived += o.paidAmount || 0;
+      } else {
+        orderCashReceived += o.paidAmount || 0;
+      }
+      totalReturnedValue += o.returnAmount || 0;
+    });
+
+    const dayDueCols = dueCollections.filter((c) => c.date.startsWith(cashClosingDate));
+    let dueCashReceived = 0;
+    let dueDigitalReceived = 0;
+    dayDueCols.forEach((c) => {
+      if (c.paymentMethod === 'BKASH' || c.paymentMethod === 'NAGAD') {
+        dueDigitalReceived += c.amount || 0;
+      } else {
+        dueCashReceived += c.amount || 0;
+      }
+    });
+
+    const dayExpenses = dailyExpenses.filter((e) => e.date === cashClosingDate);
+    const totalExpenses = dayExpenses.reduce((s, e) => s + (e.amount || 0), 0);
+
+    const totalPhysicalCashIn = orderCashReceived + dueCashReceived;
+    const totalDigitalIn = orderDigitalReceived + dueDigitalReceived;
+    const netCashInHand = totalPhysicalCashIn - totalExpenses;
+
+    return {
+      deliveredOrdersCount: deliveredDayOrders.length,
+      orderCashReceived,
+      dueCashReceived,
+      totalPhysicalCashIn,
+      totalDigitalIn,
+      totalReturnedValue,
+      dayExpenses,
+      totalExpenses,
+      netCashInHand,
+    };
+  }, [orders, dueCollections, dailyExpenses, cashClosingDate]);
+
   return (
     <div className="max-w-7xl mx-auto px-3 sm:px-4 py-4 space-y-4">
       {/* Top Metrics Cards */}
@@ -260,6 +420,60 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
             ৳{metrics.totalDue.toLocaleString()}
           </p>
           <p className="text-[11px] text-rose-500 mt-0.5">বকেয়া তালিকায় যুক্ত</p>
+        </div>
+      </div>
+
+      {/* DSR Load Sheet & Daily Cash Closing Quick Tools Bar */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="bg-white border border-neutral-200 rounded-2xl p-3.5 flex items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center shrink-0">
+              <PackageCheck className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <h4 className="text-xs sm:text-sm font-extrabold text-neutral-900 truncate">
+                ডিএসআর ডেলিভারি লোডশিট (Chalan / Load Sheet)
+              </h4>
+              <p className="text-[11px] text-neutral-500 truncate">
+                গোডাউন থেকে ভ্যানে মাল তোলার জন্য সব অর্ডারের মোট পণ্যের একীভূত তালিকা
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setLoadSheetScope(totalPendingOrdersCount > 0 ? 'PENDING' : 'FILTERED');
+              setIsLoadSheetOpen(true);
+            }}
+            className="px-3.5 py-2 bg-teal-700 hover:bg-teal-600 text-white rounded-xl text-xs font-extrabold shrink-0 cursor-pointer shadow-xs transition-colors flex items-center gap-1.5"
+          >
+            <ClipboardList className="w-3.5 h-3.5" />
+            <span>লোডশিট দেখুন</span>
+          </button>
+        </div>
+
+        <div className="bg-white border border-neutral-200 rounded-2xl p-3.5 flex items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-center shrink-0">
+              <Wallet className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <h4 className="text-xs sm:text-sm font-extrabold text-neutral-900 truncate">
+                দৈনিক ক্যাশ ক্লোজিং ও খরচের হিসাব (Cash Ledger)
+              </h4>
+              <p className="text-[11px] text-neutral-500 truncate">
+                আজকের মোট নগদ আদায়, ভ্যান ভাড়া/খরচ বাদ দিয়ে দিনশেষে নিট ক্যাশ জমা
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsCashClosingOpen(true)}
+            className="px-3.5 py-2 bg-neutral-900 hover:bg-neutral-800 text-white rounded-xl text-xs font-extrabold shrink-0 cursor-pointer shadow-xs transition-colors flex items-center gap-1.5"
+          >
+            <Wallet className="w-3.5 h-3.5 text-amber-400" />
+            <span>ক্যাশ ক্লোজিং</span>
+          </button>
         </div>
       </div>
 
@@ -560,6 +774,15 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                     <span>ফোন: {order.shopPhone}</span>
                     <span>•</span>
                     <span>পেমেন্ট: <strong className="text-neutral-700">{order.paymentMethod}</strong></span>
+                    {(order.returnAmount || 0) > 0 && (
+                      <>
+                        <span>•</span>
+                        <span className="text-rose-600 font-bold">
+                          ফেরত/ড্যামেজ বাদ: ৳{(order.returnAmount || 0).toLocaleString()}
+                          {order.returnReason ? ` (${order.returnReason})` : ''}
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -783,14 +1006,22 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
           settlingOrder.deliveryStatus === 'DELIVERED' ? settlingOrder.dueAmount || 0 : 0;
         const baseShopDue = Math.max(0, (matchedShop?.previousDue || 0) - prevOrderDueApplied);
 
+        const prevReturnApplied = settlingOrder.returnAmount || 0;
+        const originalOrderGross = settlingOrder.netTotal + prevReturnApplied;
+        const returnDeduction = Math.min(
+          originalOrderGross,
+          Math.max(0, Number(settleReturnAmountInput) || 0)
+        );
+        const effectiveNetTotal = Math.max(0, originalOrderGross - returnDeduction);
+
         const calculatedPaid =
           settleType === 'FULL_CASH'
-            ? settlingOrder.netTotal
+            ? effectiveNetTotal
             : settleType === 'FULL_DUE'
             ? 0
-            : Math.min(settlingOrder.netTotal, Math.max(0, Number(settlePaidInput) || 0));
+            : Math.min(effectiveNetTotal, Math.max(0, Number(settlePaidInput) || 0));
 
-        const calculatedDue = Math.max(0, settlingOrder.netTotal - calculatedPaid);
+        const calculatedDue = Math.max(0, effectiveNetTotal - calculatedPaid);
         const finalMethod: PaymentMethod =
           calculatedDue === 0
             ? settleMethod
@@ -799,8 +1030,8 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
             : 'PARTIAL';
 
         return (
-          <div className="fixed inset-0 z-50 bg-neutral-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in">
-            <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl border border-neutral-200 overflow-hidden">
+          <div className="fixed inset-0 z-50 bg-neutral-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in overflow-y-auto">
+            <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl border border-neutral-200 overflow-hidden my-auto">
               {/* Header */}
               <div className="bg-emerald-900 text-white px-5 py-4 flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
@@ -809,7 +1040,7 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                   </div>
                   <div>
                     <h3 className="font-extrabold text-sm sm:text-base">
-                      মাল ডেলিভারি ও টাকা/বাকি হিসাব
+                      মাল ডেলিভারি, রিটার্ন ও পেমেন্ট হিসাব
                     </h3>
                     <p className="text-[11px] text-emerald-200">
                       {settlingOrder.shopName} • মেমো: {settlingOrder.memoNumber}
@@ -825,13 +1056,15 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                 </button>
               </div>
 
-              <div className="p-4 sm:p-5 space-y-4 text-xs">
+              <div className="p-4 sm:p-5 space-y-3.5 text-xs max-h-[82vh] overflow-y-auto">
                 {/* Bill Summary & Quick Edit Link */}
                 <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-3.5 flex items-center justify-between">
                   <div>
-                    <span className="text-neutral-500 font-medium block">মেমোর মোট বিল:</span>
+                    <span className="text-neutral-500 font-medium block">
+                      {returnDeduction > 0 ? `মূল বিল ৳${originalOrderGross.toLocaleString()} (ফেরত বাদে নিট বিল):` : 'মেমোর মোট বিল:'}
+                    </span>
                     <span className="text-xl font-black text-neutral-900 font-mono">
-                      ৳{settlingOrder.netTotal.toLocaleString()}
+                      ৳{effectiveNetTotal.toLocaleString()}
                     </span>
                   </div>
                   <button
@@ -844,21 +1077,92 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                     className="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-950 rounded-xl font-bold flex items-center gap-1 cursor-pointer"
                   >
                     <Edit3 className="w-3.5 h-3.5" />
-                    <span>মাল কম-বেশি হলে এডিট</span>
+                    <span>মেমো আইটেম এডিট</span>
                   </button>
+                </div>
+
+                {/* Tool #2: Sales Return / Damage Adjustment at Delivery Time */}
+                <div className="bg-rose-50/60 border border-rose-200 rounded-2xl p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="font-extrabold text-rose-950 flex items-center gap-1.5">
+                      <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
+                      <span>মাল ফেরত / ড্যামেজ রিটার্ন বাদ (যদি থাকে):</span>
+                    </label>
+                    {returnDeduction > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSettleReturnAmountInput('');
+                          setSettleReturnReason('');
+                        }}
+                        className="text-[10px] font-bold text-rose-600 hover:underline cursor-pointer"
+                      >
+                        রিসেট করুন
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Quick click item buttons to add return amount */}
+                  {settlingOrder.items.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {settlingOrder.items.map((it, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => {
+                            const nextAmt = (Number(settleReturnAmountInput) || 0) + it.unitPrice;
+                            if (nextAmt <= originalOrderGross) {
+                              setSettleReturnAmountInput(String(nextAmt));
+                              const tag = `${it.productName} ১ ${it.unit} ফেরত`;
+                              setSettleReturnReason((prev) => (prev ? `${prev}, ${tag}` : tag));
+                            }
+                          }}
+                          className="px-2 py-1 bg-white hover:bg-rose-100 text-rose-900 border border-rose-200 rounded-lg text-[10px] font-bold cursor-pointer transition-colors"
+                          title="১ ইউনিট ফেরত হিসেবে যোগ করতে ক্লিক করুন"
+                        >
+                          + ১ {it.unit} {it.productName} (৳{it.unitPrice})
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <span className="text-[10px] text-rose-800 font-semibold block mb-0.5">ফেরত/ড্যামেজ টাকার পরিমাণ (৳)</span>
+                      <input
+                        type="number"
+                        min="0"
+                        max={originalOrderGross}
+                        value={settleReturnAmountInput}
+                        onChange={(e) => setSettleReturnAmountInput(e.target.value)}
+                        placeholder="৳ ০"
+                        className="w-full p-2 rounded-xl border border-rose-300 bg-white font-black text-neutral-900 text-xs focus:ring-2 focus:ring-rose-500 focus:outline-hidden"
+                      />
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-rose-800 font-semibold block mb-0.5">ফেরতের কারণ / বিবরণ</span>
+                      <input
+                        type="text"
+                        value={settleReturnReason}
+                        onChange={(e) => setSettleReturnReason(e.target.value)}
+                        placeholder="যেমন: ২ পিস ড্যামেজ ফেরত"
+                        className="w-full p-2 rounded-xl border border-rose-300 bg-white font-medium text-neutral-900 text-xs focus:ring-2 focus:ring-rose-500 focus:outline-hidden"
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 {/* 3 Payment Settlement Modes */}
                 <div>
                   <label className="font-extrabold text-neutral-800 block mb-2">
-                    ডোকানদার কীভাবে পেমেন্ট করছেন?
+                    দোকানদার কীভাবে পেমেন্ট করছেন?
                   </label>
                   <div className="grid grid-cols-3 gap-2">
                     <button
                       type="button"
                       onClick={() => {
                         setSettleType('FULL_CASH');
-                        setSettlePaidInput(settlingOrder.netTotal.toString());
+                        setSettlePaidInput(effectiveNetTotal.toString());
                       }}
                       className={`p-2.5 rounded-2xl border text-center font-bold transition-all cursor-pointer ${
                         settleType === 'FULL_CASH'
@@ -875,7 +1179,7 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                       type="button"
                       onClick={() => {
                         setSettleType('PARTIAL');
-                        if (settlePaidInput === settlingOrder.netTotal.toString() || settlePaidInput === '0') {
+                        if (settlePaidInput === effectiveNetTotal.toString() || settlePaidInput === '0') {
                           setSettlePaidInput('');
                         }
                       }}
@@ -918,10 +1222,10 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                     <input
                       type="number"
                       min="0"
-                      max={settlingOrder.netTotal}
+                      max={effectiveNetTotal}
                       value={settlePaidInput}
                       onChange={(e) => setSettlePaidInput(e.target.value)}
-                      placeholder={`যেমন: ${Math.round(settlingOrder.netTotal / 2)}`}
+                      placeholder={`যেমন: ${Math.round(effectiveNetTotal / 2)}`}
                       className="w-full p-2.5 rounded-xl border border-amber-300 bg-white font-black text-base text-neutral-900 focus:ring-2 focus:ring-amber-500 focus:outline-hidden"
                       autoFocus
                     />
@@ -957,6 +1261,12 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
 
                 {/* Live Financial Breakdown Box */}
                 <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3 space-y-1.5 font-bold">
+                  {returnDeduction > 0 && (
+                    <div className="flex justify-between text-rose-700 text-[11px]">
+                      <span>মাল ফেরত / ড্যামেজ বাবদ কর্তন:</span>
+                      <span className="font-mono">- ৳{returnDeduction.toLocaleString()}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-emerald-800">
                     <span>আজকে নগদ আদায়:</span>
                     <span className="font-mono text-sm">৳{calculatedPaid.toLocaleString()}</span>
@@ -986,7 +1296,9 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                           calculatedPaid,
                           calculatedDue,
                           finalMethod,
-                          settleNotes
+                          settleNotes,
+                          returnDeduction,
+                          settleReturnReason.trim()
                         );
                       } else {
                         onUpdateDeliveryStatus(settlingOrder.id, 'DELIVERED');
@@ -1011,6 +1323,414 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                       অপেক্ষমান (Pending) স্ট্যাটাসে ফিরিয়ে নিন
                     </button>
                   )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Tool #1 Modal: DSR Delivery Load Sheet / Chalan Generator */}
+      {isLoadSheetOpen && (() => {
+        const biz = getBusinessInfo();
+        const whatsappLoadSheetText = encodeURIComponent(
+          [
+            `*${biz.banglaName} - ডিএসআর ডেলিভারি লোডশিট (Chalan)*`,
+            `তারিখ: ${new Date().toLocaleDateString('en-GB')}`,
+            `রুট: ${loadSheetRoute === 'ALL' ? 'সকল রুট' : loadSheetRoute}`,
+            `মোট মেমো: ${loadSheetData.ordersCount}টি | মোট দোকান: ${loadSheetData.shopsCount}টি`,
+            `---------------------------------`,
+            ...loadSheetData.items.map(
+              (it, i) =>
+                `${i + 1}. ${it.productName} — *${it.totalLoadQty} ${it.unit}*${
+                  it.totalFreeQty > 0 ? ` (অর্ডার ${it.totalQty} + ফ্রি ${it.totalFreeQty})` : ''
+                } [${it.shopsSet.size} দোকান]`
+            ),
+            `---------------------------------`,
+            `*সর্বমোট মালের মূল্য: ৳${loadSheetData.grandTotalValue.toLocaleString()}*`,
+          ].join('\n')
+        );
+
+        return (
+          <div className="fixed inset-0 z-50 bg-neutral-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in overflow-y-auto">
+            <div className="bg-white rounded-3xl max-w-3xl w-full shadow-2xl border border-neutral-200 overflow-hidden my-auto">
+              <div className="bg-teal-900 text-white px-5 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-teal-700 flex items-center justify-center">
+                    <PackageCheck className="w-5 h-5 text-teal-200" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-sm sm:text-base">
+                      ডিএসআর ডেলিভারি লোডশিট ও চালান সামারি
+                    </h3>
+                    <p className="text-[11px] text-teal-200">
+                      গোডাউন থেকে গাড়ি বা ভ্যানে মাল তোলার একীভূত তালিকা
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsLoadSheetOpen(false)}
+                  className="p-1.5 rounded-xl bg-teal-800 hover:bg-teal-700 text-teal-100 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-4 sm:p-5 space-y-4 text-xs max-h-[84vh] overflow-y-auto">
+                {/* Filter Bar inside Load Sheet */}
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 bg-neutral-50 p-3 rounded-2xl border border-neutral-200">
+                  <div className="flex flex-wrap items-center gap-1">
+                    {[
+                      { id: 'PENDING', label: `অপেক্ষমান ডেলিভারি (${totalPendingOrdersCount})` },
+                      { id: 'YESTERDAY', label: 'গতকালের অর্ডার' },
+                      { id: 'TODAY', label: 'আজকের অর্ডার' },
+                      { id: 'FILTERED', label: `বর্তমান ফিল্টার (${filteredOrders.length})` },
+                    ].map((tab) => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setLoadSheetScope(tab.id as any)}
+                        className={`px-3 py-1.5 rounded-xl font-bold text-xs cursor-pointer transition-colors ${
+                          loadSheetScope === tab.id
+                            ? 'bg-teal-700 text-white'
+                            : 'bg-white text-neutral-700 border border-neutral-200 hover:bg-neutral-100'
+                        }`}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <select
+                    value={loadSheetRoute}
+                    onChange={(e) => setLoadSheetRoute(e.target.value)}
+                    className="px-3 py-1.5 rounded-xl border border-neutral-300 bg-white font-bold text-neutral-800 text-xs"
+                  >
+                    <option value="ALL">সকল রুট ({orderRoutes.length}টি)</option>
+                    {orderRoutes.map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Summary Stat Row */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-3">
+                    <span className="text-[11px] text-neutral-500 block">মোট মেমো সংখ্যা</span>
+                    <span className="text-lg font-black text-neutral-900">{loadSheetData.ordersCount}টি</span>
+                  </div>
+                  <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-3">
+                    <span className="text-[11px] text-neutral-500 block">মোট ডেলিভারি দোকান</span>
+                    <span className="text-lg font-black text-teal-700">{loadSheetData.shopsCount}টি</span>
+                  </div>
+                  <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-3">
+                    <span className="text-[11px] text-neutral-500 block">মোট পণ্যের আইটেম</span>
+                    <span className="text-lg font-black text-neutral-900">{loadSheetData.items.length}টি</span>
+                  </div>
+                  <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-3">
+                    <span className="text-[11px] text-neutral-500 block">সর্বমোট মালের মূল্য</span>
+                    <span className="text-lg font-black text-emerald-700 font-mono">
+                      ৳{loadSheetData.grandTotalValue.toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Product Aggregation Table */}
+                {loadSheetData.items.length === 0 ? (
+                  <div className="p-8 text-center bg-neutral-50 rounded-2xl border border-neutral-200 text-neutral-500">
+                    এই ফিল্টারে লোডশিট তৈরির মতো কোনো অর্ডার পাওয়া যায়নি।
+                  </div>
+                ) : (
+                  <div className="border border-neutral-200 rounded-2xl overflow-hidden">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-neutral-100 border-b border-neutral-200 font-extrabold text-neutral-700">
+                          <th className="py-2.5 px-3">ক্রমিক</th>
+                          <th className="py-2.5 px-3">পণ্যের নাম</th>
+                          <th className="py-2.5 px-3 text-center">অর্ডার পরিমাণ</th>
+                          <th className="py-2.5 px-3 text-center">ফ্রি/অফার</th>
+                          <th className="py-2.5 px-3 text-center bg-teal-50 text-teal-900">মোট লোড পরিমাণ</th>
+                          <th className="py-2.5 px-3 text-center">দোকান সংখ্যা</th>
+                          <th className="py-2.5 px-3 text-right">মোট মূল্য (৳)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {loadSheetData.items.map((item, idx) => (
+                          <tr key={idx} className="border-b border-neutral-100 hover:bg-neutral-50">
+                            <td className="py-2.5 px-3 font-mono text-neutral-500">{idx + 1}</td>
+                            <td className="py-2.5 px-3 font-bold text-neutral-900">{item.productName}</td>
+                            <td className="py-2.5 px-3 text-center font-medium">
+                              {item.totalQty} {item.unit}
+                            </td>
+                            <td className="py-2.5 px-3 text-center text-amber-700 font-bold">
+                              {item.totalFreeQty > 0 ? `+${item.totalFreeQty} ${item.unit}` : '-'}
+                            </td>
+                            <td className="py-2.5 px-3 text-center bg-teal-50/70 font-black text-teal-900 text-sm">
+                              {item.totalLoadQty} {item.unit}
+                            </td>
+                            <td className="py-2.5 px-3 text-center text-neutral-600">
+                              {item.shopsSet.size}টি দোকান
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono font-bold text-neutral-900">
+                              ৳{item.totalValue.toLocaleString()}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* Action Footer */}
+                <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
+                  <a
+                    href={`https://wa.me/?text=${whatsappLoadSheetText}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-extrabold text-xs flex items-center gap-1.5 shadow-sm"
+                  >
+                    <Share2 className="w-4 h-4" />
+                    <span>হোয়াটসঅ্যাপে লোডশিট পাঠান</span>
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="px-4 py-2.5 bg-neutral-900 hover:bg-neutral-800 text-white rounded-xl font-extrabold text-xs flex items-center gap-1.5 shadow-sm cursor-pointer"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>লোডশিট প্রিন্ট / PDF</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Tool #3 Modal: Daily Cash Closing & Expense Ledger */}
+      {isCashClosingOpen && (() => {
+        const biz = getBusinessInfo();
+        const whatsappCashReport = encodeURIComponent(
+          [
+            `*${biz.banglaName} - দৈনিক ক্যাশ ক্লোজিং ও খরচের হিসাব*`,
+            `তারিখ: ${cashClosingDate}`,
+            `---------------------------------`,
+            `✅ ডেলিভারি মেমো থেকে নগদ আদায়: ৳${cashClosingSummary.orderCashReceived.toLocaleString()}`,
+            `✅ পুরাতন বকেয়া থেকে নগদ আদায়: ৳${cashClosingSummary.dueCashReceived.toLocaleString()}`,
+            `📱 বিকাশ/নগদ ডিজিটাল আদায়: ৳${cashClosingSummary.totalDigitalIn.toLocaleString()}`,
+            `↩️ মাল ফেরত/ড্যামেজ কর্তন: ৳${cashClosingSummary.totalReturnedValue.toLocaleString()}`,
+            `---------------------------------`,
+            `*মোট নগদ ক্যাশ ইন (হাতে): ৳${cashClosingSummary.totalPhysicalCashIn.toLocaleString()}*`,
+            `➖ মোট ফিল্ড খরচ (${cashClosingSummary.dayExpenses.length}টি): -৳${cashClosingSummary.totalExpenses.toLocaleString()}`,
+            ...cashClosingSummary.dayExpenses.map(
+              (e) => `   • ${e.category}${e.note ? ` (${e.note})` : ''}: ৳${e.amount}`
+            ),
+            `---------------------------------`,
+            `*💰 দিনশেষে নিট ক্যাশ জমা: ৳${cashClosingSummary.netCashInHand.toLocaleString()}*`,
+          ].join('\n')
+        );
+
+        return (
+          <div className="fixed inset-0 z-50 bg-neutral-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in overflow-y-auto">
+            <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-neutral-200 overflow-hidden my-auto">
+              <div className="bg-neutral-900 text-white px-5 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-amber-500 text-neutral-950 flex items-center justify-center">
+                    <Wallet className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-sm sm:text-base">
+                      দৈনিক ক্যাশ ক্লোজিং ও ফিল্ড খরচের হিসাব
+                    </h3>
+                    <p className="text-[11px] text-neutral-300">
+                      সারাদিনের নগদ আদায় ও রাস্তার খরচ বাদ দিয়ে নিট ক্যাশ জমা
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsCashClosingOpen(false)}
+                  className="p-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-4 sm:p-5 space-y-4 text-xs max-h-[84vh] overflow-y-auto">
+                {/* Date Selector */}
+                <div className="flex items-center justify-between bg-neutral-50 p-3 rounded-2xl border border-neutral-200">
+                  <span className="font-extrabold text-neutral-800 flex items-center gap-1.5">
+                    <Calendar className="w-4 h-4 text-emerald-700" />
+                    <span>হিসাবের তারিখ নির্বাচন করুন:</span>
+                  </span>
+                  <input
+                    type="date"
+                    value={cashClosingDate}
+                    onChange={(e) => setCashClosingDate(e.target.value)}
+                    className="px-3 py-1.5 rounded-xl border border-neutral-300 bg-white font-extrabold text-neutral-900 text-xs"
+                  />
+                </div>
+
+                {/* Cash Breakdown Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                  <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-3">
+                    <span className="text-[11px] text-emerald-800 font-medium block">ডেলিভারি নগদ আদায়</span>
+                    <span className="text-base font-black text-emerald-900 font-mono">
+                      ৳{cashClosingSummary.orderCashReceived.toLocaleString()}
+                    </span>
+                    <span className="text-[10px] text-emerald-700 block mt-0.5">
+                      {cashClosingSummary.deliveredOrdersCount}টি ডেলিভারি মেমো
+                    </span>
+                  </div>
+
+                  <div className="bg-teal-50/70 border border-teal-200 rounded-xl p-3">
+                    <span className="text-[11px] text-teal-800 font-medium block">পুরাতন বকেয়া নগদ আদায়</span>
+                    <span className="text-base font-black text-teal-900 font-mono">
+                      ৳{cashClosingSummary.dueCashReceived.toLocaleString()}
+                    </span>
+                    <span className="text-[10px] text-teal-700 block mt-0.5">বাকি খাতা থেকে ক্যাশ</span>
+                  </div>
+
+                  <div className="bg-blue-50/70 border border-blue-200 rounded-xl p-3">
+                    <span className="text-[11px] text-blue-800 font-medium block">বিকাশ / নগদ অ্যাপে জমা</span>
+                    <span className="text-base font-black text-blue-900 font-mono">
+                      ৳{cashClosingSummary.totalDigitalIn.toLocaleString()}
+                    </span>
+                    <span className="text-[10px] text-blue-700 block mt-0.5">ডিজিটাল একাউন্টে</span>
+                  </div>
+                </div>
+
+                {/* Net Cash Calculation Banner */}
+                <div className="bg-neutral-900 text-white rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-4 text-xs text-neutral-300">
+                      <span>মোট নগদ ক্যাশ ইন: <strong className="text-white">৳{cashClosingSummary.totalPhysicalCashIn.toLocaleString()}</strong></span>
+                      <span>•</span>
+                      <span>মোট খরচ বাদ: <strong className="text-rose-400">-৳{cashClosingSummary.totalExpenses.toLocaleString()}</strong></span>
+                    </div>
+                    <p className="text-[11px] text-amber-300">
+                      দিনশেষে ক্যাশে / মহাজনের কাছে জমা দেওয়ার নিট নগদ টাকা:
+                    </p>
+                  </div>
+                  <div className="text-left sm:text-right">
+                    <span className="text-2xl font-black text-amber-400 font-mono">
+                      ৳{cashClosingSummary.netCashInHand.toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Add Expense Form */}
+                {onAddDailyExpense && (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const amt = parseFloat(expAmount);
+                      if (isNaN(amt) || amt <= 0) return;
+                      onAddDailyExpense({
+                        date: cashClosingDate,
+                        category: expCategory,
+                        amount: amt,
+                        note: expNote.trim(),
+                      });
+                      setExpAmount('');
+                      setExpNote('');
+                    }}
+                    className="bg-neutral-50 border border-neutral-200 rounded-2xl p-3.5 space-y-2.5"
+                  >
+                    <h4 className="font-extrabold text-neutral-800 flex items-center gap-1.5">
+                      <Plus className="w-4 h-4 text-rose-600" />
+                      <span>আজকের ফিল্ড খরচ যুক্ত করুন (গাড়ি ভাড়া / লেবার / নাস্তা)</span>
+                    </h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <select
+                        value={expCategory}
+                        onChange={(e) => setExpCategory(e.target.value as DailyExpenseRecord['category'])}
+                        className="p-2 rounded-xl border border-neutral-300 bg-white font-bold text-neutral-800 text-xs"
+                      >
+                        <option value="ভ্যান/গাড়ি ভাড়া">ভ্যান/গাড়ি ভাড়া</option>
+                        <option value="লেবার খরচ">লেবার খরচ</option>
+                        <option value="নাস্তা ও খাবার">নাস্তা ও খাবার</option>
+                        <option value="জ্বালানি/তেল">জ্বালানি/তেল</option>
+                        <option value="অন্যান্য খরচ">অন্যান্য খরচ</option>
+                      </select>
+                      <input
+                        type="number"
+                        min="1"
+                        required
+                        value={expAmount}
+                        onChange={(e) => setExpAmount(e.target.value)}
+                        placeholder="খরচের টাকা (৳)"
+                        className="p-2 rounded-xl border border-neutral-300 bg-white font-bold text-neutral-900 text-xs"
+                      />
+                      <div className="flex gap-1.5">
+                        <input
+                          type="text"
+                          value={expNote}
+                          onChange={(e) => setExpNote(e.target.value)}
+                          placeholder="বিবরণ (ঐচ্ছিক)"
+                          className="flex-1 p-2 rounded-xl border border-neutral-300 bg-white text-neutral-800 text-xs"
+                        />
+                        <button
+                          type="submit"
+                          className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white font-extrabold rounded-xl text-xs shrink-0 cursor-pointer"
+                        >
+                          যোগ করুন
+                        </button>
+                      </div>
+                    </div>
+                  </form>
+                )}
+
+                {/* Expense List for Selected Date */}
+                <div className="space-y-1.5">
+                  <h5 className="font-bold text-neutral-700">
+                    তারিখের খরচের তালিকা ({cashClosingSummary.dayExpenses.length}টি):
+                  </h5>
+                  {cashClosingSummary.dayExpenses.length === 0 ? (
+                    <p className="text-neutral-400 text-xs py-3 text-center bg-neutral-50 rounded-xl border border-neutral-200">
+                      এই তারিখে কোনো ফিল্ড খরচ এন্ট্রি করা হয়নি।
+                    </p>
+                  ) : (
+                    <div className="divide-y divide-neutral-100 border border-neutral-200 rounded-xl bg-white">
+                      {cashClosingSummary.dayExpenses.map((exp) => (
+                        <div key={exp.id} className="p-2.5 flex items-center justify-between">
+                          <div>
+                            <span className="font-bold text-neutral-900">{exp.category}</span>
+                            {exp.note && <span className="text-neutral-500 ml-1.5">({exp.note})</span>}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-rose-600">-৳{exp.amount.toLocaleString()}</span>
+                            {onDeleteDailyExpense && (
+                              <button
+                                type="button"
+                                onClick={() => onDeleteDailyExpense(exp.id)}
+                                className="p-1 text-neutral-400 hover:text-rose-600 cursor-pointer"
+                                title="খরচ মুছুন"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer Share */}
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <a
+                    href={`https://wa.me/?text=${whatsappCashReport}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-extrabold text-xs flex items-center gap-1.5 shadow-sm"
+                  >
+                    <Share2 className="w-4 h-4" />
+                    <span>হোয়াটসঅ্যাপে ক্যাশ রিপোর্ট পাঠান</span>
+                  </a>
                 </div>
               </div>
             </div>

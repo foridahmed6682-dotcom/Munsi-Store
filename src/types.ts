@@ -196,6 +196,8 @@ export interface Order {
   bookedByUid?: string;
   bookedByName?: string;
   bookedByRole?: UserRole;
+  returnAmount?: number;
+  returnReason?: string;
 }
 
 export interface DueCollectionRecord {
@@ -298,5 +300,28 @@ export interface BusinessInfo {
   coupons?: PromoCoupon[];
   flashSale?: FlashSaleConfig;
 }
+
+export interface DailyExpenseRecord {
+  id: string;
+  date: string; // YYYY-MM-DD
+  createdAt: string; // ISO
+  category: 'ভ্যান/গাড়ি ভাড়া' | 'লেবার খরচ' | 'নাস্তা ও খাবার' | 'জ্বালানি/তেল' | 'অন্যান্য খরচ';
+  amount: number;
+  note?: string;
+  recordedBy?: string;
+  recordedByRole?: UserRole;
+}
+
+export interface StaffTargetConfig {
+  id: string;
+  email: string;
+  staffName: string;
+  role: UserRole;
+  monthlyTargetAmount: number;
+  commissionPercent: number;
+  shopVisitTarget?: number;
+  updatedAt: string;
+}
+
 
 

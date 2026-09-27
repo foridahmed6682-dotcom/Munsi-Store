@@ -14,14 +14,20 @@ import {
   ExternalLink,
   Edit3,
   Trash2,
-  Navigation as NavIcon
+  Navigation as NavIcon,
+  Share2,
+  FileText,
+  X
 } from 'lucide-react';
-import { Shop, PaymentMethod, Route } from '../types';
+import { Shop, PaymentMethod, Route, Order, DueCollectionRecord } from '../types';
 import { AddShopModal } from './AddShopModal';
+import { getBusinessInfo } from '../lib/firebase';
 
 interface ShopsListViewProps {
   shops: Shop[];
   routes?: Route[];
+  orders?: Order[];
+  dueCollections?: DueCollectionRecord[];
   onAddShop: (shop: Shop) => void;
   onRecordDuePayment: (shopId: string, amount: number, method: PaymentMethod, notes?: string) => void;
   onSelectShopForOrder: (shopId: string) => void;
@@ -34,6 +40,8 @@ interface ShopsListViewProps {
 export const ShopsListView: React.FC<ShopsListViewProps> = ({
   shops,
   routes: configuredRoutes = [],
+  orders = [],
+  dueCollections = [],
   onAddShop,
   onRecordDuePayment,
   onSelectShopForOrder,
@@ -53,8 +61,46 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
   const [collectMethod, setCollectMethod] = useState<PaymentMethod>('CASH');
   const [collectNotes, setCollectNotes] = useState('');
 
+  // Tool #4: Shop Ledger / Khata Statement Modal
+  const [ledgerShop, setLedgerShop] = useState<Shop | null>(null);
+
   // Add shop modal
   const [isAddOpen, setIsAddOpen] = useState(false);
+
+  const formatWhatsAppPhone = (rawPhone?: string) => {
+    if (!rawPhone) return '';
+    const banglaToEng = rawPhone.replace(/[০-৯]/g, (d) =>
+      '০১২৩৪৫৬৭৮৯'.indexOf(d).toString()
+    );
+    const digitsOnly = banglaToEng.replace(/[^0-9]/g, '');
+    if (!digitsOnly) return '';
+    if (digitsOnly.startsWith('880')) return digitsOnly;
+    if (digitsOnly.startsWith('0')) return `88${digitsOnly}`;
+    return `880${digitsOnly}`;
+  };
+
+  const sendWhatsAppDueReminder = (shop: Shop) => {
+    const biz = getBusinessInfo();
+    const cleanPhone = formatWhatsAppPhone(shop.phone);
+    const lines = [
+      `আসসালামু আলাইকুম, *${shop.name}* (${shop.ownerName || 'প্রোপ্রাইটর'})`,
+      `*${biz.banglaName}* এর পক্ষ থেকে শুভেচ্ছা।`,
+      `---------------------------------`,
+      `আপনার দোকানের বর্তমান বকেয়া হিসাব: *৳${shop.previousDue.toLocaleString()}*`,
+      shop.lastVisitDate ? `সর্বশেষ লেনদেন/ভিজিট: ${shop.lastVisitDate}` : '',
+      `---------------------------------`,
+      `অনুগ্রহ করে সুবিধাজনক সময়ে অথবা আমাদের ডিএসআর (DSR) ভিজিটের সময় বকেয়া পরিশোধ করার অনুরোধ করা হলো।`,
+      biz.bkashNumber ? `বিকাশ পেমেন্ট: ${biz.bkashNumber}` : '',
+      biz.nagadNumber ? `নগদ পেমেন্ট: ${biz.nagadNumber}` : '',
+      `যোগাযোগ: ${biz.hotline}`,
+    ].filter(Boolean);
+
+    const text = encodeURIComponent(lines.join('\n'));
+    const url = cleanPhone
+      ? `https://wa.me/${cleanPhone}?text=${text}`
+      : `https://wa.me/?text=${text}`;
+    window.open(url, '_blank');
+  };
 
   // Distinct routes (configured routes + routes on existing shops)
   const routes = useMemo(() => {
@@ -279,34 +325,57 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
               <div className="mt-4 pt-3 border-t border-neutral-100">
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-xs text-neutral-500">বর্তমান বকেয়া:</span>
-                  <span
-                    className={`text-sm sm:text-base font-black ${
-                      hasHighDue
-                        ? 'text-rose-600'
-                        : shop.previousDue > 0
-                        ? 'text-amber-700'
-                        : 'text-emerald-700'
-                    }`}
-                  >
-                    ৳{shop.previousDue.toLocaleString()}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={`text-sm sm:text-base font-black font-mono ${
+                        hasHighDue
+                          ? 'text-rose-600'
+                          : shop.previousDue > 0
+                          ? 'text-amber-700'
+                          : 'text-emerald-700'
+                      }`}
+                    >
+                      ৳{shop.previousDue.toLocaleString()}
+                    </span>
+                    {shop.previousDue > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => sendWhatsAppDueReminder(shop)}
+                        className="px-2 py-0.5 rounded-lg bg-[#25D366]/15 hover:bg-[#25D366]/25 text-emerald-900 border border-emerald-300 text-[10px] font-extrabold flex items-center gap-1 cursor-pointer transition-colors"
+                        title="এক ক্লিকে হোয়াটসঅ্যাপে বকেয়া পরিশোধের তাগাদা মেসেজ পাঠান"
+                      >
+                        <Share2 className="w-3 h-3 text-emerald-700" />
+                        <span>তাগাদা</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-3 gap-1.5">
                   <button
                     onClick={() => setCollectingShop(shop)}
-                    className="py-2 px-2 rounded-xl text-xs font-bold bg-neutral-100 hover:bg-neutral-200 text-neutral-800 transition-colors flex items-center justify-center gap-1"
+                    className="py-2 px-1.5 rounded-xl text-[11px] font-bold bg-neutral-100 hover:bg-neutral-200 text-neutral-800 transition-colors flex items-center justify-center gap-1 cursor-pointer"
                   >
-                    <DollarSign className="w-3.5 h-3.5 text-emerald-700" />
-                    <span>বকেয়া আদায়</span>
+                    <DollarSign className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                    <span className="truncate">বকেয়া আদায়</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setLedgerShop(shop)}
+                    className="py-2 px-1.5 rounded-xl text-[11px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-950 border border-amber-200 transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                    title="দোকানের সকল অর্ডার ও বকেয়া জমার খতিয়ান দেখুন"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                    <span className="truncate">খতিয়ান</span>
                   </button>
 
                   <button
                     onClick={() => onSelectShopForOrder(shop.id)}
-                    className="py-2 px-2 rounded-xl text-xs font-bold bg-emerald-700 hover:bg-emerald-600 text-white transition-colors flex items-center justify-center gap-1 shadow-xs"
+                    className="py-2 px-1.5 rounded-xl text-[11px] font-bold bg-emerald-700 hover:bg-emerald-600 text-white transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer"
                   >
-                    <ShoppingBag className="w-3.5 h-3.5" />
-                    <span>অর্ডার কাটুন</span>
+                    <ShoppingBag className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">অর্ডার কাটুন</span>
                   </button>
                 </div>
 
@@ -342,6 +411,217 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
           );
         })}
       </div>
+
+      {/* Tool #4: Shop Ledger / Khata Statement Modal */}
+      {ledgerShop && (() => {
+        const currentShop = shops.find((s) => s.id === ledgerShop.id) || ledgerShop;
+        const shopOrders = orders.filter(
+          (o) =>
+            o.deliveryStatus !== 'CANCELLED' &&
+            (o.shopId === currentShop.id ||
+              o.shopName.trim().toLowerCase() === currentShop.name.trim().toLowerCase())
+        );
+        const shopCollections = dueCollections.filter(
+          (c) =>
+            c.shopId === currentShop.id ||
+            c.shopName.trim().toLowerCase() === currentShop.name.trim().toLowerCase()
+        );
+
+        const totalOrderedBilled = shopOrders.reduce((s, o) => s + (o.netTotal || 0), 0);
+        const totalOrderCashPaid = shopOrders.reduce(
+          (s, o) => s + (o.deliveryStatus === 'DELIVERED' ? o.paidAmount || 0 : 0),
+          0
+        );
+        const totalSeparateDueCollected = shopCollections.reduce((s, c) => s + (c.amount || 0), 0);
+        const totalPaidAll = totalOrderCashPaid + totalSeparateDueCollected;
+
+        const ledgerEntries = [
+          ...shopOrders.map((o) => ({
+            id: o.id,
+            date: o.orderDate,
+            type: 'ORDER' as const,
+            title: `মেমো #${o.memoNumber}`,
+            subtitle: `${o.items.length} পদ পণ্য (${
+              o.deliveryStatus === 'DELIVERED' ? 'ডেলিভারি সম্পন্ন' : 'অপেক্ষমান'
+            })`,
+            billAmount: o.netTotal,
+            paidAmount: o.deliveryStatus === 'DELIVERED' ? o.paidAmount : 0,
+            dueAdded: o.deliveryStatus === 'DELIVERED' ? o.dueAmount : 0,
+          })),
+          ...shopCollections.map((c) => ({
+            id: c.id,
+            date: c.date,
+            type: 'COLLECTION' as const,
+            title: `বকেয়া জমা (${c.paymentMethod})`,
+            subtitle: c.notes || 'বাকি খাতা থেকে নগদ আদায়',
+            billAmount: 0,
+            paidAmount: c.amount,
+            dueAdded: -c.amount,
+          })),
+        ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+        const sendFullStatementWhatsApp = () => {
+          const biz = getBusinessInfo();
+          const cleanPhone = formatWhatsAppPhone(currentShop.phone);
+          const lines = [
+            `*${biz.banglaName} — দোকানের লেনদেন ও বকেয়া খতিয়ান*`,
+            `দোকান: *${currentShop.name}* (${currentShop.ownerName})`,
+            `রুট: ${currentShop.routeArea} | মোবাইল: ${currentShop.phone}`,
+            `---------------------------------`,
+            `মোট অর্ডার বিল (${shopOrders.length}টি মেমো): ৳${totalOrderedBilled.toLocaleString()}`,
+            `মোট জমা/পরিশোধ: ৳${totalPaidAll.toLocaleString()}`,
+            `*বর্তমান মোট বকেয়া: ৳${currentShop.previousDue.toLocaleString()}*`,
+            `---------------------------------`,
+            `সাম্প্রতিক লেনদেন:`,
+            ...ledgerEntries.slice(0, 8).map(
+              (en) =>
+                `• ${new Date(en.date).toLocaleDateString('en-GB')} - ${en.title}: ${
+                  en.type === 'ORDER'
+                    ? `বিল ৳${en.billAmount}, জমা ৳${en.paidAmount}`
+                    : `বকেয়া জমা ৳${en.paidAmount}`
+                }`
+            ),
+            `---------------------------------`,
+            `যোগাযোগ: ${biz.hotline}`,
+          ];
+          const url = cleanPhone
+            ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(lines.join('\n'))}`
+            : `https://wa.me/?text=${encodeURIComponent(lines.join('\n'))}`;
+          window.open(url, '_blank');
+        };
+
+        return (
+          <div className="fixed inset-0 z-50 bg-neutral-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in overflow-y-auto">
+            <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-neutral-200 overflow-hidden my-auto">
+              <div className="bg-neutral-900 text-white px-5 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-amber-500 text-neutral-950 flex items-center justify-center">
+                    <FileText className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-sm sm:text-base">
+                      {currentShop.name} — বকেয়া ও লেনদেন খতিয়ান
+                    </h3>
+                    <p className="text-[11px] text-neutral-300">
+                      মালিক: {currentShop.ownerName} • {currentShop.phone} • {currentShop.routeArea}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setLedgerShop(null)}
+                  className="p-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-4 sm:p-5 space-y-4 text-xs max-h-[82vh] overflow-y-auto">
+                {/* Summary KPI Cards */}
+                <div className="grid grid-cols-3 gap-2.5">
+                  <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-3">
+                    <span className="text-[10px] text-neutral-500 block">মোট অর্ডার বিল ({shopOrders.length}টি)</span>
+                    <span className="text-base font-black text-neutral-900 font-mono">
+                      ৳{totalOrderedBilled.toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+                    <span className="text-[10px] text-emerald-800 block">মোট নগদ ও বকেয়া জমা</span>
+                    <span className="text-base font-black text-emerald-800 font-mono">
+                      ৳{totalPaidAll.toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="bg-rose-50 border border-rose-200 rounded-xl p-3">
+                    <span className="text-[10px] text-rose-800 block">বর্তমান নিট বকেয়া</span>
+                    <span className="text-base font-black text-rose-700 font-mono">
+                      ৳{currentShop.previousDue.toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Quick Actions inside Ledger */}
+                <div className="flex flex-wrap items-center justify-between gap-2 bg-neutral-50 p-3 rounded-2xl border border-neutral-200">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLedgerShop(null);
+                        setCollectingShop(currentShop);
+                      }}
+                      className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl font-extrabold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    >
+                      <DollarSign className="w-3.5 h-3.5" />
+                      <span>বকেয়া জমা নিন</span>
+                    </button>
+                    {currentShop.previousDue > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => sendWhatsAppDueReminder(currentShop)}
+                        className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-extrabold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs"
+                      >
+                        <Share2 className="w-3.5 h-3.5" />
+                        <span>হোয়াটসঅ্যাপ তাগাদা পাঠান</span>
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={sendFullStatementWhatsApp}
+                    className="px-3.5 py-2 bg-neutral-900 hover:bg-neutral-800 text-white rounded-xl font-extrabold text-xs flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Share2 className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>পূর্ণ খতিয়ান শেয়ার করুন</span>
+                  </button>
+                </div>
+
+                {/* Chronological Ledger Table */}
+                <div className="border border-neutral-200 rounded-2xl overflow-hidden">
+                  <div className="bg-neutral-100 px-3.5 py-2.5 border-b border-neutral-200 font-extrabold text-neutral-800">
+                    লেনদেনের বিস্তারিত বিবরণ ({ledgerEntries.length}টি এন্ট্রি)
+                  </div>
+                  {ledgerEntries.length === 0 ? (
+                    <div className="p-6 text-center text-neutral-400">
+                      এই দোকানের কোনো অর্ডার বা বকেয়া জমার রেকর্ড পাওয়া যায়নি।
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-neutral-100 max-h-72 overflow-y-auto">
+                      {ledgerEntries.map((en) => (
+                        <div key={en.id} className="p-3 flex items-center justify-between hover:bg-neutral-50">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-extrabold text-neutral-900">{en.title}</span>
+                              <span className="text-[10px] text-neutral-400">
+                                {new Date(en.date).toLocaleDateString('en-GB')}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-neutral-500 mt-0.5">{en.subtitle}</p>
+                          </div>
+                          <div className="text-right font-mono">
+                            {en.type === 'ORDER' ? (
+                              <>
+                                <span className="font-bold text-neutral-900 block">
+                                  বিল: ৳{en.billAmount.toLocaleString()}
+                                </span>
+                                <span className="text-[10px] text-emerald-700 font-bold">
+                                  জমা: ৳{en.paidAmount.toLocaleString()} | বাকি: ৳{Math.max(0, en.dueAdded).toLocaleString()}
+                                </span>
+                              </>
+                            ) : (
+                              <span className="font-black text-emerald-700 text-sm">
+                                + জমা: ৳{en.paidAmount.toLocaleString()}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Due Collection Modal */}
       {collectingShop && (

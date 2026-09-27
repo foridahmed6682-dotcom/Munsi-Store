@@ -146,6 +146,37 @@
         "addedBy": { "type": "string", "description": "Email of admin who authorized" }
       },
       "required": ["id", "email", "role"]
+    },
+    "DailyExpense": {
+      "title": "DailyExpense",
+      "description": "Daily field and delivery expenses (fuel, van rent, snacks, etc.) recorded by DSR/SR or Admin",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique expense ID" },
+        "date": { "type": "string", "description": "Expense date (YYYY-MM-DD)" },
+        "category": { "type": "string", "enum": ["FUEL", "VAN_RENT", "FOOD", "LABOR", "OTHER"], "description": "Expense category" },
+        "title": { "type": "string", "description": "Description of the expense" },
+        "amount": { "type": "number", "description": "Expense amount in BDT" },
+        "recordedBy": { "type": "string", "description": "Name of staff who recorded it" },
+        "routeArea": { "type": "string", "description": "Optional route area" },
+        "createdAt": { "type": "string", "description": "ISO timestamp" }
+      },
+      "required": ["id", "date", "category", "title", "amount"]
+    },
+    "StaffTarget": {
+      "title": "StaffTarget",
+      "description": "Monthly sales target and commission percentage configuration for SR/DSR staff",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Staff identifier or email key" },
+        "staffEmail": { "type": "string", "description": "Staff email" },
+        "staffName": { "type": "string", "description": "Staff full name" },
+        "role": { "type": "string", "enum": ["admin", "sr", "dsr", "customer"], "description": "Staff role" },
+        "monthlyTargetAmount": { "type": "number", "description": "Monthly sales target in BDT" },
+        "commissionPercent": { "type": "number", "description": "Commission rate percentage" },
+        "updatedAt": { "type": "string", "description": "ISO timestamp" }
+      },
+      "required": ["id", "staffName", "monthlyTargetAmount", "commissionPercent"]
     }
   },
   "firestore": {
@@ -180,6 +211,14 @@
     "/dueCollections/{collectionId}": {
       "schema": { "$ref": "DueCollection" },
       "description": "Credit and due collection transaction logs"
+    },
+    "/dailyExpenses/{expenseId}": {
+      "schema": { "$ref": "DailyExpense" },
+      "description": "Daily field and delivery expenses recorded by DSR/SR or Admin"
+    },
+    "/staff_targets/{targetId}": {
+      "schema": { "$ref": "StaffTarget" },
+      "description": "Monthly sales target and commission configurations for SR/DSR staff"
     }
   }
 }

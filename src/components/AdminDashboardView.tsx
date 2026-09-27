@@ -57,7 +57,9 @@ import {
   AuthorizedUserEmail,
   AppUser,
   Route,
-  BusinessInfo
+  BusinessInfo,
+  DailyExpenseRecord,
+  StaffTargetConfig
 } from '../types';
 import { processImageFile } from '../lib/imageUtils';
 import { fetchAllUsers, updateUserRoleAndRoute, getBusinessInfo, saveBusinessInfoToCloud, subscribeToCloudBusinessInfo } from '../lib/firebase';
@@ -73,6 +75,9 @@ interface AdminDashboardViewProps {
   categories: Category[];
   authorizedEmails: AuthorizedUserEmail[];
   routes: Route[];
+  dailyExpenses?: DailyExpenseRecord[];
+  staffTargets?: StaffTargetConfig[];
+  onSaveStaffTarget?: (target: StaffTargetConfig) => void;
   currentUser: UserProfile | null;
   activeSimulatedRole: UserRole;
   onAddProduct: (product: Product) => void;
@@ -138,6 +143,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   categories,
   authorizedEmails,
   routes,
+  dailyExpenses = [],
+  staffTargets = [],
+  onSaveStaffTarget,
   currentUser,
   activeSimulatedRole,
   onAddProduct,
@@ -310,6 +318,193 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   // Business Info Settings State
   const [bizInfo, setBizInfo] = useState<BusinessInfo>(getBusinessInfo());
   const [isSavingBiz, setIsSavingBiz] = useState(false);
+
+  // Tool #6 & #8 State: Profit Analytics Period & Staff Target Editing
+  const [profitPeriod, setProfitPeriod] = useState<'TODAY' | 'MONTH' | 'ALL'>('MONTH');
+  const [editingStaffTarget, setEditingStaffTarget] = useState<{
+    email: string;
+    staffName: string;
+    role: UserRole;
+    monthlyTargetAmount: string;
+    commissionPercent: string;
+    shopVisitTarget: string;
+  } | null>(null);
+
+  const todayIsoDate = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const currentYearMonth = useMemo(() => todayIsoDate.slice(0, 7), [todayIsoDate]);
+
+  // Tool #6: Real-time Profit & Margin Calculation
+  const profitAnalytics = useMemo(() => {
+    const validOrders = orders.filter((o) => {
+      if (o.deliveryStatus === 'CANCELLED') return false;
+      if (profitPeriod === 'TODAY') return o.orderDate.startsWith(todayIsoDate);
+      if (profitPeriod === 'MONTH') return o.orderDate.startsWith(currentYearMonth);
+      return true;
+    });
+
+    const periodExpenses = dailyExpenses.filter((e) => {
+      if (profitPeriod === 'TODAY') return e.date === todayIsoDate;
+      if (profitPeriod === 'MONTH') return e.date.startsWith(currentYearMonth);
+      return true;
+    });
+
+    let totalRevenue = 0;
+    let totalCostOfGoods = 0;
+    let totalReturns = 0;
+
+    const productProfitMap = new Map<
+      string,
+      {
+        productId: string;
+        productName: string;
+        unit: string;
+        qtySold: number;
+        freeQty: number;
+        revenue: number;
+        cost: number;
+        profit: number;
+      }
+    >();
+
+    validOrders.forEach((ord) => {
+      totalRevenue += ord.netTotal || 0;
+      totalReturns += ord.returnAmount || 0;
+
+      ord.items.forEach((it) => {
+        const matchedProd =
+          products.find((p) => p.id === it.productId) ||
+          products.find((p) => p.banglaName === it.productName || p.name === it.productName);
+        const unitCost = matchedProd ? matchedProd.costPrice : Math.round(it.unitPrice * 0.88);
+        const totalUnitsOut = it.quantity + (it.tradeOfferQty || 0);
+        const itemCost = unitCost * totalUnitsOut;
+        const itemRev = it.lineTotal;
+        const itemProfit = itemRev - itemCost;
+
+        totalCostOfGoods += itemCost;
+
+        const key = it.productId || it.productName;
+        const prev = productProfitMap.get(key);
+        if (prev) {
+          prev.qtySold += it.quantity;
+          prev.freeQty += it.tradeOfferQty || 0;
+          prev.revenue += itemRev;
+          prev.cost += itemCost;
+          prev.profit += itemProfit;
+        } else {
+          productProfitMap.set(key, {
+            productId: key,
+            productName: it.productName,
+            unit: it.unit,
+            qtySold: it.quantity,
+            freeQty: it.tradeOfferQty || 0,
+            revenue: itemRev,
+            cost: itemCost,
+            profit: itemProfit,
+          });
+        }
+      });
+    });
+
+    const grossProfit = totalRevenue - totalCostOfGoods;
+    const totalExpensesAmount = periodExpenses.reduce((s, e) => s + (e.amount || 0), 0);
+    const netProfit = grossProfit - totalExpensesAmount;
+    const marginPercent = totalRevenue > 0 ? ((netProfit / totalRevenue) * 100).toFixed(1) : '0.0';
+
+    const productBreakdown = Array.from(productProfitMap.values()).sort((a, b) => b.profit - a.profit);
+
+    return {
+      ordersCount: validOrders.length,
+      totalRevenue,
+      totalCostOfGoods,
+      grossProfit,
+      totalExpensesAmount,
+      totalReturns,
+      netProfit,
+      marginPercent,
+      productBreakdown,
+    };
+  }, [orders, products, dailyExpenses, profitPeriod, todayIsoDate, currentYearMonth]);
+
+  // Tool #8: SR / DSR Monthly Target & Commission Performance Report
+  const staffPerformanceRows = useMemo(() => {
+    const staffMap = new Map<
+      string,
+      {
+        email: string;
+        name: string;
+        role: UserRole;
+        route: string;
+      }
+    >();
+
+    authorizedEmails.forEach((ae) => {
+      const emailKey = ae.email.toLowerCase().trim();
+      staffMap.set(emailKey, {
+        email: emailKey,
+        name: ae.fullName || emailKey.split('@')[0],
+        role: ae.role,
+        route: ae.assignedRoute || 'সব রুট',
+      });
+    });
+
+    firebaseUsers.forEach((u) => {
+      if (u.email && (u.role === 'sr' || u.role === 'dsr' || u.role === 'admin')) {
+        const emailKey = u.email.toLowerCase().trim();
+        if (!staffMap.has(emailKey)) {
+          staffMap.set(emailKey, {
+            email: emailKey,
+            name: u.displayName || emailKey.split('@')[0],
+            role: u.role,
+            route: u.assignedRoute || 'সব রুট',
+          });
+        }
+      }
+    });
+
+    const monthOrders = orders.filter(
+      (o) => o.deliveryStatus !== 'CANCELLED' && o.orderDate.startsWith(currentYearMonth)
+    );
+
+    return Array.from(staffMap.values()).map((staff) => {
+      const targetCfg = staffTargets.find((t) => t.email.toLowerCase().trim() === staff.email);
+      const monthlyTarget = targetCfg?.monthlyTargetAmount ?? (staff.role === 'sr' || staff.role === 'dsr' ? 200000 : 300000);
+      const commissionPercent = targetCfg?.commissionPercent ?? (staff.role === 'sr' ? 1.5 : staff.role === 'dsr' ? 1.0 : 0);
+      const shopVisitTarget = targetCfg?.shopVisitTarget ?? 50;
+
+      const myOrders = monthOrders.filter((o) => {
+        const matchName =
+          o.bookedByName &&
+          staff.name &&
+          o.bookedByName.toLowerCase().includes(staff.name.toLowerCase());
+        const matchRoleOnly =
+          staffMap.size <= 2 && o.bookedByRole === staff.role;
+        return matchName || matchRoleOnly;
+      });
+
+      const totalSales = myOrders.reduce((s, o) => s + (o.netTotal || 0), 0);
+      const totalCashCollected = myOrders.reduce(
+        (s, o) => s + (o.deliveryStatus === 'DELIVERED' ? o.paidAmount || 0 : 0),
+        0
+      );
+      const uniqueShopsVisited = new Set(myOrders.map((o) => o.shopId || o.shopName)).size;
+      const achievementPercent =
+        monthlyTarget > 0 ? Math.min(100, Math.round((totalSales / monthlyTarget) * 100)) : 0;
+      const commissionEarned = Math.round((totalSales * commissionPercent) / 100);
+
+      return {
+        ...staff,
+        monthlyTarget,
+        commissionPercent,
+        shopVisitTarget,
+        ordersCount: myOrders.length,
+        uniqueShopsVisited,
+        totalSales,
+        totalCashCollected,
+        achievementPercent,
+        commissionEarned,
+      };
+    });
+  }, [authorizedEmails, firebaseUsers, orders, staffTargets, currentYearMonth]);
 
   const showToast = (text: string, type: 'success' | 'info' | 'error' = 'success') => {
     setFeedback({ text, type });
@@ -780,6 +975,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         </button>
 
         <button
+          onClick={() => setSubTab('analytics')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+            subTab === 'analytics'
+              ? 'bg-teal-800 text-white shadow-sm'
+              : 'text-teal-900 bg-teal-50/80 hover:bg-teal-100 border border-teal-200'
+          }`}
+        >
+          <TrendingUp className="w-4 h-4" />
+          <span>লাভ-ক্ষতি ও স্টাফ টার্গেট</span>
+        </button>
+
+        <button
           onClick={() => setSubTab('storefront')}
           className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
             subTab === 'storefront'
@@ -1204,6 +1411,338 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* SUB-TAB: REAL-TIME PROFIT & STAFF TARGET ANALYTICS (Tools #6 & #8) */}
+      {subTab === 'analytics' && (
+        <div className="space-y-5 animate-fadeIn">
+          {/* Tool #6: Real-time Profit & Margin Calculator */}
+          <div className="bg-white rounded-2xl border border-neutral-200 p-4 sm:p-5 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-neutral-100">
+              <div>
+                <h2 className="text-base font-extrabold text-neutral-900 flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-emerald-600" />
+                  <span>এডমিন লাভ-ক্ষতি ও নিট মুনাফা ক্যালকুলেটর (Profit & Margin Analytics)</span>
+                </h2>
+                <p className="text-xs text-neutral-500">
+                  বিক্রয় মূল্য থেকে পণ্যের ক্রয় মূল্য (Cost Price) এবং ফিল্ড খরচ বাদ দিয়ে প্রকৃত নিট মুনাফার হিসাব
+                </p>
+              </div>
+
+              <div className="inline-flex bg-neutral-100 p-1 rounded-xl shrink-0">
+                {[
+                  { id: 'TODAY', label: 'আজকের হিসাব' },
+                  { id: 'MONTH', label: 'এই মাস' },
+                  { id: 'ALL', label: 'সর্বমোট' },
+                ].map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setProfitPeriod(p.id as any)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
+                      profitPeriod === p.id
+                        ? 'bg-white text-neutral-900 shadow-xs'
+                        : 'text-neutral-600 hover:text-neutral-900'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 5 Financial Profit Cards */}
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+              <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-3.5">
+                <span className="text-[11px] font-semibold text-neutral-500 block">মোট বিক্রয় (নিট বিল)</span>
+                <span className="text-lg font-black text-neutral-900 font-mono mt-1 block">
+                  ৳{profitAnalytics.totalRevenue.toLocaleString()}
+                </span>
+                <span className="text-[10px] text-neutral-500">{profitAnalytics.ordersCount}টি অর্ডার</span>
+              </div>
+
+              <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-3.5">
+                <span className="text-[11px] font-semibold text-neutral-500 block">পণ্যের মোট ক্রয়মূল্য (Cost)</span>
+                <span className="text-lg font-black text-neutral-700 font-mono mt-1 block">
+                  ৳{profitAnalytics.totalCostOfGoods.toLocaleString()}
+                </span>
+                <span className="text-[10px] text-neutral-500">ফ্রি অফারসহ আসল দাম</span>
+              </div>
+
+              <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-3.5">
+                <span className="text-[11px] font-bold text-emerald-800 block">মোট লাভ (Gross Profit)</span>
+                <span className="text-lg font-black text-emerald-700 font-mono mt-1 block">
+                  ৳{profitAnalytics.grossProfit.toLocaleString()}
+                </span>
+                <span className="text-[10px] text-emerald-700">বিক্রয় - ক্রয়মূল্য</span>
+              </div>
+
+              <div className="bg-rose-50/70 border border-rose-200 rounded-2xl p-3.5">
+                <span className="text-[11px] font-bold text-rose-800 block">ফিল্ড ও গাড়ি খরচ বাদ</span>
+                <span className="text-lg font-black text-rose-600 font-mono mt-1 block">
+                  -৳{profitAnalytics.totalExpensesAmount.toLocaleString()}
+                </span>
+                <span className="text-[10px] text-rose-600">
+                  ফেরত: ৳{profitAnalytics.totalReturns.toLocaleString()}
+                </span>
+              </div>
+
+              <div className="bg-neutral-900 text-white rounded-2xl p-3.5 col-span-2 lg:col-span-1">
+                <span className="text-[11px] font-bold text-amber-300 block">চূড়ান্ত নিট মুনাফা (Net Profit)</span>
+                <span className="text-xl font-black text-amber-400 font-mono mt-1 block">
+                  ৳{profitAnalytics.netProfit.toLocaleString()}
+                </span>
+                <span className="text-[10px] text-emerald-300 font-bold">
+                  মার্জিন হার: {profitAnalytics.marginPercent}%
+                </span>
+              </div>
+            </div>
+
+            {/* Product-wise Profit Table */}
+            <div className="border border-neutral-200 rounded-2xl overflow-hidden">
+              <div className="bg-neutral-50 px-4 py-2.5 border-b border-neutral-200 font-bold text-xs text-neutral-800">
+                পণ্যভিত্তিক লাভ ও মার্জিন ব্রেকডাউন ({profitAnalytics.productBreakdown.length}টি পণ্য)
+              </div>
+              {profitAnalytics.productBreakdown.length === 0 ? (
+                <div className="p-6 text-center text-neutral-400 text-xs">
+                  এই সময়ে কোনো পণ্য বিক্রয়ের রেকর্ড পাওয়া যায়নি।
+                </div>
+              ) : (
+                <div className="overflow-x-auto max-h-72">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-neutral-100/80 text-neutral-600 border-b border-neutral-200 font-bold">
+                        <th className="p-2.5">পণ্যের নাম</th>
+                        <th className="p-2.5 text-center">বিক্রয় পরিমাণ</th>
+                        <th className="p-2.5 text-right">মোট বিক্রয় (৳)</th>
+                        <th className="p-2.5 text-right">মোট ক্রয়মূল্য (৳)</th>
+                        <th className="p-2.5 text-right">নিট লাভ (৳)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-100">
+                      {profitAnalytics.productBreakdown.map((row) => (
+                        <tr key={row.productId} className="hover:bg-neutral-50">
+                          <td className="p-2.5 font-bold text-neutral-900">{row.productName}</td>
+                          <td className="p-2.5 text-center font-medium text-neutral-700">
+                            {row.qtySold} {row.unit}
+                            {row.freeQty > 0 ? ` (+${row.freeQty} ফ্রি)` : ''}
+                          </td>
+                          <td className="p-2.5 text-right font-mono text-neutral-800">
+                            ৳{row.revenue.toLocaleString()}
+                          </td>
+                          <td className="p-2.5 text-right font-mono text-neutral-500">
+                            ৳{row.cost.toLocaleString()}
+                          </td>
+                          <td
+                            className={`p-2.5 text-right font-mono font-black ${
+                              row.profit >= 0 ? 'text-emerald-700' : 'text-rose-600'
+                            }`}
+                          >
+                            ৳{row.profit.toLocaleString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Tool #8: SR / DSR Monthly Sales Target & Commission Tracker */}
+          <div className="bg-white rounded-2xl border border-neutral-200 p-4 sm:p-5 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-neutral-100">
+              <div>
+                <h2 className="text-base font-extrabold text-neutral-900 flex items-center gap-2">
+                  <UserCheck className="w-5 h-5 text-teal-600" />
+                  <span>এসআর / ডিএসআর মাসিক সেলস টার্গেট ও কমিশন রিপোর্ট কার্ড ({currentYearMonth})</span>
+                </h2>
+                <p className="text-xs text-neutral-500">
+                  কোন কর্মী কয়টি দোকান ভিজিট করলো, কত টাকার অর্ডার কাটলো এবং মাসিক টার্গেট ও কমিশনের হিসাব
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+              {staffPerformanceRows.map((st) => (
+                <div
+                  key={st.email}
+                  className="border border-neutral-200 rounded-2xl p-4 bg-neutral-50/40 flex flex-col justify-between space-y-3"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-extrabold text-sm text-neutral-900">{st.name}</h4>
+                        <span className="px-2 py-0.5 rounded-md bg-teal-100 text-teal-900 font-bold text-[10px] uppercase">
+                          {st.role}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-neutral-500 mt-0.5">
+                        {st.email} • রুট: {st.route}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEditingStaffTarget({
+                          email: st.email,
+                          staffName: st.name,
+                          role: st.role,
+                          monthlyTargetAmount: String(st.monthlyTarget),
+                          commissionPercent: String(st.commissionPercent),
+                          shopVisitTarget: String(st.shopVisitTarget),
+                        })
+                      }
+                      className="px-2.5 py-1 bg-white hover:bg-neutral-100 text-neutral-800 border border-neutral-300 rounded-xl text-[11px] font-bold flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <Edit3 className="w-3 h-3" />
+                      <span>টার্গেট সেট</span>
+                    </button>
+                  </div>
+
+                  {/* Progress Bar */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-neutral-600 font-semibold">
+                        মাসিক বিক্রয়: <strong className="text-neutral-900 font-mono">৳{st.totalSales.toLocaleString()}</strong> / ৳{st.monthlyTarget.toLocaleString()}
+                      </span>
+                      <span className="font-black text-emerald-700 font-mono">{st.achievementPercent}% পূর্ণ</span>
+                    </div>
+                    <div className="w-full h-2.5 bg-neutral-200 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-emerald-600 rounded-full transition-all"
+                        style={{ width: `${Math.min(100, st.achievementPercent)}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Metrics Grid */}
+                  <div className="grid grid-cols-4 gap-2 pt-1 text-center">
+                    <div className="bg-white p-2 rounded-xl border border-neutral-200">
+                      <span className="text-[10px] text-neutral-500 block">মোট অর্ডার</span>
+                      <span className="font-black text-xs text-neutral-900 font-mono">{st.ordersCount}টি</span>
+                    </div>
+                    <div className="bg-white p-2 rounded-xl border border-neutral-200">
+                      <span className="text-[10px] text-neutral-500 block">দোকান কভার</span>
+                      <span className="font-black text-xs text-teal-700 font-mono">{st.uniqueShopsVisited}টি</span>
+                    </div>
+                    <div className="bg-white p-2 rounded-xl border border-neutral-200">
+                      <span className="text-[10px] text-neutral-500 block">নগদ আদায়</span>
+                      <span className="font-black text-xs text-emerald-700 font-mono">
+                        ৳{st.totalCashCollected.toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="bg-amber-50 p-2 rounded-xl border border-amber-200">
+                      <span className="text-[10px] text-amber-900 block">কমিশন ({st.commissionPercent}%)</span>
+                      <span className="font-black text-xs text-amber-900 font-mono">
+                        ৳{st.commissionEarned.toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Modal to Edit Staff Target & Commission */}
+          {editingStaffTarget && (
+            <div className="fixed inset-0 z-50 bg-neutral-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+              <div className="bg-white rounded-2xl max-w-sm w-full p-5 shadow-2xl border border-neutral-200 space-y-3.5 text-xs">
+                <div className="flex items-center justify-between pb-2 border-b border-neutral-100">
+                  <div>
+                    <h3 className="font-extrabold text-sm text-neutral-900">
+                      মাসিক সেলস টার্গেট ও কমিশন সেট করুন
+                    </h3>
+                    <p className="text-[11px] text-neutral-500">{editingStaffTarget.staffName} ({editingStaffTarget.email})</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEditingStaffTarget(null)}
+                    className="p-1 text-neutral-400 hover:text-neutral-700 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (onSaveStaffTarget) {
+                      onSaveStaffTarget({
+                        id: editingStaffTarget.email.replace(/[@.]/g, '_'),
+                        email: editingStaffTarget.email,
+                        staffName: editingStaffTarget.staffName,
+                        role: editingStaffTarget.role,
+                        monthlyTargetAmount: Math.max(0, Number(editingStaffTarget.monthlyTargetAmount) || 0),
+                        commissionPercent: Math.max(0, Number(editingStaffTarget.commissionPercent) || 0),
+                        shopVisitTarget: Math.max(0, Number(editingStaffTarget.shopVisitTarget) || 0),
+                        updatedAt: new Date().toISOString(),
+                      });
+                    }
+                    setEditingStaffTarget(null);
+                    showToast(`${editingStaffTarget.staffName}-এর টার্গেট ও কমিশন আপডেট হয়েছে!`, 'success');
+                  }}
+                  className="space-y-3"
+                >
+                  <div>
+                    <label className="font-bold text-neutral-700 block mb-1">মাসিক বিক্রয় টার্গেট (৳)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      required
+                      value={editingStaffTarget.monthlyTargetAmount}
+                      onChange={(e) =>
+                        setEditingStaffTarget({ ...editingStaffTarget, monthlyTargetAmount: e.target.value })
+                      }
+                      className="w-full p-2.5 border border-neutral-300 rounded-xl font-bold text-neutral-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold text-neutral-700 block mb-1">সেলস কমিশন হার (%)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      required
+                      value={editingStaffTarget.commissionPercent}
+                      onChange={(e) =>
+                        setEditingStaffTarget({ ...editingStaffTarget, commissionPercent: e.target.value })
+                      }
+                      className="w-full p-2.5 border border-neutral-300 rounded-xl font-bold text-neutral-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold text-neutral-700 block mb-1">মাসিক দোকান ভিজিট টার্গেট (টি)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={editingStaffTarget.shopVisitTarget}
+                      onChange={(e) =>
+                        setEditingStaffTarget({ ...editingStaffTarget, shopVisitTarget: e.target.value })
+                      }
+                      className="w-full p-2.5 border border-neutral-300 rounded-xl font-bold text-neutral-900"
+                    />
+                  </div>
+                  <div className="flex items-center justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setEditingStaffTarget(null)}
+                      className="px-4 py-2 rounded-xl text-neutral-600 hover:bg-neutral-100 font-bold cursor-pointer"
+                    >
+                      বাতিল
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-5 py-2 rounded-xl bg-teal-700 hover:bg-teal-600 text-white font-bold shadow cursor-pointer"
+                    >
+                      সংরক্ষণ করুন
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

@@ -37,7 +37,13 @@ import {
   getDeletedShopIds,
   getDeletedOrderIds,
   getDeletedCategoryIds,
-  getDeletedRouteIds
+  getDeletedRouteIds,
+  getDueCollections,
+  saveDueCollections,
+  getDailyExpenses,
+  saveDailyExpenses,
+  saveDailyExpense,
+  deleteDailyExpense
 } from './lib/storage';
 import {
   subscribeToCloudShops,
@@ -45,6 +51,8 @@ import {
   subscribeToCloudOrders,
   subscribeToCloudCategories,
   subscribeToAuthorizedEmails,
+  subscribeToCloudDueCollections,
+  subscribeToCloudDailyExpenses,
   saveOrderToCloud,
   deleteOrderFromCloud,
   saveShopToCloud,
@@ -59,6 +67,8 @@ import {
   saveRouteToCloud,
   deleteRouteFromCloud,
   saveDueCollectionToCloud,
+  saveDailyExpenseToCloud,
+  deleteDailyExpenseFromCloud,
   seedInitialCloudDataIfEmpty,
   clearAllCloudMockData,
   subscribeToUserProfileDoc,
@@ -97,7 +107,7 @@ import { InventoryView } from './components/InventoryView';
 import { RouteMapView } from './components/RouteMapView';
 import { AdminDashboardView } from './components/AdminDashboardView';
 import { MemoModal } from './components/MemoModal';
-import { Product, Shop, Order, UserProfile, PaymentMethod, UserRole, DueCollectionRecord, Category, AuthorizedUserEmail, Route, BusinessInfo } from './types';
+import { Product, Shop, Order, UserProfile, PaymentMethod, UserRole, DueCollectionRecord, DailyExpenseRecord, Category, AuthorizedUserEmail, Route, BusinessInfo } from './types';
 import { CheckCircle2, AlertCircle, ExternalLink, LogIn, Lock } from 'lucide-react';
 import { usePWAInstall } from './hooks/usePWAInstall';
 import { notifyNewOrderPush } from './lib/pushService';
@@ -122,6 +132,8 @@ export default function App() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [routes, setRoutes] = useState<Route[]>([]);
   const [authorizedEmails, setAuthorizedEmails] = useState<AuthorizedUserEmail[]>([]);
+  const [dueCollections, setDueCollections] = useState<DueCollectionRecord[]>([]);
+  const [dailyExpenses, setDailyExpenses] = useState<DailyExpenseRecord[]>([]);
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
 
   // Network & Auth & RBAC
@@ -171,6 +183,8 @@ export default function App() {
     const cats = getCategories();
     const rts = getRoutes();
     const auths = getAuthorizedEmails();
+    const cols = getDueCollections();
+    const exps = getDailyExpenses();
     const pending = getPendingSyncOrders();
     const user = getUserProfile();
 
@@ -180,6 +194,8 @@ export default function App() {
     setCategories(cats);
     setRoutes(rts);
     setAuthorizedEmails(auths);
+    setDueCollections(cols);
+    setDailyExpenses(exps);
     setPendingSyncCount(pending.length);
     setUserProfileState(user);
     if (user?.role) {
@@ -298,11 +314,27 @@ export default function App() {
     let unsubscribeRoutes: (() => void) | undefined;
     let unsubscribeAuthEmails: (() => void) | undefined;
     let unsubscribeBizInfo: (() => void) | undefined;
+    let unsubscribeDueCollections: (() => void) | undefined;
+    let unsubscribeDailyExpenses: (() => void) | undefined;
 
     try {
       unsubscribeBizInfo = subscribeToCloudBusinessInfo((cloudBiz) => {
         setBusinessInfo(cloudBiz);
         saveBusinessInfoLocal(cloudBiz);
+      });
+
+      unsubscribeDueCollections = subscribeToCloudDueCollections((cloudCols) => {
+        if (cloudCols.length > 0 || getDueCollections().length === 0) {
+          saveDueCollections(cloudCols);
+          setDueCollections(cloudCols);
+        }
+      });
+
+      unsubscribeDailyExpenses = subscribeToCloudDailyExpenses((cloudExps) => {
+        if (cloudExps.length > 0 || getDailyExpenses().length === 0) {
+          saveDailyExpenses(cloudExps);
+          setDailyExpenses(cloudExps);
+        }
       });
 
       unsubscribeShops = subscribeToCloudShops((cloudShops) => {
@@ -392,6 +424,8 @@ export default function App() {
       if (unsubscribeCategories) unsubscribeCategories();
       if (unsubscribeRoutes) unsubscribeRoutes();
       if (unsubscribeAuthEmails) unsubscribeAuthEmails();
+      if (unsubscribeDueCollections) unsubscribeDueCollections();
+      if (unsubscribeDailyExpenses) unsubscribeDailyExpenses();
     };
   }, [reloadData]);
 
@@ -603,21 +637,16 @@ export default function App() {
     notes?: string
   ) => {
     try {
-      recordDuePayment(shopId, amount, method, notes);
+      const localRecord = recordDuePayment(shopId, amount, method, notes);
 
       // Also persist due collection record to Firestore
       const targetShop = shops.find((s) => s.id === shopId);
       const collectionRecord: DueCollectionRecord = {
-        id: `col-${Date.now()}`,
-        shopId,
-        shopName: targetShop?.name || 'শপ',
-        amount,
-        date: new Date().toISOString(),
-        paymentMethod: method,
+        ...localRecord,
+        shopName: targetShop?.name || localRecord.shopName || 'শপ',
         collectedBy: userProfile?.displayName || 'সেলস এজেন্ট',
         collectedByUid: userProfile?.uid,
         collectorRole: activeSimulatedRole,
-        notes,
       };
       saveDueCollectionToCloud(collectionRecord).catch(() => {});
 
@@ -890,13 +919,36 @@ export default function App() {
     showToast('স্টক সফলভাবে আপডেট করা হয়েছে', 'success');
   };
 
+  // Daily Field Expense Handlers (Tool #3)
+  const handleAddDailyExpense = (expenseInput: Omit<DailyExpenseRecord, 'id' | 'createdAt'>) => {
+    const newExpense: DailyExpenseRecord = {
+      ...expenseInput,
+      id: `exp-${Date.now()}`,
+      createdAt: new Date().toISOString(),
+      recordedBy: userProfile?.displayName || expenseInput.recordedBy || 'ডিএসআর / স্টাফ',
+    };
+    saveDailyExpense(newExpense);
+    saveDailyExpenseToCloud(newExpense).catch(() => {});
+    reloadData();
+    showToast(`খরচ "${newExpense.note || newExpense.category}" (৳${newExpense.amount.toLocaleString()}) যুক্ত হয়েছে!`, 'success');
+  };
+
+  const handleDeleteDailyExpense = (id: string) => {
+    deleteDailyExpense(id);
+    deleteDailyExpenseFromCloud(id).catch(() => {});
+    reloadData();
+    showToast('খরচের এন্ট্রি মুছে ফেলা হয়েছে', 'info');
+  };
+
   // Next-Day Delivery & Cash/Due Settlement Handler
   const handleSettleOrderDelivery = (
     orderId: string,
     paidAmount: number,
     dueAmount: number,
     paymentMethod: PaymentMethod,
-    notes?: string
+    notes?: string,
+    returnAmount?: number,
+    returnReason?: string
   ) => {
     const ord = orders.find((o) => o.id === orderId);
     if (!ord) return;
@@ -925,6 +977,8 @@ export default function App() {
       paidAmount,
       dueAmount,
       paymentMethod,
+      returnAmount: returnAmount !== undefined ? returnAmount : ord.returnAmount,
+      returnReason: returnReason !== undefined ? returnReason : ord.returnReason,
       totalOutstandingAfterOrder: updatedShopDue,
       notes: notes !== undefined ? notes : ord.notes,
       syncedWithSheets: false,
@@ -939,12 +993,12 @@ export default function App() {
 
     if (dueAmount > 0) {
       showToast(
-        `ডেলিভারি সম্পন্ন! নগদ জমা: ৳${paidAmount.toLocaleString()} এবং বাকি ৳${dueAmount.toLocaleString()} দোকানের খাতায় যোগ হয়েছে।`,
+        `ডেলিভারি সম্পন্ন! নগদ জমা: ৳${paidAmount.toLocaleString()}${(returnAmount || 0) > 0 ? `, রিটার্ন বাদ: ৳${(returnAmount || 0).toLocaleString()}` : ''} এবং বাকি ৳${dueAmount.toLocaleString()} দোকানের খাতায় যোগ হয়েছে।`,
         'success'
       );
     } else {
       showToast(
-        `ডেলিভারি সম্পন্ন! সম্পূর্ণ বিল ৳${paidAmount.toLocaleString()} নগদ আদায় হয়েছে।`,
+        `ডেলিভারি সম্পন্ন! সম্পূর্ণ নিট বিল ৳${paidAmount.toLocaleString()} নগদ আদায় হয়েছে।`,
         'success'
       );
     }
@@ -1367,6 +1421,7 @@ export default function App() {
                 products={products}
                 shops={shops}
                 routes={routes}
+                orders={orders}
                 selectedShopIdProp={targetOrderShopId}
                 onOrderCreated={handleOrderCreated}
                 onAddShop={handleAddShop}
@@ -1378,6 +1433,10 @@ export default function App() {
               <OrdersListView
                 orders={orders}
                 shops={shops}
+                dueCollections={dueCollections}
+                dailyExpenses={dailyExpenses}
+                onAddDailyExpense={handleAddDailyExpense}
+                onDeleteDailyExpense={handleDeleteDailyExpense}
                 onViewMemo={(order, editMode = false) => {
                   setSelectedMemoOrder(order);
                   setIsMemoEditMode(editMode);
@@ -1401,6 +1460,8 @@ export default function App() {
               <ShopsListView
                 shops={shops}
                 routes={routes}
+                orders={orders}
+                dueCollections={dueCollections}
                 onAddShop={handleAddShop}
                 onRecordDuePayment={handleRecordDuePayment}
                 onSelectShopForOrder={(shopId) => {

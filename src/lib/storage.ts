@@ -1,4 +1,4 @@
-import { Product, Shop, Order, DueCollectionRecord, DailyMetrics, Category, AuthorizedUserEmail, Route, BusinessInfo, CustomerDeliveryAddress } from '../types';
+import { Product, Shop, Order, DueCollectionRecord, DailyMetrics, Category, AuthorizedUserEmail, Route, BusinessInfo, CustomerDeliveryAddress, DailyExpenseRecord, StaffTargetConfig } from '../types';
 
 const STORAGE_KEYS = {
   SHOPS: 'dsr_shops_v1',
@@ -17,6 +17,8 @@ const STORAGE_KEYS = {
   DELETED_CATEGORIES: 'dsr_deleted_categories_v1',
   DELETED_ROUTES: 'dsr_deleted_routes_v1',
   CUSTOMER_DELIVERY_ADDRESS: 'munsi_customer_delivery_address_v1',
+  DAILY_EXPENSES: 'dsr_daily_expenses_v1',
+  STAFF_TARGETS: 'dsr_staff_targets_v1',
 };
 
 export const DEFAULT_BUSINESS_INFO: BusinessInfo = {
@@ -892,4 +894,77 @@ export function deleteCustomerDeliveryAddress(): void {
     console.error('Failed to remove customer delivery address from localStorage:', err);
   }
 }
+
+export function saveDueCollections(collections: DueCollectionRecord[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.COLLECTIONS, JSON.stringify(collections));
+  } catch (err) {
+    console.error('Failed to save due collections:', err);
+  }
+}
+
+export function getDailyExpenses(): DailyExpenseRecord[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.DAILY_EXPENSES);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveDailyExpenses(expenses: DailyExpenseRecord[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.DAILY_EXPENSES, JSON.stringify(expenses));
+  } catch (err) {
+    console.error('Failed to save daily expenses:', err);
+  }
+}
+
+export function saveDailyExpense(expense: DailyExpenseRecord): DailyExpenseRecord {
+  const list = getDailyExpenses();
+  const idx = list.findIndex((x) => x.id === expense.id);
+  if (idx >= 0) {
+    list[idx] = expense;
+  } else {
+    list.unshift(expense);
+  }
+  saveDailyExpenses(list);
+  return expense;
+}
+
+export function deleteDailyExpense(id: string): void {
+  const list = getDailyExpenses().filter((x) => x.id !== id);
+  saveDailyExpenses(list);
+}
+
+export function getStaffTargets(): StaffTargetConfig[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.STAFF_TARGETS);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveStaffTargets(targets: StaffTargetConfig[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.STAFF_TARGETS, JSON.stringify(targets));
+  } catch (err) {
+    console.error('Failed to save staff targets:', err);
+  }
+}
+
+export function saveStaffTarget(target: StaffTargetConfig): StaffTargetConfig {
+  const list = getStaffTargets();
+  const key = target.email.toLowerCase().trim();
+  const idx = list.findIndex((x) => x.email.toLowerCase().trim() === key || x.id === target.id);
+  if (idx >= 0) {
+    list[idx] = { ...list[idx], ...target };
+  } else {
+    list.push(target);
+  }
+  saveStaffTargets(list);
+  return target;
+}
+
 
