@@ -220,12 +220,11 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
                       </button>
                       {onDeleteShop && isAdmin && (
                         <button
+                          type="button"
                           onClick={() => {
-                            if (confirm(`আপনি কি নিশ্চিতভাবে "${shop.name}" দোকানটি মুছে ফেলতে চান?`)) {
-                              onDeleteShop(shop.id);
-                            }
+                            onDeleteShop(shop.id);
                           }}
-                          className="p-1 hover:text-rose-600 text-neutral-500 rounded transition-colors"
+                          className="p-1 hover:text-rose-600 text-neutral-500 rounded transition-colors cursor-pointer"
                           title="দোকান ডিলিট করুন"
                         >
                           <Trash2 className="w-3 h-3" />

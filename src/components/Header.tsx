@@ -43,6 +43,8 @@ export interface HeaderProps {
   onOpenNotificationModal?: () => void;
   activeTab?: NavTab;
   onSelectTab?: (tab: NavTab) => void;
+  onLogout?: () => Promise<void> | void;
+  onShowToast?: (text: string, type?: 'success' | 'info' | 'error') => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -61,6 +63,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenNotificationModal,
   activeTab = 'order',
   onSelectTab,
+  onLogout,
+  onShowToast,
 }) => {
   const [authLoading, setAuthLoading] = useState(false);
   const [showIOSModal, setShowIOSModal] = useState(false);
@@ -85,22 +89,37 @@ export const Header: React.FC<HeaderProps> = ({
           assignedRoute: res.appUser.assignedRoute,
           accessToken: res.accessToken || undefined,
         });
+        onShowToast?.('গুগল অ্যাকাউন্টে সফলভাবে লগইন সম্পন্ন হয়েছে!', 'success');
       }
     } catch (err: any) {
       console.error(err);
-      alert('গুগল সাইন-ইন সম্পন্ন করা যায়নি। অনুগ্রহ করে পুনরায় চেষ্টা করুন।');
+      onShowToast?.('গুগল সাইন-ইন সম্পন্ন করা যায়নি। অনুগ্রহ করে পুনরায় চেষ্টা করুন।', 'error');
     } finally {
       setAuthLoading(false);
     }
   };
 
   const handleSignOut = async () => {
-    if (confirm('আপনি কি গুগল অ্যাকাউন্ট থেকে সাইন-আউট করতে চান?')) {
-      await logout();
+    try {
+      setAuthLoading(true);
+      if (onLogout) {
+        await onLogout();
+      } else {
+        await logout();
+        if (setUserProfile) {
+          setUserProfile(null);
+        }
+      }
+      setIsHamburgerOpen(false);
+      onShowToast?.('আপনি সফলভাবে লগআউট করেছেন।', 'info');
+    } catch (err) {
+      console.error('Sign out error:', err);
       if (setUserProfile) {
         setUserProfile(null);
       }
       setIsHamburgerOpen(false);
+    } finally {
+      setAuthLoading(false);
     }
   };
 
@@ -147,30 +166,43 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Right: STRICTLY 4 ITEMS -> 1. Google Login, 2. App Install, 3. Notification Symbol, 4. Hamburger Menu */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {/* 1. গুগল লগিন (Google Login / User Profile) */}
+            {/* 1. গুগল লগিন (Google Login / User Profile + Quick Logout) */}
             {activeUser ? (
-              <button
-                type="button"
-                onClick={() => setIsHamburgerOpen(true)}
-                className="flex items-center gap-1.5 px-2 py-1 rounded-xl bg-emerald-700/80 hover:bg-emerald-700 border border-emerald-500/40 text-xs text-white cursor-pointer transition-all"
-                title={`${activeUser.displayName || activeUser.email}`}
-              >
-                {activeUser.photoURL ? (
-                  <img
-                    src={activeUser.photoURL}
-                    alt={activeUser.displayName || 'User'}
-                    className="w-6 h-6 rounded-full border border-emerald-300"
-                    referrerPolicy="no-referrer"
-                  />
-                ) : (
-                  <div className="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-xs">
-                    {(activeUser.displayName || activeUser.email || 'U')[0].toUpperCase()}
-                  </div>
-                )}
-                <span className="hidden sm:inline text-xs font-bold max-w-[90px] truncate">
-                  {activeUser.displayName?.split(' ')[0] || 'একাউন্ট'}
-                </span>
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setIsHamburgerOpen(true)}
+                  className="flex items-center gap-1.5 px-2 py-1 rounded-xl bg-emerald-700/80 hover:bg-emerald-700 border border-emerald-500/40 text-xs text-white cursor-pointer transition-all"
+                  title={`${activeUser.displayName || activeUser.email}`}
+                >
+                  {activeUser.photoURL ? (
+                    <img
+                      src={activeUser.photoURL}
+                      alt={activeUser.displayName || 'User'}
+                      className="w-6 h-6 rounded-full border border-emerald-300"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-xs">
+                      {(activeUser.displayName || activeUser.email || 'U')[0].toUpperCase()}
+                    </div>
+                  )}
+                  <span className="hidden sm:inline text-xs font-bold max-w-[90px] truncate">
+                    {activeUser.displayName?.split(' ')[0] || 'একাউন্ট'}
+                  </span>
+                </button>
+                <button
+                  id="btn-header-quick-logout"
+                  type="button"
+                  onClick={handleSignOut}
+                  disabled={authLoading}
+                  className="p-1.5 sm:px-2 sm:py-1.5 rounded-xl bg-rose-600/90 hover:bg-rose-600 border border-rose-400/40 text-white text-xs font-bold flex items-center gap-1 transition-all cursor-pointer active:scale-95 disabled:opacity-60"
+                  title="লগআউট করুন"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span className="hidden md:inline text-[11px]">লগআউট</span>
+                </button>
+              </div>
             ) : (
               <button
                 id="btn-google-signin"
@@ -334,6 +366,15 @@ export const Header: React.FC<HeaderProps> = ({
                       </div>
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    onClick={handleSignOut}
+                    disabled={authLoading}
+                    className="w-full py-2 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer transition active:scale-95 disabled:opacity-60"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>{authLoading ? 'লগআউট হচ্ছে...' : 'লগআউট করুন'}</span>
+                  </button>
                 </div>
               ) : (
                 <div className="p-3.5 rounded-2xl bg-neutral-50 border border-neutral-200 space-y-2.5">

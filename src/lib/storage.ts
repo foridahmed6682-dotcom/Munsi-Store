@@ -155,7 +155,43 @@ export function saveBusinessInfo(info: BusinessInfo): BusinessInfo {
 
 export const saveBusinessInfoLocal = saveBusinessInfo;
 
-export const DEFAULT_ROUTES: Route[] = [];
+export const DEFAULT_ROUTES: Route[] = [
+  {
+    id: 'rt-palashbari',
+    name: 'Palashbari',
+    banglaName: 'পলাশবাড়ী',
+    description: 'পলাশবাড়ী চৌরাস্তা, স্টেশন রোড ও পৌর এলাকা',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  },
+  {
+    id: 'rt-gaibandha',
+    name: 'Gaibandha Sadar',
+    banglaName: 'গাইবান্ধা সদর',
+    description: 'গাইবান্ধা সদর ও পৌর মার্কেট এলাকা',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  },
+  {
+    id: 'rt-tulsighat',
+    name: 'Tulsighat - Dholbhanga',
+    banglaName: 'তুলসীঘাট- ঠোলভাঙ্গা',
+    description: 'তুলসীঘাট বাজার ও ঢোলভাঙ্গা রুট',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  },
+  {
+    id: 'rt-hasnerpara',
+    name: 'Hasnerpara',
+    banglaName: 'হাসনেরপাড়া',
+    description: 'হাসনেরপাড়া ও আশেপাশের বাজার এলাকা',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  },
+  {
+    id: 'rt-gobindaganj',
+    name: 'Gobindaganj',
+    banglaName: 'গোবিন্দগঞ্জ',
+    description: 'গোবিন্দগঞ্জ বাজার ও হাইওয়ে জোন',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  },
+];
 
 export const DEFAULT_CATEGORIES: Category[] = [];
 
@@ -360,15 +396,30 @@ export function saveCategories(categories: Category[]) {
 }
 
 export function addOrUpdateCategory(category: Category): Category {
+  try {
+    const rawDel = localStorage.getItem(STORAGE_KEYS.DELETED_CATEGORIES);
+    if (rawDel) {
+      const list: string[] = JSON.parse(rawDel).filter((id: string) => id !== category.id);
+      localStorage.setItem(STORAGE_KEYS.DELETED_CATEGORIES, JSON.stringify(list));
+    }
+  } catch {
+    // ignore
+  }
   const categories = getCategories();
-  const idx = categories.findIndex((c) => c.id === category.id || c.name.toLowerCase() === category.name.toLowerCase());
+  const idx = categories.findIndex(
+    (c) =>
+      c.id === category.id ||
+      (c.banglaName && category.banglaName && c.banglaName.trim() === category.banglaName.trim())
+  );
+  let finalCategory = category;
   if (idx >= 0) {
-    categories[idx] = { ...categories[idx], ...category };
+    finalCategory = { ...categories[idx], ...category, id: categories[idx].id };
+    categories[idx] = finalCategory;
   } else {
-    categories.push(category);
+    categories.push(finalCategory);
   }
   saveCategories(categories);
-  return category;
+  return finalCategory;
 }
 
 export function deleteCategory(categoryId: string) {
@@ -383,19 +434,24 @@ export function getRoutes(): Route[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.ROUTES);
     const deletedIds = getDeletedRouteIds();
-    const seedDone = isInitialSeedDone();
 
     if (raw === null) {
-      if (!seedDone) {
-        localStorage.setItem(STORAGE_KEYS.ROUTES, JSON.stringify(DEFAULT_ROUTES));
-        return DEFAULT_ROUTES;
-      }
-      return [];
+      const initial = DEFAULT_ROUTES.filter((r) => !deletedIds.has(r.id));
+      localStorage.setItem(STORAGE_KEYS.ROUTES, JSON.stringify(initial));
+      return initial;
     }
     const parsed: Route[] = JSON.parse(raw);
-    return parsed.filter((r) => !deletedIds.has(r.id));
+    const clean = parsed.filter((r) => !deletedIds.has(r.id));
+    if (clean.length === 0) {
+      const fallback = DEFAULT_ROUTES.filter((r) => !deletedIds.has(r.id));
+      if (fallback.length > 0) {
+        localStorage.setItem(STORAGE_KEYS.ROUTES, JSON.stringify(fallback));
+        return fallback;
+      }
+    }
+    return clean;
   } catch {
-    return [];
+    return DEFAULT_ROUTES;
   }
 }
 
@@ -410,15 +466,35 @@ export function saveRoutes(routes: Route[]) {
 }
 
 export function addOrUpdateRoute(route: Route): Route {
+  try {
+    const rawDel = localStorage.getItem(STORAGE_KEYS.DELETED_ROUTES);
+    if (rawDel) {
+      const list: string[] = JSON.parse(rawDel).filter((id: string) => id !== route.id);
+      localStorage.setItem(STORAGE_KEYS.DELETED_ROUTES, JSON.stringify(list));
+    }
+  } catch {
+    // ignore
+  }
   const routes = getRoutes();
-  const idx = routes.findIndex((r) => r.id === route.id || r.name.toLowerCase() === route.name.toLowerCase() || r.banglaName === route.banglaName);
-  if (idx >= 0) {
-    routes[idx] = { ...routes[idx], ...route };
+  const byIdIdx = routes.findIndex((r) => r.id === route.id);
+  const byNameIdx =
+    byIdIdx >= 0
+      ? byIdIdx
+      : routes.findIndex(
+          (r) =>
+            (r.banglaName && route.banglaName && r.banglaName.trim() === route.banglaName.trim()) ||
+            (r.name && route.name && r.name.trim().toLowerCase() === route.name.trim().toLowerCase())
+        );
+
+  let finalRoute = route;
+  if (byNameIdx >= 0) {
+    finalRoute = { ...routes[byNameIdx], ...route, id: routes[byNameIdx].id };
+    routes[byNameIdx] = finalRoute;
   } else {
-    routes.push(route);
+    routes.push(finalRoute);
   }
   saveRoutes(routes);
-  return route;
+  return finalRoute;
 }
 
 export function deleteRoute(routeId: string) {

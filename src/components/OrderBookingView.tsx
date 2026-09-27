@@ -142,9 +142,21 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
     });
   }, [shops, routeFilter, shopSearch]);
 
+  // Keep selectedShopId synchronized with filteredShops when routeFilter or shopSearch changes
+  useEffect(() => {
+    if (filteredShops.length > 0) {
+      const existsInFiltered = filteredShops.some((s) => s.id === selectedShopId);
+      if (!existsInFiltered) {
+        setSelectedShopId(filteredShops[0].id);
+      }
+    } else if (selectedShopId !== '') {
+      setSelectedShopId('');
+    }
+  }, [filteredShops, selectedShopId]);
+
   const selectedShop = useMemo(() => {
-    return shops.find((s) => s.id === selectedShopId) || shops[0] || null;
-  }, [shops, selectedShopId]);
+    return filteredShops.find((s) => s.id === selectedShopId) || filteredShops[0] || null;
+  }, [filteredShops, selectedShopId]);
 
   // Filtered products
   const filteredProducts = useMemo(() => {
@@ -299,7 +311,7 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
   };
 
   const handleClearCart = () => {
-    if (cartItems.length > 0 && confirm('আপনি কি বর্তমান কার্ট খালি করতে চান?')) {
+    if (cartItems.length > 0) {
       setCart({});
     }
   };
@@ -459,15 +471,19 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
 
                 {/* Shop Dropdown */}
                 <select
-                  value={selectedShopId}
+                  value={selectedShop?.id || ''}
                   onChange={(e) => setSelectedShopId(e.target.value)}
                   className="w-full text-xs py-2 px-2.5 bg-neutral-50 border border-neutral-300 rounded-xl font-bold text-neutral-900 focus:ring-2 focus:ring-emerald-600"
                 >
-                  {filteredShops.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} ({s.ownerName}) {s.previousDue > 0 ? `- বাকী: ৳${s.previousDue}` : '- নগদ'}
-                    </option>
-                  ))}
+                  {filteredShops.length === 0 ? (
+                    <option value="">এই রুটে কোনো দোকান পাওয়া যায়নি</option>
+                  ) : (
+                    filteredShops.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} ({s.ownerName}) {s.previousDue > 0 ? `- বাকী: ৳${s.previousDue}` : '- নগদ'}
+                      </option>
+                    ))
+                  )}
                 </select>
               </div>
             </div>

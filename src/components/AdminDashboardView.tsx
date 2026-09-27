@@ -182,9 +182,35 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const allAvailableRouteNames = useMemo(() => {
     const set = new Set<string>();
     set.add('সব রুট (All Routes)');
-    routes.forEach(r => set.add(r.banglaName));
+    routes.forEach((r) => {
+      if (r.banglaName?.trim()) set.add(r.banglaName.trim());
+    });
+    shops.forEach((s) => {
+      if (s.routeArea?.trim()) set.add(s.routeArea.trim());
+    });
     return Array.from(set);
-  }, [routes]);
+  }, [routes, shops]);
+
+  const allManageableRoutes = useMemo(() => {
+    const list: Route[] = [...routes];
+    const knownNames = new Set(
+      routes.flatMap((r) => [r.banglaName?.trim().toLowerCase(), r.name?.trim().toLowerCase()]).filter(Boolean)
+    );
+    shops.forEach((s) => {
+      const area = s.routeArea?.trim();
+      if (area && !knownNames.has(area.toLowerCase())) {
+        knownNames.add(area.toLowerCase());
+        list.push({
+          id: `shop-route-${area}`,
+          name: area,
+          banglaName: area,
+          description: `${area} এরিয়ার নিবন্ধিত দোকানের রুট`,
+          createdAt: s.createdAt || new Date().toISOString(),
+        });
+      }
+    });
+    return list;
+  }, [routes, shops]);
 
   const [feedback, setFeedback] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null);
 
@@ -865,11 +891,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  if (window.confirm('আপনি কি নিশ্চিত যে সকল ডেমো/মক পণ্য ও টেস্ট ডাটা স্থায়ীভাবে মুছে ফেলতে চান? এটি একবার মুছলে রিফ্রেশ করলেও আর ডেমো ডাটা ফিরে আসবে না।')) {
-                    onCleanAllMockData();
-                  }
+                  onCleanAllMockData();
                 }}
-                className="shrink-0 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5"
+                className="shrink-0 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>সকল ডেমো ডাটা মুছুন</span>
@@ -1162,9 +1186,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                               <button
                                 type="button"
                                 onClick={() => {
-                                  if (window.confirm(`আপনি কি নিশ্চিত যে মেমো #${ord.memoNumber} (${ord.shopName}) স্থায়ীভাবে ডিলিট করতে চান?`)) {
-                                    onDeleteOrder(ord.id);
-                                  }
+                                  onDeleteOrder(ord.id);
                                 }}
                                 className="px-2.5 py-1 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-800 border border-rose-200 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
                                 title="মেমো ডিলিট করুন"
@@ -1254,13 +1276,12 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                       <Edit3 className="w-4 h-4" />
                     </button>
                     <button
+                      type="button"
                       onClick={() => {
-                        if (confirm(`আপনি কি '${cat.banglaName}' ক্যাটাগরি মুছে ফেলতে চান?`)) {
-                          onDeleteCategory(cat.id);
-                          showToast(`'${cat.banglaName}' মুছে ফেলা হয়েছে`, 'info');
-                        }
+                        onDeleteCategory(cat.id);
+                        showToast(`'${cat.banglaName}' মুছে ফেলা হয়েছে`, 'info');
                       }}
-                      className="p-1.5 rounded-lg hover:bg-rose-50 text-neutral-400 hover:text-rose-600"
+                      className="p-1.5 rounded-lg hover:bg-rose-50 text-neutral-400 hover:text-rose-600 cursor-pointer"
                       title="ক্যাটাগরি মুছুন"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -1294,11 +1315,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      if (window.confirm('আপনি কি নিশ্চিত যে সকল ডেমো/মক পণ্য ও টেস্ট ডাটা স্থায়ীভাবে মুছে ফেলতে চান? রিফ্রেশ করলেও আর ডেমো ডাটা ফিরে আসবে না।')) {
-                        onCleanAllMockData();
-                      }
+                      onCleanAllMockData();
                     }}
-                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs transition-all shadow-xs"
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs transition-all shadow-xs cursor-pointer"
                     title="সকল ডেমো পণ্য মুছে ফেলুন"
                   >
                     <Trash2 className="w-4 h-4 text-rose-600" />
@@ -1434,13 +1453,12 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                               <Edit3 className="w-4 h-4" />
                             </button>
                             <button
+                              type="button"
                               onClick={() => {
-                                if (confirm(`আপনি কি '${p.banglaName}' মুছে ফেলতে চান?`)) {
-                                  onDeleteProduct(p.id);
-                                  showToast(`'${p.banglaName}' মুছে ফেলা হয়েছে`, 'info');
-                                }
+                                onDeleteProduct(p.id);
+                                showToast(`'${p.banglaName}' মুছে ফেলা হয়েছে`, 'info');
                               }}
-                              className="p-1.5 rounded-lg hover:bg-rose-100 text-neutral-400 hover:text-rose-600"
+                              className="p-1.5 rounded-lg hover:bg-rose-100 text-neutral-400 hover:text-rose-600 cursor-pointer"
                               title="পণ্য মুছুন"
                             >
                               <Trash2 className="w-4 h-4" />
@@ -1631,13 +1649,12 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                                 <Edit3 className="w-4 h-4" />
                               </button>
                               <button
+                                type="button"
                                 onClick={() => {
-                                  if (confirm(`আপনি কি নিশ্চিতভাবে '${auth.email}' এর '${auth.role.toUpperCase()}' রোল মুছে ফেলতে চান? এটি ডিলিট করলে ইউজার সাধারণ কাস্টমারে পরিণত হবে এবং এডমিন বা কর্মী প্যানেলের এক্সেস অবিলম্বে বন্ধ হবে।`)) {
-                                    onDeleteAuthorizedEmail(auth.email);
-                                    showToast(`'${auth.email}' এর রোল সফলভাবে ডিলিট করা হয়েছে`, 'info');
-                                  }
+                                  onDeleteAuthorizedEmail(auth.email);
+                                  showToast(`'${auth.email}' এর রোল সফলভাবে ডিলিট করা হয়েছে`, 'info');
                                 }}
-                                className="p-1.5 rounded-lg hover:bg-rose-50 text-neutral-400 hover:text-rose-600 transition-colors"
+                                className="p-1.5 rounded-lg hover:bg-rose-50 text-neutral-400 hover:text-rose-600 transition-colors cursor-pointer"
                                 title="রোল মুছে ফেলুন"
                               >
                                 <Trash2 className="w-4 h-4" />
@@ -1727,15 +1744,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                           <td className="p-3 text-right">
                             {!isMainAdmin && (
                               <button
+                                type="button"
                                 onClick={() => {
-                                  if (confirm(`আপনি কি '${u.email || u.displayName}' এর বিশেষ রোল প্রত্যাহার করে সাধারণ কাস্টমার করতে চান?`)) {
-                                    handleRoleQuickChange(u.uid, 'customer');
-                                    if (u.email) {
-                                      onDeleteAuthorizedEmail(u.email);
-                                    }
+                                  handleRoleQuickChange(u.uid, 'customer');
+                                  if (u.email) {
+                                    onDeleteAuthorizedEmail(u.email);
                                   }
                                 }}
-                                className="p-1.5 rounded-lg hover:bg-rose-50 text-neutral-400 hover:text-rose-600 transition-colors"
+                                className="p-1.5 rounded-lg hover:bg-rose-50 text-neutral-400 hover:text-rose-600 transition-colors cursor-pointer"
                                 title="রোল প্রত্যাহার করুন"
                               >
                                 <Trash2 className="w-4 h-4" />
@@ -1776,8 +1792,12 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {routes.map((route) => {
-              const shopCount = shops.filter(s => s.routeArea === route.banglaName || s.routeArea === route.name).length;
+            {allManageableRoutes.map((route) => {
+              const shopCount = shops.filter(
+                (s) =>
+                  s.routeArea?.trim() === route.banglaName?.trim() ||
+                  s.routeArea?.trim() === route.name?.trim()
+              ).length;
               return (
                 <div
                   key={route.id}
@@ -1809,25 +1829,25 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   </div>
 
                   <div className="mt-4 pt-3 border-t border-neutral-100 flex items-center justify-between">
-                    <span className="text-[11px] text-neutral-400 font-mono">
+                    <span className="text-[11px] text-neutral-400 font-mono truncate max-w-[140px]">
                       ID: {route.id}
                     </span>
                     <div className="flex items-center gap-1.5">
                       <button
+                        type="button"
                         onClick={() => openEditRouteModal(route)}
-                        className="p-1.5 rounded-lg hover:bg-neutral-100 text-neutral-600 hover:text-neutral-900"
+                        className="p-1.5 rounded-lg hover:bg-neutral-100 text-neutral-600 hover:text-neutral-900 cursor-pointer"
                         title="রুট এডিট করুন"
                       >
                         <Edit3 className="w-4 h-4" />
                       </button>
                       <button
+                        type="button"
                         onClick={() => {
-                          if (confirm(`আপনি কি '${route.banglaName}' রুটটি মুছে ফেলতে চান?`)) {
-                            onDeleteRoute(route.id);
-                            showToast(`'${route.banglaName}' মুছে ফেলা হয়েছে`, 'info');
-                          }
+                          onDeleteRoute(route.id);
+                          showToast(`'${route.banglaName}' মুছে ফেলা হয়েছে`, 'info');
                         }}
-                        className="p-1.5 rounded-lg hover:bg-rose-50 text-neutral-400 hover:text-rose-600"
+                        className="p-1.5 rounded-lg hover:bg-rose-50 text-neutral-400 hover:text-rose-600 cursor-pointer"
                         title="রুট মুছুন"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -2644,11 +2664,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    if (window.confirm('আপনি কি নিশ্চিত যে সকল ডেমো/মক পণ্য এবং টেস্ট ডাটা স্থায়ীভাবে মুছে ফেলতে চান? রিফ্রেশ করলেও আর কোনো ডেমো ডাটা ফিরে আসবে না।')) {
-                      onCleanAllMockData();
-                    }
+                    onCleanAllMockData();
                   }}
-                  className="shrink-0 px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl shadow-sm transition-all flex items-center gap-2 active:scale-95"
+                  className="shrink-0 px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl shadow-sm transition-all flex items-center gap-2 active:scale-95 cursor-pointer"
                 >
                   <Trash2 className="w-4 h-4" />
                   <span>সকল ডেমো ডাটা মুছুন</span>
@@ -2950,9 +2968,6 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                       disabled={isRestoring}
                       onClick={async () => {
                         if (!parsedRestoreData) return;
-                        if (!window.confirm('আপনি কি নিশ্চিত যে এই ব্যাকআপ ফাইলটি রিস্টোর করতে চান? বর্তমান ডাটার সাথে ব্যাকআপ ডাটা যুক্ত হবে।')) {
-                          return;
-                        }
                         setIsRestoring(true);
                         try {
                           if (onRestoreFromBackupJSON) {

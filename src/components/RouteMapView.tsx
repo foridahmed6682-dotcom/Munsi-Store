@@ -27,6 +27,45 @@ interface RouteMapViewProps {
   onUpdateShopCoordinates?: (shopId: string, lat: number, lng: number) => void;
 }
 
+// Known route coordinates in Gaibandha & Palashbari region for shops without exact GPS pins
+const KNOWN_ROUTE_COORDS: Record<string, [number, number]> = {
+  'পলাশবাড়ী': [25.2847, 89.3456],
+  'পলাশবাড়ী': [25.2847, 89.3456],
+  'গাইবান্ধা সদর': [25.3297, 89.5430],
+  'গাইবান্ধা': [25.3297, 89.5430],
+  'তুলসীঘাট': [25.3112, 89.4765],
+  'তুলসীঘাট- ঠোলভাঙ্গা': [25.3112, 89.4765],
+  'হাসনেরপাড়া': [25.3050, 89.4900],
+  'গোবিন্দগঞ্জ': [25.1325, 89.3878],
+  'সাদুল্লাপুর': [25.3833, 89.4667],
+  'সুন্দরগঞ্জ': [25.5564, 89.5194],
+  'ফুলছড়ি': [25.1900, 89.6200],
+};
+
+function getRouteCenterCoords(routeName?: string): [number, number] {
+  if (!routeName || routeName === 'all') return [25.3050, 89.4500];
+  const clean = routeName.replace(/রুট/g, '').trim();
+  for (const [key, coords] of Object.entries(KNOWN_ROUTE_COORDS)) {
+    if (clean.includes(key) || key.includes(clean)) {
+      return coords;
+    }
+  }
+  return [25.2847, 89.3456];
+}
+
+function getShopCoordinates(shop: Shop, index = 0): [number, number] {
+  if (typeof shop.lat === 'number' && typeof shop.lng === 'number' && !isNaN(shop.lat) && !isNaN(shop.lng)) {
+    return [shop.lat, shop.lng];
+  }
+  const [baseLat, baseLng] = getRouteCenterCoords(shop.routeArea);
+  const angle = (index * 137.5 * Math.PI) / 180;
+  const radius = 0.0012 * ((index % 5) + 1);
+  return [
+    Number((baseLat + Math.cos(angle) * radius).toFixed(6)),
+    Number((baseLng + Math.sin(angle) * radius).toFixed(6)),
+  ];
+}
+
 // Calculate distance between two coordinates in km
 function calculateDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371; // Radius of the Earth in km
@@ -123,9 +162,9 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
     if (!mapContainerRef.current) return;
 
     if (!mapInstanceRef.current) {
-      // Default to Dhaka center: [23.75, 90.39]
+      // Default to Gaibandha-Palashbari hub center
       const map = L.map(mapContainerRef.current, {
-        center: [23.75, 90.39],
+        center: [25.3050, 89.4500],
         zoom: 12,
         zoomControl: false,
       });
@@ -163,10 +202,9 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
 
     const bounds: L.LatLngTuple[] = [];
 
-    filteredShops.forEach((shop) => {
-      // Fallback coordinates if not set
-      const lat = shop.lat ?? 23.75;
-      const lng = shop.lng ?? 90.39;
+    filteredShops.forEach((shop, idx) => {
+      // Resolve exact or route-based coordinates
+      const [lat, lng] = getShopCoordinates(shop, idx);
 
       bounds.push([lat, lng]);
 
@@ -227,11 +265,14 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
       marker.addTo(layer);
     });
 
-    // Auto-fit bounds if we have shop locations
+    // Auto-fit bounds if we have shop locations, otherwise pan to selected route center
     if (bounds.length > 0) {
-      map.fitBounds(bounds, { padding: [50, 50], maxZoom: 14 });
+      map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+    } else if (selectedRoute !== 'all') {
+      const routeCoords = getRouteCenterCoords(selectedRoute);
+      map.setView(routeCoords, 14, { animate: true });
     }
-  }, [filteredShops]);
+  }, [filteredShops, selectedRoute]);
 
   const applyUserLocationOnMap = (latitude: number, longitude: number) => {
     setUserLocation({ lat: latitude, lng: longitude });
@@ -382,15 +423,19 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
     if (targetShopId) {
       const found = shops.find((s) => s.id === targetShopId);
       if (found) {
-        setSelectedShop(found);
-        if (mapInstanceRef.current && found.lat && found.lng) {
-          mapInstanceRef.current.setView([found.lat, found.lng], 16, { animate: true });
+        if (selectedRoute !== 'all' && found.routeArea !== selectedRoute) {
+          setSelectedRoute('all');
         }
-        if (userLocation && found.lat && found.lng) {
-          const dist = calculateDistanceKm(userLocation.lat, userLocation.lng, found.lat, found.lng);
+        setSelectedShop(found);
+        const [fLat, fLng] = getShopCoordinates(found, 0);
+        if (mapInstanceRef.current) {
+          mapInstanceRef.current.setView([fLat, fLng], 16, { animate: true });
+        }
+        if (userLocation) {
+          const dist = calculateDistanceKm(userLocation.lat, userLocation.lng, fLat, fLng);
           const text = dist < 1 ? `${Math.round(dist * 1000)} মিটার` : `${dist.toFixed(2)} কিমি`;
           setDirectionDistanceText(text);
-          drawDirectionRoute(found);
+          drawDirectionRoute({ ...found, lat: fLat, lng: fLng });
         }
       }
     }
@@ -448,14 +493,15 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
   // Focus a specific shop on the map
   const handleFocusShop = (shop: Shop) => {
     setSelectedShop(shop);
-    if (mapInstanceRef.current && shop.lat && shop.lng) {
-      mapInstanceRef.current.setView([shop.lat, shop.lng], 16, { animate: true });
+    const [sLat, sLng] = getShopCoordinates(shop, 0);
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.setView([sLat, sLng], 16, { animate: true });
     }
-    if (userLocation && shop.lat && shop.lng) {
-      const dist = calculateDistanceKm(userLocation.lat, userLocation.lng, shop.lat, shop.lng);
+    if (userLocation) {
+      const dist = calculateDistanceKm(userLocation.lat, userLocation.lng, sLat, sLng);
       const text = dist < 1 ? `${Math.round(dist * 1000)} মিটার` : `${dist.toFixed(2)} কিমি`;
       setDirectionDistanceText(text);
-      drawDirectionRoute(shop);
+      drawDirectionRoute({ ...shop, lat: sLat, lng: sLng });
     }
   };
 

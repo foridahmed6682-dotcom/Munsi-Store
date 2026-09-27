@@ -25,6 +25,7 @@ import {
   User,
   Edit3,
   LogIn,
+  LogOut,
   Heart,
   Zap,
   Tag,
@@ -59,7 +60,7 @@ import {
   getCustomerDeliveryAddress,
   saveCustomerDeliveryAddress
 } from '../lib/storage';
-import { saveCustomerAddressToCloud, signInWithGoogle } from '../lib/firebase';
+import { saveCustomerAddressToCloud, googleSignIn, logout } from '../lib/firebase';
 import {
   CustomerProductDetailsView,
   CustomerOfficialMemoModal
@@ -76,6 +77,8 @@ interface CustomerStoreViewProps {
   categories?: Category[];
   onOrderCreated: (orderData: any) => void;
   currentUser?: any;
+  onLogout?: () => Promise<void> | void;
+  onUserLoggedIn?: (user: any) => void;
   businessName?: string;
   hotline?: string;
   onViewMemo?: (order: Order) => void;
@@ -118,6 +121,8 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
   categories = [],
   onOrderCreated,
   currentUser,
+  onLogout,
+  onUserLoggedIn,
   businessName = 'সদাই ভাই (SodaiBhai)',
   hotline = '01768-826682',
   onViewMemo,
@@ -1509,11 +1514,39 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
                       </p>
                     </div>
                   </div>
-                  {!currentUser?.email && (
+                  {currentUser?.email ? (
                     <button
                       type="button"
-                      onClick={() => signInWithGoogle()}
-                      className="px-4 py-2.5 rounded-xl bg-[#121212] text-white text-xs font-black flex items-center gap-1.5"
+                      onClick={async () => {
+                        if (onLogout) {
+                          await onLogout();
+                        } else {
+                          await logout();
+                        }
+                      }}
+                      className="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black flex items-center gap-1.5 shadow-xs transition cursor-pointer active:scale-95"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      <span>লগআউট করুন</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const res = await googleSignIn();
+                        if (res && onUserLoggedIn) {
+                          onUserLoggedIn({
+                            uid: res.user.uid,
+                            email: res.user.email || '',
+                            displayName: res.user.displayName || '',
+                            photoURL: res.user.photoURL || '',
+                            role: res.appUser.role,
+                            assignedRoute: res.appUser.assignedRoute,
+                            accessToken: res.accessToken || undefined,
+                          });
+                        }
+                      }}
+                      className="px-4 py-2.5 rounded-xl bg-[#121212] hover:bg-neutral-800 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer"
                     >
                       <LogIn className="w-4 h-4" />
                       <span>Google লগইন</span>

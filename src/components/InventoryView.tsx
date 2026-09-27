@@ -300,11 +300,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             <button
               type="button"
               onClick={() => {
-                if (window.confirm('আপনি কি নিশ্চিত যে সকল ডেমো/মক পণ্য এবং টেস্ট ডাটা স্থায়ীভাবে মুছে ফেলতে চান? রিফ্রেশ করলেও আর ডেমো ডাটা ফিরে আসবে না।')) {
-                  onCleanAllMockData();
-                }
+                onCleanAllMockData();
               }}
-              className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-colors flex items-center gap-1 shadow-xs"
+              className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-colors flex items-center gap-1 shadow-xs cursor-pointer"
               title="সকল ডেমো পণ্য মুছে ফেলুন"
             >
               <Trash2 className="w-3.5 h-3.5 text-rose-600" />
@@ -420,11 +418,21 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                         <button
                           type="button"
                           onClick={() => setStockInProduct(prod)}
-                          className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg font-bold text-xs transition-colors"
+                          className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg font-bold text-xs transition-colors cursor-pointer"
                           title="স্টক বৃদ্ধি করুন"
                         >
                           + স্টক
                         </button>
+                        {onDeleteProduct && (
+                          <button
+                            type="button"
+                            onClick={() => onDeleteProduct(prod.id)}
+                            className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-lg transition-colors cursor-pointer"
+                            title="পণ্য ডিলিট করুন"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

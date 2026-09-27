@@ -60,7 +60,8 @@ import {
   isMainSuperAdmin,
   subscribeToCloudBusinessInfo,
   onAuthChanged,
-  fetchUserProfile
+  fetchUserProfile,
+  logout
 } from './lib/firebase';
 import { getStoredGoogleToken } from './lib/firebaseAuth';
 import {
@@ -235,8 +236,13 @@ export default function App() {
       });
 
       unsubscribeRoutes = subscribeToCloudRoutes((cloudRoutes) => {
-        saveRoutes(cloudRoutes);
-        setRoutes(cloudRoutes);
+        if (cloudRoutes && cloudRoutes.length > 0) {
+          saveRoutes(cloudRoutes);
+          setRoutes(cloudRoutes);
+        } else {
+          const fallbackRoutes = getRoutes();
+          setRoutes(fallbackRoutes);
+        }
       });
 
       unsubscribeAuthEmails = subscribeToAuthorizedEmails((cloudAuths) => {
@@ -317,6 +323,15 @@ export default function App() {
         } catch (err) {
           console.warn('Error syncing auth user on state change:', err);
         }
+      } else {
+        saveUserProfile(null);
+        setUserProfileState(null);
+        setActiveSimulatedRole('customer');
+        setActiveTab((prev) =>
+          prev === 'admin' || prev === 'shops' || prev === 'map' || prev === 'inventory'
+            ? 'order'
+            : prev
+        );
       }
     });
 
@@ -485,18 +500,56 @@ export default function App() {
     }
   };
 
-  // Add Shop Handler
+  // Add Shop Handler (also auto-creates Route if custom/new routeArea)
   const handleAddShop = (shop: Shop) => {
     saveShop(shop);
     saveShopToCloud(shop).catch(() => {});
+    if (shop.routeArea && shop.routeArea.trim()) {
+      const cleanArea = shop.routeArea.trim();
+      const exists = routes.some(
+        (r) =>
+          r.banglaName.trim() === cleanArea ||
+          r.name.trim().toLowerCase() === cleanArea.toLowerCase()
+      );
+      if (!exists) {
+        const newRoute: Route = {
+          id: `route-${Date.now()}`,
+          name: cleanArea,
+          banglaName: cleanArea,
+          description: `${cleanArea} এরিয়া ও বাজার জোন`,
+          createdAt: new Date().toISOString(),
+        };
+        addOrUpdateRouteLocal(newRoute);
+        saveRouteToCloud(newRoute).catch(() => {});
+      }
+    }
     reloadData();
     showToast(`দোকান "${shop.name}" সফলভাবে যুক্ত হয়েছে!`, 'success');
   };
 
-  // Update Shop Handler
+  // Update Shop Handler (also auto-creates Route if custom/new routeArea)
   const handleUpdateShop = (shop: Shop) => {
     saveShop(shop);
     saveShopToCloud(shop).catch(() => {});
+    if (shop.routeArea && shop.routeArea.trim()) {
+      const cleanArea = shop.routeArea.trim();
+      const exists = routes.some(
+        (r) =>
+          r.banglaName.trim() === cleanArea ||
+          r.name.trim().toLowerCase() === cleanArea.toLowerCase()
+      );
+      if (!exists) {
+        const newRoute: Route = {
+          id: `route-${Date.now()}`,
+          name: cleanArea,
+          banglaName: cleanArea,
+          description: `${cleanArea} এরিয়া ও বাজার জোন`,
+          createdAt: new Date().toISOString(),
+        };
+        addOrUpdateRouteLocal(newRoute);
+        saveRouteToCloud(newRoute).catch(() => {});
+      }
+    }
     reloadData();
     showToast(`দোকান "${shop.name}" সফলভাবে আপডেট হয়েছে!`, 'success');
   };
@@ -559,17 +612,17 @@ export default function App() {
 
   // Category Handlers
   const handleAddCategory = (category: Category) => {
-    addOrUpdateCategory(category);
-    saveCategoryToCloud(category).catch(() => {});
+    const saved = addOrUpdateCategory(category);
+    saveCategoryToCloud(saved).catch(() => {});
     reloadData();
-    showToast(`ক্যাটাগরি "${category.banglaName}" তৈরি হয়েছে!`, 'success');
+    showToast(`ক্যাটাগরি "${saved.banglaName}" তৈরি হয়েছে!`, 'success');
   };
 
   const handleUpdateCategory = (category: Category) => {
-    addOrUpdateCategory(category);
-    saveCategoryToCloud(category).catch(() => {});
+    const saved = addOrUpdateCategory(category);
+    saveCategoryToCloud(saved).catch(() => {});
     reloadData();
-    showToast(`ক্যাটাগরি "${category.banglaName}" আপডেট হয়েছে!`, 'success');
+    showToast(`ক্যাটাগরি "${saved.banglaName}" আপডেট হয়েছে!`, 'success');
   };
 
   const handleDeleteCategory = (categoryId: string) => {
@@ -581,24 +634,90 @@ export default function App() {
 
   // Route Handlers
   const handleAddRoute = (route: Route) => {
-    addOrUpdateRouteLocal(route);
-    saveRouteToCloud(route).catch(() => {});
+    const saved = addOrUpdateRouteLocal(route);
+    saveRouteToCloud(saved).catch(() => {});
     reloadData();
-    showToast(`রুট "${route.banglaName}" তৈরি হয়েছে!`, 'success');
+    showToast(`রুট "${saved.banglaName}" তৈরি হয়েছে!`, 'success');
   };
 
   const handleUpdateRoute = (route: Route) => {
-    addOrUpdateRouteLocal(route);
-    saveRouteToCloud(route).catch(() => {});
+    const isShopDerived = route.id.startsWith('shop-route-');
+    const oldShopRouteName = isShopDerived ? route.id.replace('shop-route-', '') : '';
+    const oldRoute = routes.find((r) => r.id === route.id);
+
+    const routeToSave: Route = isShopDerived
+      ? { ...route, id: `route-${Date.now()}` }
+      : route;
+
+    const saved = addOrUpdateRouteLocal(routeToSave);
+    saveRouteToCloud(saved).catch(() => {});
+
+    // If route banglaName changed, update any shops using the old route name
+    const oldNameToMatch = oldRoute?.banglaName || oldShopRouteName;
+    if (oldNameToMatch && oldNameToMatch !== saved.banglaName) {
+      shops.forEach((s) => {
+        if (
+          s.routeArea?.trim() === oldNameToMatch.trim() ||
+          (oldRoute?.name && s.routeArea?.trim() === oldRoute.name.trim())
+        ) {
+          const updatedShop = { ...s, routeArea: saved.banglaName };
+          saveShop(updatedShop);
+          saveShopToCloud(updatedShop).catch(() => {});
+        }
+      });
+    }
+
     reloadData();
-    showToast(`রুট "${route.banglaName}" আপডেট হয়েছে!`, 'success');
+    showToast(`রুট "${saved.banglaName}" আপডেট হয়েছে!`, 'success');
   };
 
   const handleDeleteRoute = (routeId: string) => {
-    deleteRouteLocal(routeId);
-    deleteRouteFromCloud(routeId).catch(() => {});
+    const isShopDerived = routeId.startsWith('shop-route-');
+    const shopDerivedName = isShopDerived ? routeId.replace('shop-route-', '') : '';
+    const targetRoute = routes.find((r) => r.id === routeId);
+
+    if (!isShopDerived) {
+      deleteRouteLocal(routeId);
+      deleteRouteFromCloud(routeId).catch(() => {});
+    }
+
+    const deletedBanglaName = targetRoute?.banglaName || shopDerivedName;
+    const deletedEngName = targetRoute?.name || shopDerivedName;
+
+    if (deletedBanglaName) {
+      const remainingRoutes = getRoutes().filter(
+        (r) => r.id !== routeId && r.banglaName.trim() !== deletedBanglaName.trim()
+      );
+      const fallbackRouteName = remainingRoutes[0]?.banglaName || 'পলাশবাড়ী';
+      shops.forEach((s) => {
+        if (
+          s.routeArea?.trim() === deletedBanglaName.trim() ||
+          s.routeArea?.trim() === deletedEngName.trim()
+        ) {
+          const updatedShop = { ...s, routeArea: fallbackRouteName };
+          saveShop(updatedShop);
+          saveShopToCloud(updatedShop).catch(() => {});
+        }
+      });
+    }
+
     reloadData();
-    showToast('রুট মুছে ফেলা হয়েছে', 'info');
+    showToast('রুট সফলভাবে মুছে ফেলা হয়েছে', 'info');
+  };
+
+  // Logout Handler
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } catch (err) {
+      console.warn('SignOut error:', err);
+    }
+    localStorage.removeItem('munsi_google_access_token');
+    saveUserProfile(null);
+    setUserProfileState(null);
+    setActiveSimulatedRole('customer');
+    setActiveTab('order');
+    showToast('আপনি সফলভাবে লগআউট করেছেন।', 'info');
   };
 
   // Authorized Staff Emails (Email-based RBAC) Handlers
@@ -892,11 +1011,16 @@ export default function App() {
         onSelectTab={(tab) => setActiveTab(tab)}
         isPushSubscribed={isPushSubscribed}
         onOpenNotificationModal={() => setIsNotificationModalOpen(true)}
+        onLogout={handleLogout}
+        onShowToast={(msg, type) => showToast(msg, type || 'info')}
         setUserProfile={(user: UserProfile | null) => {
           setUserProfileState(user);
           saveUserProfile(user);
           if (user?.role) {
             setActiveSimulatedRole(user.role);
+          } else {
+            setActiveSimulatedRole('customer');
+            setActiveTab('order');
           }
         }}
       />
@@ -942,6 +1066,15 @@ export default function App() {
             categories={categories}
             onOrderCreated={handleOrderCreated}
             currentUser={userProfile}
+            onLogout={handleLogout}
+            onUserLoggedIn={(userObj) => {
+              setUserProfileState(userObj);
+              saveUserProfile(userObj);
+              if (userObj?.role) {
+                setActiveSimulatedRole(userObj.role);
+              }
+              showToast('গুগল অ্যাকাউন্টে সফলভাবে লগইন সম্পন্ন হয়েছে!', 'success');
+            }}
             businessInfo={businessInfo}
             businessName={businessInfo?.banglaName || businessInfo?.name}
             hotline={businessInfo?.hotline}

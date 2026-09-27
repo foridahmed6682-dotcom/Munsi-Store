@@ -265,11 +265,10 @@ export const MemoModal: React.FC<MemoModalProps> = ({
             </button>
             {isAdmin && onDeleteOrder && (
               <button
+                type="button"
                 onClick={() => {
-                  if (window.confirm(`আপনি কি নিশ্চিত যে মেমো #${order.memoNumber} স্থায়ীভাবে ডিলিট করতে চান?`)) {
-                    onDeleteOrder(order.id);
-                    onClose();
-                  }
+                  onDeleteOrder(order.id);
+                  onClose();
                 }}
                 className="p-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs flex items-center gap-1 font-bold shadow-xs shrink-0 cursor-pointer"
                 title="মেমো ডিলিট করুন (এডমিন)"

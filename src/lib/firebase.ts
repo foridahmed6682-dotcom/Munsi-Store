@@ -829,6 +829,17 @@ export async function seedInitialCloudDataIfEmpty() {
       }
     }
 
+    // Ensure default routes exist in Firestore if routes collection is empty
+    const routesSnap = await getDocs(collection(db, 'routes'));
+    if (routesSnap.empty) {
+      const deletedRouteIds = getDeletedRouteIds();
+      for (const r of DEFAULT_ROUTES) {
+        if (!deletedRouteIds.has(r.id)) {
+          await setDoc(doc(db, 'routes', r.id), r).catch(() => {});
+        }
+      }
+    }
+
     // Automatically purge legacy demo data from Firestore if present
     const initSnap = await getDoc(doc(db, 'settings', 'system_init'));
     if (!initSnap.exists() || !initSnap.data()?.demoPurgedV2) {
