@@ -17,6 +17,7 @@ export interface Category {
   description?: string;
   icon?: string;
   color?: string;
+  imageUrl?: string;
   createdAt?: string;
 }
 
@@ -80,12 +81,69 @@ export interface Product {
   sku: string;
   category: string;
   unit: string; // যেমন: কার্টুন, ডজন, কেজি, পিস, বস্তা
-  unitPrice: number; // বিক্রয় মূল্য (ডিলার/হোলসেল)
+  unitPrice: number; // বিক্রয় মূল্য (ডিলার/হোলসেল বা রেগুলার রেট)
+  discountPrice?: number; // ছাড়কৃত বিক্রয় মূল্য (কাস্টমার স্টোর অফার রেট)
   costPrice: number; // ক্রয় মূল্য (ডিস্ট্রিবিউটর রেট)
   stock: number; // বর্তমান স্টক
   minStockAlert: number;
   tradeOfferDesc?: string; // e.g. "১০ কার্টুনে ১ টি ফ্রি"
   imageUrl?: string;
+  allowedWeights?: string; // যেমন: "250g, 500g, 1KG"
+  isFlashSale?: boolean;
+  rating?: number;
+  description?: string;
+}
+
+export interface StoreBanner {
+  id: string;
+  title: string;
+  subtitle?: string;
+  image: string;
+  ctaText?: string;
+  targetCategory?: string;
+  isActive: boolean;
+}
+
+export interface StoreStory {
+  id: string;
+  title: string;
+  image: string;
+  productName?: string;
+  discountTag?: string;
+}
+
+export interface DeliveryZone {
+  id: string;
+  name: string;
+  fee: number;
+}
+
+export interface PromoCoupon {
+  id: string;
+  code: string;
+  discountType: 'flat' | 'percentage';
+  value: number;
+  minOrder: number;
+  isActive: boolean;
+}
+
+export interface FlashSaleConfig {
+  enabled: boolean;
+  title: string;
+  subtitle?: string;
+  discountPercent: number;
+  endTime?: string;
+  timerEnabled: boolean;
+}
+
+export interface ProductReview {
+  id: string;
+  productId: string;
+  userName: string;
+  userPhoto?: string;
+  rating: number;
+  comment: string;
+  createdAt: string;
 }
 
 export interface OrderItem {
@@ -126,7 +184,13 @@ export interface Order {
   customerPhone?: string;
   customerAddress?: string;
   customerCity?: string;
+  customerArea?: string;
+  customerDistrict?: string;
   deliveryCharge?: number;
+  deliveryZoneName?: string;
+  couponCode?: string;
+  paymentVerified?: boolean;
+  paymentSenderNumber?: string;
   orderType?: 'b2b_dsr' | 'b2c_customer';
   trxId?: string;
   bookedByUid?: string;
@@ -228,6 +292,11 @@ export interface BusinessInfo {
       instructions?: string;
     };
   };
+  storeBanners?: StoreBanner[];
+  storeStories?: StoreStory[];
+  deliveryZones?: DeliveryZone[];
+  coupons?: PromoCoupon[];
+  flashSale?: FlashSaleConfig;
 }
 
 

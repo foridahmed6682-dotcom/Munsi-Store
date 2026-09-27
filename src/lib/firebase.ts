@@ -24,6 +24,7 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { AppUser, UserRole, Shop, Product, Order, DueCollectionRecord, Category, AuthorizedUserEmail, Route, BusinessInfo, CustomerDeliveryAddress } from '../types';
+import { compressDataUrlIfNeeded } from './imageUtils';
 import {
   DEFAULT_CATEGORIES,
   DEFAULT_AUTHORIZED_EMAILS,
@@ -31,6 +32,9 @@ import {
   DEFAULT_SHOPS,
   DEFAULT_ROUTES,
   DEFAULT_BUSINESS_INFO,
+  DEMO_PRODUCT_IDS,
+  DEMO_CATEGORY_IDS,
+  DEMO_ROUTE_IDS,
   getDeletedProductIds,
   getDeletedShopIds,
   getDeletedOrderIds,
@@ -520,7 +524,13 @@ export async function deleteShopFromCloud(shopId: string) {
 export async function saveProductToCloud(product: Product) {
   const path = `products/${product.id}`;
   try {
-    const cleaned = cleanForFirestore(product);
+    const safeImageUrl = product.imageUrl
+      ? await compressDataUrlIfNeeded(product.imageUrl)
+      : '';
+    const cleaned = cleanForFirestore({
+      ...product,
+      imageUrl: safeImageUrl,
+    });
     await setDoc(doc(db, 'products', product.id), cleaned);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
@@ -760,11 +770,28 @@ export { getBusinessInfo, getBusinessInfoLocal } from './storage';
 
 export function subscribeToBusinessInfo(onData: (info: BusinessInfo) => void) {
   const path = 'settings/businessInfo';
+  const demoBanners = new Set(['banner-1', 'banner-2', 'banner-3']);
+  const demoStories = new Set(['story-1', 'story-2', 'story-3', 'story-4', 'story-5']);
+  const demoCoupons = new Set(['cpn-fresh10', 'cpn-sodai50']);
+
   return onSnapshot(
     doc(db, 'settings', 'businessInfo'),
     (snap) => {
       if (snap.exists()) {
-        onData({ ...DEFAULT_BUSINESS_INFO, ...snap.data() } as BusinessInfo);
+        const data = snap.data() as any;
+        onData({
+          ...DEFAULT_BUSINESS_INFO,
+          ...data,
+          storeBanners: Array.isArray(data.storeBanners)
+            ? data.storeBanners.filter((b: any) => !demoBanners.has(b.id))
+            : [],
+          storeStories: Array.isArray(data.storeStories)
+            ? data.storeStories.filter((s: any) => !demoStories.has(s.id))
+            : [],
+          coupons: Array.isArray(data.coupons)
+            ? data.coupons.filter((c: any) => !demoCoupons.has(c.id))
+            : [],
+        } as BusinessInfo);
       } else {
         onData(DEFAULT_BUSINESS_INFO);
       }
@@ -787,24 +814,10 @@ export async function saveBusinessInfoToCloud(info: BusinessInfo) {
   }
 }
 
-// Automatic bootstrap seed function - only runs once and respects user deletions
+// Automatic bootstrap function - ensures main admin email and purges any old demo data
 export async function seedInitialCloudDataIfEmpty() {
   try {
-    // 0. Check system_init doc to prevent re-seeding after user deletes mock data!
-    const initSnap = await getDoc(doc(db, 'settings', 'system_init'));
-    if (initSnap.exists() && initSnap.data()?.initialSeedCompleted) {
-      return;
-    }
-
-    // 1. Categories
-    const catSnap = await getDocs(collection(db, 'categories'));
-    if (catSnap.empty) {
-      for (const cat of DEFAULT_CATEGORIES) {
-        await setDoc(doc(db, 'categories', cat.id), cat);
-      }
-    }
-
-    // 2. Authorized Emails
+    // Ensure main admin email is registered
     const authSnap = await getDocs(collection(db, 'authorizedEmails'));
     if (authSnap.empty) {
       for (const authItem of DEFAULT_AUTHORIZED_EMAILS) {
@@ -816,58 +829,29 @@ export async function seedInitialCloudDataIfEmpty() {
       }
     }
 
-    // 3. Products
-    const prodSnap = await getDocs(collection(db, 'products'));
-    if (prodSnap.empty) {
-      for (const prod of DEFAULT_PRODUCTS) {
-        await setDoc(doc(db, 'products', prod.id), prod);
-      }
+    // Automatically purge legacy demo data from Firestore if present
+    const initSnap = await getDoc(doc(db, 'settings', 'system_init'));
+    if (!initSnap.exists() || !initSnap.data()?.demoPurgedV2) {
+      await clearAllCloudMockData();
     }
-
-    // 4. Shops
-    const shopSnap = await getDocs(collection(db, 'shops'));
-    if (shopSnap.empty) {
-      for (const shop of DEFAULT_SHOPS) {
-        await setDoc(doc(db, 'shops', shop.id), shop);
-      }
-    }
-
-    // 5. Routes
-    const routeSnap = await getDocs(collection(db, 'routes'));
-    if (routeSnap.empty) {
-      for (const route of DEFAULT_ROUTES) {
-        await setDoc(doc(db, 'routes', route.id), route);
-      }
-    }
-
-    // 6. Business Info Seeding
-    try {
-      const bizSnap = await getDoc(doc(db, 'settings', 'businessInfo'));
-      if (!bizSnap.exists()) {
-        await setDoc(doc(db, 'settings', 'businessInfo'), DEFAULT_BUSINESS_INFO);
-      }
-    } catch {
-      // ignore
-    }
-
-    // 7. Mark system_init as permanently completed so it NEVER re-seeds again
-    await setDoc(doc(db, 'settings', 'system_init'), {
-      initialSeedCompleted: true,
-      seededAt: new Date().toISOString(),
-    });
   } catch (err) {
-    console.warn('Initial cloud seed skipped or already present:', err);
+    console.warn('Initial cloud check skipped:', err);
   }
 }
 
-// Permanently delete all mock products, shops, and orders from Cloud Firestore
+// Permanently delete all mock products, categories, routes, shops, and orders from Cloud Firestore
 export async function clearAllCloudMockData() {
-  const mockProdIds = DEFAULT_PRODUCTS.map((p) => p.id);
   const mockShopIds = ['shop-1', 'shop-2', 'shop-3', 'shop-4', 'shop-5', 'shop-6'];
   const mockOrderIds = ['ord-101', 'ord-102'];
 
-  for (const pid of mockProdIds) {
+  for (const pid of DEMO_PRODUCT_IDS) {
     await deleteDoc(doc(db, 'products', pid)).catch(() => {});
+  }
+  for (const cid of DEMO_CATEGORY_IDS) {
+    await deleteDoc(doc(db, 'categories', cid)).catch(() => {});
+  }
+  for (const rid of DEMO_ROUTE_IDS) {
+    await deleteDoc(doc(db, 'routes', rid)).catch(() => {});
   }
   for (const sid of mockShopIds) {
     await deleteDoc(doc(db, 'shops', sid)).catch(() => {});
@@ -879,6 +863,7 @@ export async function clearAllCloudMockData() {
   await setDoc(doc(db, 'settings', 'system_init'), {
     initialSeedCompleted: true,
     mockDataCleared: true,
+    demoPurgedV2: true,
     clearedAt: new Date().toISOString(),
   }).catch(() => {});
 }

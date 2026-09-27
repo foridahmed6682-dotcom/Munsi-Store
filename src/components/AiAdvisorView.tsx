@@ -35,6 +35,7 @@ export const AiAdvisorView: React.FC<AiAdvisorViewProps> = ({
   const [thoughts, setThoughts] = useState<string | null>(null);
   const [showThoughts, setShowThoughts] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   // Suggested strategic prompts
   const strategicPrompts = [
@@ -316,11 +317,12 @@ export const AiAdvisorView: React.FC<AiAdvisorViewProps> = ({
             <button
               onClick={() => {
                 navigator.clipboard.writeText(answer);
-                alert('পরামর্শ কপি করা হয়েছে!');
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
               }}
               className="text-purple-800 hover:text-purple-950 font-bold"
             >
-              কপি করুন
+              {copied ? '✓ কপি হয়েছে!' : 'কপি করুন'}
             </button>
           </div>
         </div>

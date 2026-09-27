@@ -64,9 +64,9 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
     }
     const addressParts = [
       order.shopName,
-      order.shopAddress,
-      order.customerArea,
-      order.customerDistrict,
+      order.shopAddress || order.customerAddress,
+      order.customerArea || order.deliveryZoneName,
+      order.customerDistrict || order.customerCity,
       order.shopRoute ? order.shopRoute.replace(/রুট/g, '').trim() : '',
       'Bangladesh',
     ].filter(Boolean);

@@ -120,16 +120,27 @@ ${prompt}
 
 Provide strategic, actionable advice.`;
 
-      // Must use gemini-3.1-pro-preview with thinkingLevel HIGH and NO maxOutputTokens set
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.1-pro-preview',
-        contents: fullPrompt,
-        config: {
-          thinkingConfig: {
-            thinkingLevel: 'HIGH' as any,
+      // Try gemini-3.1-pro-preview with thinkingLevel HIGH first, fallback to flash models if rate-limited
+      let response: any;
+      let usedModel = 'gemini-3.1-pro-preview';
+      try {
+        response = await ai.models.generateContent({
+          model: 'gemini-3.1-pro-preview',
+          contents: fullPrompt,
+          config: {
+            thinkingConfig: {
+              thinkingLevel: 'HIGH' as any,
+            },
           },
-        },
-      });
+        });
+      } catch (proErr: any) {
+        console.warn('gemini-3.1-pro-preview quota/error, falling back to gemini-3-flash-preview:', proErr?.message);
+        usedModel = 'gemini-3-flash-preview';
+        response = await ai.models.generateContent({
+          model: 'gemini-3-flash-preview',
+          contents: fullPrompt,
+        });
+      }
 
       let textOutput = '';
       let thinkingOutput = '';
@@ -150,7 +161,7 @@ Provide strategic, actionable advice.`;
       res.json({
         answer: textOutput,
         thoughts: thinkingOutput || null,
-        model: 'gemini-3.1-pro-preview',
+        model: usedModel,
       });
     } catch (error: any) {
       console.error('Deep Advisor error:', error);
@@ -171,7 +182,9 @@ Provide strategic, actionable advice.`;
 
       const ai = getAIClient();
       const shopNames = (shops || []).map((s: any) => s.name).join(', ');
-      const productList = (products || []).map((p: any) => `${p.name} (SKU: ${p.sku}, ৳${p.price}/${p.unit}, Stock: ${p.stock})`).join('\n');
+      const productList = (products || [])
+        .map((p: any) => `${p.banglaName || p.name} / ${p.name} (SKU: ${p.sku}, ৳${p.unitPrice ?? p.price}/${p.unit}, Stock: ${p.stock})`)
+        .join('\n');
 
       const prompt = `You are a fast AI voice & text order parser for a sales representative visiting retail grocery / FMCG shops in Bangladesh.
 Convert the following spoken or typed order text into a structured JSON order.
@@ -207,16 +220,28 @@ Return ONLY a raw JSON object (no markdown, no backticks, no code fences):
   ]
 }`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.1-pro-preview',
-        contents: prompt,
-        config: {
-          thinkingConfig: {
-            thinkingLevel: 'HIGH' as any,
+      let response: any;
+      try {
+        response = await ai.models.generateContent({
+          model: 'gemini-3.1-pro-preview',
+          contents: prompt,
+          config: {
+            thinkingConfig: {
+              thinkingLevel: 'HIGH' as any,
+            },
+            responseMimeType: 'application/json',
           },
-          responseMimeType: 'application/json',
-        },
-      });
+        });
+      } catch (proErr: any) {
+        console.warn('gemini-3.1-pro-preview error in parse-order, falling back to gemini-3-flash-preview:', proErr?.message);
+        response = await ai.models.generateContent({
+          model: 'gemini-3-flash-preview',
+          contents: prompt,
+          config: {
+            responseMimeType: 'application/json',
+          },
+        });
+      }
 
       let responseText = response.text?.trim() || '{}';
       // Clean possible fences if any

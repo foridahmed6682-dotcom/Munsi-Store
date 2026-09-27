@@ -16,6 +16,8 @@ import {
   Upload
 } from 'lucide-react';
 import { Product, Category } from '../types';
+import { DEMO_PRODUCT_IDS } from '../lib/storage';
+import { processImageFile } from '../lib/imageUtils';
 
 interface InventoryViewProps {
   products: Product[];
@@ -58,6 +60,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [newMinAlert, setNewMinAlert] = useState('10');
   const [newTradeOffer, setNewTradeOffer] = useState('');
   const [newImageUrl, setNewImageUrl] = useState('');
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [uploadStatusMsg, setUploadStatusMsg] = useState<{ text: string; isError?: boolean } | null>(null);
 
   const categories = useMemo(() => {
     const set = new Set<string>();
@@ -136,27 +140,29 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     setIsAddProductOpen(true);
   };
 
-  const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 2 * 1024 * 1024) {
-        alert('ছবির সাইজ ২ মেগাবাইটের (2MB) নিচে হতে হবে');
-        return;
-      }
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          setNewImageUrl(event.target.result as string);
-        }
-      };
-      reader.readAsDataURL(file);
+    e.target.value = '';
+    if (!file) return;
+
+    setIsUploadingImage(true);
+    setUploadStatusMsg(null);
+    try {
+      const compressedDataUrl = await processImageFile(file);
+      setNewImageUrl(compressedDataUrl);
+      setUploadStatusMsg({ text: 'ছবি সফলভাবে অপ্টিমাইজ ও যুক্ত হয়েছে!', isError: false });
+    } catch (err: any) {
+      setUploadStatusMsg({ text: err?.message || 'ছবি আপলোড করতে সমস্যা হয়েছে', isError: true });
+    } finally {
+      setIsUploadingImage(false);
     }
   };
 
   const handleProductFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isUploadingImage) return;
     if (!newBanglaName.trim() && !newProdName.trim()) {
-      alert('পণ্যের নাম আবশ্যক');
+      setUploadStatusMsg({ text: 'পণ্যের নাম আবশ্যক', isError: true });
       return;
     }
 
@@ -290,7 +296,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             <span>কম স্টক ফিল্টার</span>
           </button>
 
-          {onCleanAllMockData && products.some(p => p.id.startsWith('prod-')) && (
+          {onCleanAllMockData && products.some((p) => DEMO_PRODUCT_IDS.includes(p.id)) && (
             <button
               type="button"
               onClick={() => {
@@ -653,10 +659,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 </label>
                 <div className="flex gap-2 items-stretch">
                   <input
-                    type="url"
-                    value={newImageUrl}
+                    type="text"
+                    value={newImageUrl.startsWith('data:') ? '' : newImageUrl}
                     onChange={(e) => setNewImageUrl(e.target.value)}
-                    placeholder="https://images.unsplash.com/..."
+                    placeholder={
+                      newImageUrl.startsWith('data:')
+                        ? '✅ ডিভাইস থেকে ছবি যুক্ত হয়েছে (অথবা নতুন লিংক পেস্ট করুন)'
+                        : 'https://images.unsplash.com/...'
+                    }
                     className="flex-1 p-2 border border-neutral-300 rounded-xl text-xs font-mono focus:outline-none focus:border-emerald-600"
                   />
                   <div className="relative shrink-0">
@@ -665,31 +675,47 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                       accept="image/*"
                       id="inventory-image-upload-file"
                       onChange={handleImageFileChange}
+                      disabled={isUploadingImage}
                       className="hidden"
                     />
                     <label
                       htmlFor="inventory-image-upload-file"
-                      className="flex items-center justify-center gap-1 px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl text-xs font-bold cursor-pointer transition-colors h-full"
+                      className={`flex items-center justify-center gap-1 px-3 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors h-full ${
+                        isUploadingImage
+                          ? 'bg-emerald-700 text-white opacity-75 cursor-wait'
+                          : 'bg-neutral-800 hover:bg-neutral-700 text-white'
+                      }`}
                     >
                       <Upload className="w-3.5 h-3.5" />
-                      <span>আপলোড</span>
+                      <span>{isUploadingImage ? 'প্রসেস হচ্ছে...' : 'আপলোড'}</span>
                     </label>
                   </div>
                 </div>
 
+                {uploadStatusMsg && (
+                  <p className={`mt-1.5 text-[11px] font-bold ${uploadStatusMsg.isError ? 'text-rose-600' : 'text-emerald-700'}`}>
+                    {uploadStatusMsg.text}
+                  </p>
+                )}
+
                 {newImageUrl && (
-                  <div className="mt-2 p-1.5 bg-neutral-50 rounded-xl border border-neutral-200 flex items-center gap-2">
-                    <img src={newImageUrl} alt="Preview" className="w-10 h-10 object-cover rounded-lg border border-neutral-300 shrink-0" />
+                  <div className="mt-2 p-2 bg-emerald-50/60 rounded-xl border border-emerald-200 flex items-center gap-2.5">
+                    <img src={newImageUrl} alt="Preview" className="w-12 h-12 object-cover rounded-lg border border-emerald-300 bg-white shrink-0" />
                     <div className="min-w-0 flex-1">
-                      <span className="text-[10px] text-neutral-500 font-bold block truncate">প্রিভিউ ইমেজ সোর্স:</span>
-                      <span className="text-[9px] text-neutral-400 font-mono block truncate">
-                        {newImageUrl.startsWith('data:') ? 'ডিভাইস থেকে আপলোড করা ছবি' : newImageUrl}
+                      <span className="text-[11px] text-emerald-800 font-bold block truncate">✅ ছবি প্রস্তুত রয়েছে</span>
+                      <span className="text-[10px] text-neutral-500 font-mono block truncate">
+                        {newImageUrl.startsWith('data:')
+                          ? `ডিভাইস থেকে আপলোড করা ছবি (${Math.round((newImageUrl.length * 0.75) / 1024)} KB)`
+                          : newImageUrl}
                       </span>
                     </div>
                     <button
                       type="button"
-                      onClick={() => setNewImageUrl('')}
-                      className="text-[10px] text-rose-600 hover:text-rose-800 font-bold p-1 shrink-0"
+                      onClick={() => {
+                        setNewImageUrl('');
+                        setUploadStatusMsg(null);
+                      }}
+                      className="text-[11px] text-rose-600 hover:text-rose-800 font-bold px-2 py-1 rounded-lg hover:bg-rose-50 shrink-0"
                     >
                       রিমুভ
                     </button>
@@ -730,9 +756,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   </button>
                   <button
                     type="submit"
-                    className="px-5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl font-bold shadow transition-colors"
+                    disabled={isUploadingImage}
+                    className="px-5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl font-bold shadow transition-colors disabled:opacity-50"
                   >
-                    {editingProduct ? 'আপডেট সেভ করুন' : 'পণ্য সংরক্ষণ করুন'}
+                    {isUploadingImage
+                      ? 'ছবি প্রসেস হচ্ছে...'
+                      : editingProduct
+                      ? 'আপডেট সেভ করুন'
+                      : 'পণ্য সংরক্ষণ করুন'}
                   </button>
                 </div>
               </div>

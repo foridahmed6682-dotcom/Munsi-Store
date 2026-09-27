@@ -68,12 +68,77 @@ export const DEFAULT_BUSINESS_INFO: BusinessInfo = {
       instructions: 'ব্যাংক একাউন্টে টাকা ট্রান্সফার করে ডিপোজিট স্লিপ বা রেফারেন্স রাখুন।',
     },
   },
+  storeBanners: [],
+  storeStories: [],
+  deliveryZones: [
+    { id: 'zone-inside', name: 'গাইবান্ধা পৌরসভা (ভিতর)', fee: 40 },
+    { id: 'zone-outside', name: 'গাইবান্ধা পৌরসভা (বাহির)', fee: 60 },
+    { id: 'zone-pickup', name: 'দোকান থেকে সরাসরি সংগ্রহ (Self Pickup)', fee: 0 },
+  ],
+  coupons: [],
+  flashSale: {
+    enabled: false,
+    title: 'স্পেশাল অফার',
+    subtitle: '',
+    discountPercent: 0,
+    endTime: new Date(Date.now() + 1000 * 60 * 60 * 18).toISOString(),
+    timerEnabled: false,
+  },
 };
+
+const DEMO_BANNER_IDS = new Set(['banner-1', 'banner-2', 'banner-3']);
+const DEMO_STORY_IDS = new Set(['story-1', 'story-2', 'story-3', 'story-4', 'story-5']);
+const DEMO_COUPON_IDS = new Set(['cpn-fresh10', 'cpn-sodai50']);
+export const DEMO_PRODUCT_IDS = [
+  'prod-1',
+  'prod-2',
+  'prod-3',
+  'prod-4',
+  'prod-5',
+  'prod-6',
+  'prod-7',
+  'prod-8',
+  'prod-9',
+  'prod-10',
+];
+export const DEMO_CATEGORY_IDS = [
+  'cat-oil',
+  'cat-flour',
+  'cat-sugar',
+  'cat-dairy',
+  'cat-spices',
+  'cat-soap',
+  'cat-beverage',
+  'cat-snacks',
+  'cat-tea',
+];
+export const DEMO_ROUTE_IDS = ['route-1', 'route-2', 'route-3', 'route-4', 'route-5'];
 
 export function getBusinessInfo(): BusinessInfo {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.BUSINESS_INFO);
-    return raw ? { ...DEFAULT_BUSINESS_INFO, ...JSON.parse(raw) } : DEFAULT_BUSINESS_INFO;
+    if (!raw) return DEFAULT_BUSINESS_INFO;
+    const parsed = JSON.parse(raw);
+    return {
+      ...DEFAULT_BUSINESS_INFO,
+      ...parsed,
+      storeBanners: Array.isArray(parsed.storeBanners)
+        ? parsed.storeBanners.filter((b: any) => !DEMO_BANNER_IDS.has(b.id))
+        : [],
+      storeStories: Array.isArray(parsed.storeStories)
+        ? parsed.storeStories.filter((s: any) => !DEMO_STORY_IDS.has(s.id))
+        : [],
+      deliveryZones:
+        parsed.deliveryZones && parsed.deliveryZones.length > 0
+          ? parsed.deliveryZones
+          : DEFAULT_BUSINESS_INFO.deliveryZones,
+      coupons: Array.isArray(parsed.coupons)
+        ? parsed.coupons.filter((c: any) => !DEMO_COUPON_IDS.has(c.id))
+        : [],
+      flashSale: parsed.flashSale
+        ? { ...DEFAULT_BUSINESS_INFO.flashSale, ...parsed.flashSale }
+        : DEFAULT_BUSINESS_INFO.flashSale,
+    };
   } catch {
     return DEFAULT_BUSINESS_INFO;
   }
@@ -90,26 +155,9 @@ export function saveBusinessInfo(info: BusinessInfo): BusinessInfo {
 
 export const saveBusinessInfoLocal = saveBusinessInfo;
 
+export const DEFAULT_ROUTES: Route[] = [];
 
-export const DEFAULT_ROUTES: Route[] = [
-  { id: 'route-1', name: 'Chawkbazar', banglaName: 'চকবাজার রুট', createdAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'route-2', name: 'Mirpur-10', banglaName: 'মিরপুর-১০ রুট', createdAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'route-3', name: 'Gulistan', banglaName: 'গুলিস্তান রুট', createdAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'route-4', name: 'Dhanmondi', banglaName: 'ধানমন্ডি রুট', createdAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'route-5', name: 'Uttara', banglaName: 'উত্তরা রুট', createdAt: '2026-01-01T00:00:00.000Z' },
-];
-
-export const DEFAULT_CATEGORIES: Category[] = [
-  { id: 'cat-oil', name: 'Edible Oil & Ghee', banglaName: 'তেল ও ঘি', description: 'সয়াবিন তেল, সরিষার তেল ও ঘি', color: '#f59e0b', icon: 'Droplet' },
-  { id: 'cat-flour', name: 'Flour & Semolina', banglaName: 'আটা ও ময়দা', description: 'প্যাকেট আটা, ময়দা ও সুজি', color: '#eab308', icon: 'Wheat' },
-  { id: 'cat-sugar', name: 'Sugar & Salt', banglaName: 'চিনি ও গুড়', description: 'পরিশোধিত চিনি ও গুড়', color: '#06b6d4', icon: 'Sparkles' },
-  { id: 'cat-dairy', name: 'Dairy & Milk', banglaName: 'দুধ ও দুগ্ধজাত', description: 'গুঁড়ো দুধ, কনডেন্সড মিল্ক ও বাটার', color: '#3b82f6', icon: 'Milk' },
-  { id: 'cat-spices', name: 'Spices & Culinary', banglaName: 'মসলা', description: 'হলুদ, মরিচ, ধনিয়া ও গরম মসলা গুঁড়া', color: '#ef4444', icon: 'Flame' },
-  { id: 'cat-soap', name: 'Toiletries & Hygiene', banglaName: 'টয়লেটিজ ও সাবান', description: 'বিউটি সাবান, লন্ড্রি সাবান ও ডিটারজেন্ট', color: '#8b5cf6', icon: 'Sparkle' },
-  { id: 'cat-beverage', name: 'Beverages & Drinks', banglaName: 'পানীয়', description: 'ফ্রুট জুস, কোমল পানীয় ও মিনারেল ওয়াটার', color: '#10b981', icon: 'CupSoda' },
-  { id: 'cat-snacks', name: 'Biscuits & Snacks', banglaName: 'বিস্কুট ও বেকারি', description: 'টোস্ট, ক্রিম বিস্কুট ও চানাচুর', color: '#d97706', icon: 'Cookie' },
-  { id: 'cat-tea', name: 'Tea & Coffee', banglaName: 'চা ও কফি', description: 'দানাদার চা পাতা ও কফি', color: '#854d0e', icon: 'Coffee' },
-];
+export const DEFAULT_CATEGORIES: Category[] = [];
 
 export const DEFAULT_AUTHORIZED_EMAILS: AuthorizedUserEmail[] = [
   {
@@ -121,155 +169,21 @@ export const DEFAULT_AUTHORIZED_EMAILS: AuthorizedUserEmail[] = [
     phone: '',
     addedAt: '2026-01-01T00:00:00.000Z',
     addedBy: 'System',
-  }
+  },
 ];
 
-// Initial default FMCG products common in Bangladesh grocery distribution
-export const DEFAULT_PRODUCTS: Product[] = [
-  {
-    id: 'prod-1',
-    name: 'Rupchanda Soybean Oil (5L)',
-    banglaName: 'রূপচাঁদা সয়াবিন তেল (৫ লিটার)',
-    sku: 'OIL-RUP-5L',
-    category: 'তেল ও ঘি',
-    unit: 'কার্টুন',
-    unitPrice: 3850,
-    costPrice: 3680,
-    stock: 45,
-    minStockAlert: 10,
-    tradeOfferDesc: 'প্রতি ৫ কার্টুনে ২০০৳ ছাড়',
-    imageUrl: 'https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?w=500&auto=format&fit=crop&q=80',
-  },
-  {
-    id: 'prod-2',
-    name: 'Teer Atta (2Kg Pack)',
-    banglaName: 'তীর আটা (২ কেজি প্যাকেট)',
-    sku: 'FLR-TEER-2K',
-    category: 'আটা ও ময়দা',
-    unit: 'কার্টুন',
-    unitPrice: 1280,
-    costPrice: 1190,
-    stock: 60,
-    minStockAlert: 15,
-    imageUrl: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=500&auto=format&fit=crop&q=80',
-  },
-  {
-    id: 'prod-3',
-    name: 'Fresh Refined Sugar (1Kg)',
-    banglaName: 'ফ্রেশ পরিশোধিত চিনি (১ কেজি)',
-    sku: 'SUG-FRSH-1K',
-    category: 'চিনি ও গুড়',
-    unit: 'বস্তা',
-    unitPrice: 6500,
-    costPrice: 6250,
-    stock: 22,
-    minStockAlert: 8,
-    imageUrl: 'https://images.unsplash.com/photo-1581441363689-1f3c3c414635?w=500&auto=format&fit=crop&q=80',
-  },
-  {
-    id: 'prod-4',
-    name: 'Danish Condensed Milk (397g)',
-    banglaName: 'ড্যানিশ কনডেন্সড মিল্ক (৩৯৭ গ্রাম)',
-    sku: 'MLK-DNSH-397',
-    category: 'দুধ ও দুগ্ধজাত',
-    unit: 'কার্টুন',
-    unitPrice: 3950,
-    costPrice: 3750,
-    stock: 35,
-    minStockAlert: 10,
-    tradeOfferDesc: '১০ কার্টুনে ১ কার্টুন ফ্রি',
-    imageUrl: 'https://images.unsplash.com/photo-1550583724-b2692b85b150?w=500&auto=format&fit=crop&q=80',
-  },
-  {
-    id: 'prod-5',
-    name: 'Radhuni Turmeric Powder (200g)',
-    banglaName: 'রাঁধুনী হলুদ গুঁড়া (২০০ গ্রাম)',
-    sku: 'SPC-RAD-200',
-    category: 'মসলা',
-    unit: 'কার্টুন',
-    unitPrice: 1850,
-    costPrice: 1680,
-    stock: 8,
-    minStockAlert: 12,
-    imageUrl: 'https://images.unsplash.com/photo-1615485290382-441e4d049cb5?w=500&auto=format&fit=crop&q=80',
-  },
-  {
-    id: 'prod-6',
-    name: 'Lux Velvet Glow Soap (100g)',
-    banglaName: 'লাক্স বিউটি সাবান (১০০ গ্রাম)',
-    sku: 'SOP-LUX-100',
-    category: 'টয়লেটিজ ও সাবান',
-    unit: 'ডজন',
-    unitPrice: 720,
-    costPrice: 640,
-    stock: 50,
-    minStockAlert: 15,
-    imageUrl: 'https://images.unsplash.com/photo-1607006314181-42778f307399?w=500&auto=format&fit=crop&q=80',
-  },
-  {
-    id: 'prod-7',
-    name: 'Pran Frooto Mango Juice (250ml)',
-    banglaName: 'প্রাণ ফ্রুটো ম্যাঙ্গো জুস (২৫০ মি.লি.)',
-    sku: 'BEV-PRN-250',
-    category: 'পানীয়',
-    unit: 'কার্টুন',
-    unitPrice: 640,
-    costPrice: 560,
-    stock: 40,
-    minStockAlert: 10,
-    tradeOfferDesc: '৫ কার্টুনে ২৫৳ ছাড়',
-    imageUrl: 'https://images.unsplash.com/photo-1546173159-315724a31696?w=500&auto=format&fit=crop&q=80',
-  },
-  {
-    id: 'prod-8',
-    name: 'Parachute Coconut Oil (200ml)',
-    banglaName: 'প্যারাসুট নারিকেল তেল (২০০ মি.লি.)',
-    sku: 'OIL-PAR-200',
-    category: 'টয়লেটিজ ও কসমেটিক্স',
-    unit: 'কার্টুন',
-    unitPrice: 2400,
-    costPrice: 2200,
-    stock: 25,
-    minStockAlert: 10,
-    imageUrl: 'https://images.unsplash.com/photo-1526947425960-945c6e72858f?w=500&auto=format&fit=crop&q=80',
-  },
-  {
-    id: 'prod-9',
-    name: 'Energy Plus Biscuit Box',
-    banglaName: 'এনার্জি প্লাস বিস্কুট বক্স',
-    sku: 'BSC-ENG-BX',
-    category: 'স্ন্যাক্স ও বিস্কুট',
-    unit: 'কার্টুন',
-    unitPrice: 1450,
-    costPrice: 1320,
-    stock: 5,
-    minStockAlert: 12,
-    imageUrl: 'https://images.unsplash.com/photo-1558961363-fa8fdf82db35?w=500&auto=format&fit=crop&q=80',
-  },
-  {
-    id: 'prod-10',
-    name: 'Wheel 2in1 Washing Powder (1Kg)',
-    banglaName: 'হুইল ডিটারজেন্ট পাউডার (১ কেজি)',
-    sku: 'DET-WHL-1K',
-    category: 'টয়লেটিজ ও ক্লিনিং',
-    unit: 'কার্টুন',
-    unitPrice: 1980,
-    costPrice: 1820,
-    stock: 30,
-    minStockAlert: 10,
-    imageUrl: 'https://images.unsplash.com/photo-1583947215259-38e31be8751f?w=500&auto=format&fit=crop&q=80',
-  },
-];
+export const DEFAULT_PRODUCTS: Product[] = [];
 
 export const DEFAULT_SHOPS: Shop[] = [];
 
-// Deleted ID Tracking helpers to prevent deleted items from reappearing on refresh
+// Deleted ID Tracking helpers to prevent deleted items and legacy demo data from reappearing
 export function getDeletedProductIds(): Set<string> {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.DELETED_PRODUCTS);
-    return new Set(raw ? JSON.parse(raw) : []);
+    const list: string[] = raw ? JSON.parse(raw) : [];
+    return new Set([...DEMO_PRODUCT_IDS, ...list]);
   } catch {
-    return new Set();
+    return new Set(DEMO_PRODUCT_IDS);
   }
 }
 
@@ -280,11 +194,13 @@ export function addDeletedProductId(id: string) {
 }
 
 export function getDeletedShopIds(): Set<string> {
+  const demoShops = ['shop-1', 'shop-2', 'shop-3', 'shop-4', 'shop-5', 'shop-6'];
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.DELETED_SHOPS);
-    return new Set(raw ? JSON.parse(raw) : ['shop-1', 'shop-2', 'shop-3', 'shop-4', 'shop-5', 'shop-6']);
+    const list: string[] = raw ? JSON.parse(raw) : [];
+    return new Set([...demoShops, ...list]);
   } catch {
-    return new Set(['shop-1', 'shop-2', 'shop-3', 'shop-4', 'shop-5', 'shop-6']);
+    return new Set(demoShops);
   }
 }
 
@@ -295,11 +211,13 @@ export function addDeletedShopId(id: string) {
 }
 
 export function getDeletedOrderIds(): Set<string> {
+  const demoOrders = ['ord-101', 'ord-102'];
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.DELETED_ORDERS);
-    return new Set(raw ? JSON.parse(raw) : ['ord-101', 'ord-102']);
+    const list: string[] = raw ? JSON.parse(raw) : [];
+    return new Set([...demoOrders, ...list]);
   } catch {
-    return new Set(['ord-101', 'ord-102']);
+    return new Set(demoOrders);
   }
 }
 
@@ -312,9 +230,10 @@ export function addDeletedOrderId(id: string) {
 export function getDeletedCategoryIds(): Set<string> {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.DELETED_CATEGORIES);
-    return new Set(raw ? JSON.parse(raw) : []);
+    const list: string[] = raw ? JSON.parse(raw) : [];
+    return new Set([...DEMO_CATEGORY_IDS, ...list]);
   } catch {
-    return new Set();
+    return new Set(DEMO_CATEGORY_IDS);
   }
 }
 
@@ -327,9 +246,10 @@ export function addDeletedCategoryId(id: string) {
 export function getDeletedRouteIds(): Set<string> {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.DELETED_ROUTES);
-    return new Set(raw ? JSON.parse(raw) : []);
+    const list: string[] = raw ? JSON.parse(raw) : [];
+    return new Set([...DEMO_ROUTE_IDS, ...list]);
   } catch {
-    return new Set();
+    return new Set(DEMO_ROUTE_IDS);
   }
 }
 
@@ -340,7 +260,7 @@ export function addDeletedRouteId(id: string) {
 }
 
 export function isInitialSeedDone(): boolean {
-  return localStorage.getItem(STORAGE_KEYS.SEED_DONE) === 'true';
+  return true;
 }
 
 export function markInitialSeedDone() {
@@ -356,17 +276,9 @@ export function getProducts(): Product[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.PRODUCTS);
     const deletedIds = getDeletedProductIds();
-    const seedDone = isInitialSeedDone();
-
-    if (raw === null) {
-      if (!seedDone) {
-        markInitialSeedDone();
-        localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(DEFAULT_PRODUCTS));
-        return DEFAULT_PRODUCTS;
-      }
+    if (!raw) {
       return [];
     }
-
     const parsed: Product[] = JSON.parse(raw);
     const clean = parsed.filter((p) => !deletedIds.has(p.id));
     if (clean.length !== parsed.length) {
@@ -381,7 +293,20 @@ export function getProducts(): Product[] {
 export function saveProducts(products: Product[]) {
   const deletedIds = getDeletedProductIds();
   const clean = products.filter((p) => !deletedIds.has(p.id));
-  localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(clean));
+  try {
+    localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(clean));
+  } catch (err) {
+    console.warn('localStorage quota warning while saving products, compacting large base64 images for local cache:', err);
+    try {
+      const compacted = clean.map((p) => ({
+        ...p,
+        imageUrl: p.imageUrl && p.imageUrl.length > 200000 ? '' : p.imageUrl,
+      }));
+      localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(compacted));
+    } catch (innerErr) {
+      console.warn('Could not write products to localStorage:', innerErr);
+    }
+  }
 }
 
 export function addOrUpdateProduct(product: Product): Product {
@@ -427,7 +352,11 @@ export function getCategories(): Category[] {
 export function saveCategories(categories: Category[]) {
   const deletedIds = getDeletedCategoryIds();
   const clean = categories.filter((c) => !deletedIds.has(c.id));
-  localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(clean));
+  try {
+    localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(clean));
+  } catch (err) {
+    console.warn('Could not save categories to localStorage:', err);
+  }
 }
 
 export function addOrUpdateCategory(category: Category): Category {
@@ -473,7 +402,11 @@ export function getRoutes(): Route[] {
 export function saveRoutes(routes: Route[]) {
   const deletedIds = getDeletedRouteIds();
   const clean = routes.filter((r) => !deletedIds.has(r.id));
-  localStorage.setItem(STORAGE_KEYS.ROUTES, JSON.stringify(clean));
+  try {
+    localStorage.setItem(STORAGE_KEYS.ROUTES, JSON.stringify(clean));
+  } catch (err) {
+    console.warn('Could not save routes to localStorage:', err);
+  }
 }
 
 export function addOrUpdateRoute(route: Route): Route {
@@ -510,7 +443,11 @@ export function getAuthorizedEmails(): AuthorizedUserEmail[] {
 }
 
 export function saveAuthorizedEmails(emails: AuthorizedUserEmail[]) {
-  localStorage.setItem(STORAGE_KEYS.AUTHORIZED_EMAILS, JSON.stringify(emails));
+  try {
+    localStorage.setItem(STORAGE_KEYS.AUTHORIZED_EMAILS, JSON.stringify(emails));
+  } catch (err) {
+    console.warn('Could not save authorizedEmails to localStorage:', err);
+  }
 }
 
 export function addOrUpdateAuthorizedEmail(emailData: AuthorizedUserEmail): AuthorizedUserEmail {
@@ -558,7 +495,11 @@ export function getShops(): Shop[] {
 export function saveShops(shops: Shop[]) {
   const deletedIds = getDeletedShopIds();
   const clean = shops.filter((s) => !deletedIds.has(s.id));
-  localStorage.setItem(STORAGE_KEYS.SHOPS, JSON.stringify(clean));
+  try {
+    localStorage.setItem(STORAGE_KEYS.SHOPS, JSON.stringify(clean));
+  } catch (err) {
+    console.warn('Could not save shops to localStorage:', err);
+  }
 }
 
 export function addOrUpdateShop(shop: Shop): Shop {
@@ -608,7 +549,11 @@ export function getOrders(): Order[] {
 export function saveOrders(orders: Order[]) {
   const deletedIds = getDeletedOrderIds();
   const clean = orders.filter((o) => !deletedIds.has(o.id));
-  localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(clean));
+  try {
+    localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(clean));
+  } catch (err) {
+    console.warn('Could not save orders to localStorage:', err);
+  }
 }
 
 export function deleteOrder(orderId: string) {
@@ -794,12 +739,13 @@ export function saveUserProfile(user: any) {
   }
 }
 
-// Clear all default demo/mock products, shops and orders permanently
+// Clear all default demo/mock products, categories, routes, shops and orders permanently
 export function clearAllMockDataLocal() {
   markInitialSeedDone();
 
-  const mockProdIds = DEFAULT_PRODUCTS.map((p) => p.id);
-  mockProdIds.forEach((id) => addDeletedProductId(id));
+  DEMO_PRODUCT_IDS.forEach((id) => addDeletedProductId(id));
+  DEMO_CATEGORY_IDS.forEach((id) => addDeletedCategoryId(id));
+  DEMO_ROUTE_IDS.forEach((id) => addDeletedRouteId(id));
 
   const mockShopIds = ['shop-1', 'shop-2', 'shop-3', 'shop-4', 'shop-5', 'shop-6'];
   mockShopIds.forEach((id) => addDeletedShopId(id));
@@ -807,8 +753,14 @@ export function clearAllMockDataLocal() {
   const mockOrderIds = ['ord-101', 'ord-102'];
   mockOrderIds.forEach((id) => addDeletedOrderId(id));
 
-  const cleanProducts = getProducts().filter((p) => !mockProdIds.includes(p.id));
+  const cleanProducts = getProducts().filter((p) => !DEMO_PRODUCT_IDS.includes(p.id));
   saveProducts(cleanProducts);
+
+  const cleanCategories = getCategories().filter((c) => !DEMO_CATEGORY_IDS.includes(c.id));
+  saveCategories(cleanCategories);
+
+  const cleanRoutes = getRoutes().filter((r) => !DEMO_ROUTE_IDS.includes(r.id));
+  saveRoutes(cleanRoutes);
 
   const cleanShops = getShops().filter((s) => !mockShopIds.includes(s.id));
   saveShops(cleanShops);

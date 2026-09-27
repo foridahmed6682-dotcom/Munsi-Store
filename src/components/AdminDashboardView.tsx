@@ -59,10 +59,12 @@ import {
   Route,
   BusinessInfo
 } from '../types';
+import { processImageFile } from '../lib/imageUtils';
 import { fetchAllUsers, updateUserRoleAndRoute, getBusinessInfo, saveBusinessInfoToCloud, subscribeToCloudBusinessInfo } from '../lib/firebase';
 import { saveBusinessInfoLocal, DEFAULT_BUSINESS_INFO } from '../lib/storage';
 import { FullBackupData, parseAndValidateBackupJSON } from '../lib/backupService';
 import { PushNotificationManager } from './PushNotificationManager';
+import { AdminSodaiStorefrontManager } from './AdminSodaiStorefrontManager';
 
 interface AdminDashboardViewProps {
   products: Product[];
@@ -104,7 +106,7 @@ interface AdminDashboardViewProps {
   onDeleteOrder?: (orderId: string) => void;
 }
 
-type AdminSubTab = 'overview' | 'categories' | 'products' | 'routes' | 'access' | 'analytics' | 'push' | 'settings' | 'backup';
+type AdminSubTab = 'overview' | 'storefront' | 'categories' | 'products' | 'routes' | 'access' | 'analytics' | 'push' | 'settings' | 'backup';
 
 const AVAILABLE_ROUTES = [
   'সব রুট (All Routes)',
@@ -207,27 +209,31 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [prodCategory, setProdCategory] = useState(categories[0]?.banglaName || 'তেল ও ঘি');
   const [prodUnit, setProdUnit] = useState('কার্টুন');
   const [prodUnitPrice, setProdUnitPrice] = useState('');
+  const [prodDiscountPrice, setProdDiscountPrice] = useState('');
   const [prodCostPrice, setProdCostPrice] = useState('');
   const [prodStock, setProdStock] = useState('');
   const [prodMinAlert, setProdMinAlert] = useState('10');
   const [prodTradeOffer, setProdTradeOffer] = useState('');
+  const [prodAllowedWeights, setProdAllowedWeights] = useState('');
+  const [prodIsFlashSale, setProdIsFlashSale] = useState(false);
   const [prodImageUrl, setProdImageUrl] = useState('');
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
 
-  const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 2 * 1024 * 1024) {
-        showToast('छবির সাইজ ২ মেগাবাইটের (2MB) নিচে হতে হবে', 'error');
-        return;
-      }
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (typeof reader.result === 'string') {
-          setProdImageUrl(reader.result);
-          showToast('ছবি সফলভাবে লোড হয়েছে!', 'success');
-        }
-      };
-      reader.readAsDataURL(file);
+    // Reset input value so selecting the same or another file always fires onChange
+    e.target.value = '';
+    if (!file) return;
+
+    setIsUploadingImage(true);
+    try {
+      const compressedDataUrl = await processImageFile(file);
+      setProdImageUrl(compressedDataUrl);
+      showToast('ছবি সফলভাবে অপ্টিমাইজ ও যুক্ত হয়েছে!', 'success');
+    } catch (err: any) {
+      showToast(err?.message || 'ছবি আপলোড করতে সমস্যা হয়েছে', 'error');
+    } finally {
+      setIsUploadingImage(false);
     }
   };
 
@@ -423,12 +429,17 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   // Product Submit
   const handleProductSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isUploadingImage) {
+      showToast('অনুগ্রহ করে অপেক্ষা করুন, ছবি প্রসেস হচ্ছে...', 'info');
+      return;
+    }
     if (!prodBanglaName.trim() || !prodUnitPrice || !prodCostPrice) {
       showToast('পণ্যের নাম, বিক্রয় মূল্য ও ক্রয় মূল্য আবশ্যক', 'error');
       return;
     }
 
     const unitPriceNum = parseFloat(prodUnitPrice) || 0;
+    const discountPriceNum = parseFloat(prodDiscountPrice);
     const costPriceNum = parseFloat(prodCostPrice) || 0;
     const stockNum = parseInt(prodStock, 10) || 0;
     const minAlertNum = parseInt(prodMinAlert, 10) || 5;
@@ -443,10 +454,13 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         category: prodCategory,
         unit: prodUnit,
         unitPrice: unitPriceNum,
+        discountPrice: !isNaN(discountPriceNum) && discountPriceNum > 0 ? discountPriceNum : undefined,
         costPrice: costPriceNum,
         stock: stockNum,
         minStockAlert: minAlertNum,
         tradeOfferDesc: prodTradeOffer.trim() || '',
+        allowedWeights: prodAllowedWeights.trim() || undefined,
+        isFlashSale: prodIsFlashSale,
         imageUrl: prodImageUrl.trim() || editingProduct.imageUrl || '',
       };
       onUpdateProduct(updated);
@@ -460,10 +474,13 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         category: prodCategory,
         unit: prodUnit,
         unitPrice: unitPriceNum,
+        discountPrice: !isNaN(discountPriceNum) && discountPriceNum > 0 ? discountPriceNum : undefined,
         costPrice: costPriceNum,
         stock: stockNum,
         minStockAlert: minAlertNum,
         tradeOfferDesc: prodTradeOffer.trim() || '',
+        allowedWeights: prodAllowedWeights.trim() || undefined,
+        isFlashSale: prodIsFlashSale,
         imageUrl:
           prodImageUrl.trim() ||
           'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500&auto=format&fit=crop&q=80',
@@ -478,9 +495,12 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     setProdBanglaName('');
     setProdSku('');
     setProdUnitPrice('');
+    setProdDiscountPrice('');
     setProdCostPrice('');
     setProdStock('');
     setProdTradeOffer('');
+    setProdAllowedWeights('');
+    setProdIsFlashSale(false);
     setProdImageUrl('');
   };
 
@@ -492,10 +512,13 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     setProdCategory(categories[0]?.banglaName || 'তেল ও ঘি');
     setProdUnit('কার্টুন');
     setProdUnitPrice('');
+    setProdDiscountPrice('');
     setProdCostPrice('');
     setProdStock('20');
     setProdMinAlert('5');
     setProdTradeOffer('');
+    setProdAllowedWeights('');
+    setProdIsFlashSale(false);
     setProdImageUrl('');
     setIsProductModalOpen(true);
   };
@@ -508,10 +531,13 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     setProdCategory(prod.category || (categories[0]?.banglaName || 'তেল ও ঘি'));
     setProdUnit(prod.unit || 'কার্টুন');
     setProdUnitPrice(prod.unitPrice !== undefined && prod.unitPrice !== null ? prod.unitPrice.toString() : '');
+    setProdDiscountPrice(prod.discountPrice !== undefined && prod.discountPrice !== null ? prod.discountPrice.toString() : '');
     setProdCostPrice(prod.costPrice !== undefined && prod.costPrice !== null ? prod.costPrice.toString() : '');
     setProdStock(prod.stock !== undefined && prod.stock !== null ? prod.stock.toString() : '0');
     setProdMinAlert(prod.minStockAlert !== undefined && prod.minStockAlert !== null ? prod.minStockAlert.toString() : '5');
     setProdTradeOffer(prod.tradeOfferDesc || '');
+    setProdAllowedWeights(prod.allowedWeights || '');
+    setProdIsFlashSale(Boolean(prod.isFlashSale));
     setProdImageUrl(prod.imageUrl || '');
     setIsProductModalOpen(true);
   };
@@ -725,6 +751,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         >
           <LayoutDashboard className="w-4 h-4" />
           <span>ওভারভিউ ও অ্যানালিটিক্স</span>
+        </button>
+
+        <button
+          onClick={() => setSubTab('storefront')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+            subTab === 'storefront'
+              ? 'bg-[#E21E26] text-white shadow-sm'
+              : 'text-[#E21E26] bg-red-50/70 hover:bg-red-100 border border-red-200'
+          }`}
+        >
+          <Sparkles className="w-4 h-4" />
+          <span>কাস্টমার স্টোর ও অফার (SodaiBhai)</span>
         </button>
 
         <button
@@ -2621,6 +2659,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         </div>
       )}
 
+      {/* SUB-TAB STOREFRONT: SODAIBHAI CUSTOMER STORE & PROMO CONTROL */}
+      {subTab === 'storefront' && (
+        <AdminSodaiStorefrontManager
+          bizInfo={bizInfo}
+          setBizInfo={setBizInfo}
+          products={products}
+          orders={orders}
+          onUpdateProduct={onUpdateProduct}
+          onShowToast={showToast}
+        />
+      )}
+
       {/* SUB-TAB 6: BACKUP & RESTORE HUB */}
       {subTab === 'backup' && (
         <div className="space-y-5 animate-fadeIn">
@@ -3244,6 +3294,48 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    কাস্টমার ডিসকাউন্ট মূল্য (৳) (ঐচ্ছিক)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="যেমন: 165 (ছাড়ের পর দাম)"
+                    value={prodDiscountPrice}
+                    onChange={(e) => setProdDiscountPrice(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-red-200 bg-red-50/30 text-xs focus:outline-none focus:border-[#E21E26] font-mono font-bold text-[#E21E26]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    ওজন / প্যাক অপশন (কমা দিয়ে)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="যেমন: 500g, 1KG, 2KG"
+                    value={prodAllowedWeights}
+                    onChange={(e) => setProdAllowedWeights(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+
+                <div className="flex items-end pb-1.5">
+                  <label className="flex items-center gap-2 text-xs font-bold text-neutral-800 cursor-pointer bg-amber-50 border border-amber-200 px-3 py-2 rounded-xl w-full">
+                    <input
+                      type="checkbox"
+                      checked={prodIsFlashSale}
+                      onChange={(e) => setProdIsFlashSale(e.target.checked)}
+                      className="w-4 h-4 accent-[#E21E26]"
+                    />
+                    <span>⚡ ফ্ল্যাশ ডিল সেকশনে দেখান</span>
+                  </label>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-neutral-700 mb-1">
                   ট্রেড অফার বা স্কিম বিবরণ (ঐচ্ছিক)
@@ -3263,9 +3355,13 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 </label>
                 <div className="flex flex-col sm:flex-row gap-2 items-stretch">
                   <input
-                    type="url"
-                    placeholder="https://images.unsplash.com/..."
-                    value={prodImageUrl}
+                    type="text"
+                    placeholder={
+                      prodImageUrl.startsWith('data:')
+                        ? '✅ ডিভাইস থেকে ছবি যুক্ত হয়েছে (অথবা নতুন লিংক পেস্ট করুন)'
+                        : 'https://images.unsplash.com/...'
+                    }
+                    value={prodImageUrl.startsWith('data:') ? '' : prodImageUrl}
                     onChange={(e) => setProdImageUrl(e.target.value)}
                     className="flex-1 px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600 font-mono"
                   />
@@ -3277,31 +3373,40 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                       accept="image/*"
                       id="product-image-upload-file"
                       onChange={handleImageFileChange}
+                      disabled={isUploadingImage}
                       className="hidden"
                     />
                     <label
                       htmlFor="product-image-upload-file"
-                      className="flex items-center justify-center gap-1 px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl text-xs font-bold cursor-pointer transition-colors"
+                      className={`flex items-center justify-center gap-1 px-3 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors ${
+                        isUploadingImage
+                          ? 'bg-emerald-700 text-white opacity-75 cursor-wait'
+                          : 'bg-neutral-800 hover:bg-neutral-700 text-white'
+                      }`}
                     >
-                      <span>📸 ছবি আপলোড</span>
+                      <span>{isUploadingImage ? '⏳ প্রসেস হচ্ছে...' : '📸 ছবি আপলোড'}</span>
                     </label>
                   </div>
                 </div>
 
                 {/* Live Base64 Preview */}
                 {prodImageUrl && (
-                  <div className="mt-2 p-1.5 bg-neutral-50 rounded-xl border border-neutral-200 flex items-center gap-2">
-                    <img src={prodImageUrl} alt="Preview" className="w-10 h-10 object-cover rounded-lg border border-neutral-300 shrink-0" />
+                  <div className="mt-2 p-2 bg-emerald-50/60 rounded-xl border border-emerald-200 flex items-center gap-2.5">
+                    <img src={prodImageUrl} alt="Preview" className="w-12 h-12 object-cover rounded-lg border border-emerald-300 bg-white shrink-0" />
                     <div className="min-w-0 flex-1">
-                      <span className="text-[10px] text-neutral-500 font-bold block truncate">প্রিভিউ ইমেজ সোর্স:</span>
-                      <span className="text-[9px] text-neutral-400 font-mono block truncate">
-                        {prodImageUrl.startsWith('data:') ? 'ডিভাইস থেকে আপলোড করা ছবি' : prodImageUrl}
+                      <span className="text-[11px] text-emerald-800 font-bold block truncate">
+                        ✅ ছবি প্রস্তুত রয়েছে
+                      </span>
+                      <span className="text-[10px] text-neutral-500 font-mono block truncate">
+                        {prodImageUrl.startsWith('data:')
+                          ? `ডিভাইস থেকে আপলোড করা ছবি (${Math.round((prodImageUrl.length * 0.75) / 1024)} KB)`
+                          : prodImageUrl}
                       </span>
                     </div>
                     <button
                       type="button"
                       onClick={() => setProdImageUrl('')}
-                      className="text-[10px] text-rose-600 hover:text-rose-800 font-bold p-1 shrink-0"
+                      className="text-[11px] text-rose-600 hover:text-rose-800 font-bold px-2 py-1 rounded-lg hover:bg-rose-50 shrink-0"
                     >
                       রিমুভ
                     </button>
@@ -3342,9 +3447,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-700 hover:bg-emerald-800 text-white shadow-sm"
+                  disabled={isUploadingImage}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-700 hover:bg-emerald-800 text-white shadow-sm disabled:opacity-50"
                 >
-                  {editingProduct ? 'আপডেট সেভ করুন' : 'প্রোডাক্ট আপলোড সম্পন্ন করুন'}
+                  {isUploadingImage
+                    ? 'ছবি প্রসেস হচ্ছে...'
+                    : editingProduct
+                    ? 'আপডেট সেভ করুন'
+                    : 'প্রোডাক্ট আপলোড সম্পন্ন করুন'}
                 </button>
               </div>
             </form>
