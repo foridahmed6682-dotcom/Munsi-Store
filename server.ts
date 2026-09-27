@@ -38,6 +38,87 @@ interface PushSubRecord {
 const SUBS_FILE = path.join(process.cwd(), '.push_subscriptions.json');
 let pushSubscriptions: Map<string, PushSubRecord> = new Map();
 
+// Load Firebase Config for REST Write-Channel Bridge (Works even when Firestore Free Daily Read Quota is 0!)
+const FIREBASE_CONFIG_FILE = path.join(process.cwd(), 'firebase-applet-config.json');
+let fbConfig: { projectId?: string; firestoreDatabaseId?: string; apiKey?: string } = {};
+try {
+  if (fs.existsSync(FIREBASE_CONFIG_FILE)) {
+    fbConfig = JSON.parse(fs.readFileSync(FIREBASE_CONFIG_FILE, 'utf-8'));
+  }
+} catch (err) {
+  console.warn('Could not read firebase-applet-config.json:', err);
+}
+
+function parseFirestoreValue(valObj: any): any {
+  if (!valObj || typeof valObj !== 'object') return null;
+  if ('stringValue' in valObj) return valObj.stringValue;
+  if ('integerValue' in valObj) return Number(valObj.integerValue);
+  if ('doubleValue' in valObj) return Number(valObj.doubleValue);
+  if ('booleanValue' in valObj) return Boolean(valObj.booleanValue);
+  if ('nullValue' in valObj) return null;
+  if ('timestampValue' in valObj) return valObj.timestampValue;
+  if ('arrayValue' in valObj) {
+    const vals = valObj.arrayValue?.values;
+    return Array.isArray(vals) ? vals.map(parseFirestoreValue) : [];
+  }
+  if ('mapValue' in valObj) {
+    return parseFirestoreFields(valObj.mapValue?.fields || {});
+  }
+  return null;
+}
+
+function parseFirestoreFields(fields: Record<string, any>): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(fields || {})) {
+    if (k === '_syncCheck') continue;
+    out[k] = parseFirestoreValue(v);
+  }
+  return out;
+}
+
+// Reads a Firestore document using PATCH + updateMask + currentDocument.exists=true
+// This uses a Firestore Write unit (where 20,000/day are free) and returns the full document even when Read units = 0 (429)!
+async function readFirestoreDocViaPatch(docPath: string): Promise<Record<string, any> | null> {
+  if (!fbConfig.projectId || !fbConfig.firestoreDatabaseId || !fbConfig.apiKey) return null;
+  const baseUrl = `https://firestore.googleapis.com/v1/projects/${fbConfig.projectId}/databases/${fbConfig.firestoreDatabaseId}/documents`;
+  try {
+    const res = await fetch(
+      `${baseUrl}/${docPath}?updateMask.fieldPaths=_syncCheck&currentDocument.exists=true&key=${fbConfig.apiKey}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: { _syncCheck: { booleanValue: true } } }),
+      }
+    );
+    if (res.status !== 200) return null;
+    const data = await res.json();
+    if (!data || !data.fields) return null;
+    return parseFirestoreFields(data.fields);
+  } catch {
+    return null;
+  }
+}
+
+// Saves a JSON catalog array into a single Firestore settings document via PATCH so it can always be recovered in 1 operation
+async function writeFirestoreCatalogViaPatch(catalogKey: string, items: any[]): Promise<void> {
+  if (!fbConfig.projectId || !fbConfig.firestoreDatabaseId || !fbConfig.apiKey) return;
+  const baseUrl = `https://firestore.googleapis.com/v1/projects/${fbConfig.projectId}/databases/${fbConfig.firestoreDatabaseId}/documents`;
+  try {
+    await fetch(`${baseUrl}/settings/cloud_catalog_${catalogKey}?key=${fbConfig.apiKey}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fields: {
+          itemsJson: { stringValue: JSON.stringify(items) },
+          updatedAt: { stringValue: new Date().toISOString() },
+        },
+      }),
+    });
+  } catch {
+    // ignore background cloud sync error
+  }
+}
+
 // Server-side Persistent Database Mirror (Protects against Firebase Free Tier Daily Quota exhaustion)
 const DB_MIRROR_FILE = path.join(process.cwd(), '.server_database_mirror.json');
 interface ServerDatabaseMirror {
@@ -80,6 +161,98 @@ function saveServerDbMirror() {
     console.warn('Failed to write server DB mirror file:', err);
   }
 }
+
+// Bootstrap Server Mirror directly from Firestore via PATCH on startup
+async function bootstrapServerMirrorFromFirestore() {
+  try {
+    let changed = false;
+    const [
+      bizDoc,
+      mainAdminDoc,
+      catCatalog,
+      routeCatalog,
+      prodCatalog,
+      shopCatalog,
+      orderCatalog,
+      authCatalog,
+    ] = await Promise.all([
+      readFirestoreDocViaPatch('settings/businessInfo'),
+      readFirestoreDocViaPatch('authorizedEmails/foridahmed6682_gmail_com'),
+      readFirestoreDocViaPatch('settings/cloud_catalog_categories'),
+      readFirestoreDocViaPatch('settings/cloud_catalog_routes'),
+      readFirestoreDocViaPatch('settings/cloud_catalog_products'),
+      readFirestoreDocViaPatch('settings/cloud_catalog_shops'),
+      readFirestoreDocViaPatch('settings/cloud_catalog_orders'),
+      readFirestoreDocViaPatch('settings/cloud_catalog_authorizedEmails'),
+    ]);
+
+    if (bizDoc && Object.keys(bizDoc).length > 0) {
+      serverDbMirror.businessInfo = { ...(serverDbMirror.businessInfo || {}), ...bizDoc };
+      changed = true;
+    }
+    if (mainAdminDoc && mainAdminDoc.email) {
+      serverDbMirror.authorizedEmails = mergeArrayById(
+        serverDbMirror.authorizedEmails,
+        [mainAdminDoc],
+        'email'
+      );
+      changed = true;
+    }
+
+    const parseCatalog = (docObj: Record<string, any> | null): any[] => {
+      if (!docObj || typeof docObj.itemsJson !== 'string') return [];
+      try {
+        const arr = JSON.parse(docObj.itemsJson);
+        return Array.isArray(arr) ? arr : [];
+      } catch {
+        return [];
+      }
+    };
+
+    const cloudCats = parseCatalog(catCatalog);
+    if (cloudCats.length > 0) {
+      serverDbMirror.categories = mergeArrayById(serverDbMirror.categories, cloudCats, 'id');
+      changed = true;
+    }
+    const cloudRoutes = parseCatalog(routeCatalog);
+    if (cloudRoutes.length > 0) {
+      serverDbMirror.routes = mergeArrayById(serverDbMirror.routes, cloudRoutes, 'id');
+      changed = true;
+    }
+    const cloudProds = parseCatalog(prodCatalog);
+    if (cloudProds.length > 0) {
+      serverDbMirror.products = mergeArrayById(serverDbMirror.products, cloudProds, 'id');
+      changed = true;
+    }
+    const cloudShops = parseCatalog(shopCatalog);
+    if (cloudShops.length > 0) {
+      serverDbMirror.shops = mergeArrayById(serverDbMirror.shops, cloudShops, 'id');
+      changed = true;
+    }
+    const cloudOrders = parseCatalog(orderCatalog);
+    if (cloudOrders.length > 0) {
+      serverDbMirror.orders = mergeArrayById(serverDbMirror.orders, cloudOrders, 'id');
+      changed = true;
+    }
+    const cloudAuths = parseCatalog(authCatalog);
+    if (cloudAuths.length > 0) {
+      serverDbMirror.authorizedEmails = mergeArrayById(
+        serverDbMirror.authorizedEmails,
+        cloudAuths,
+        'email'
+      );
+      changed = true;
+    }
+
+    if (changed) {
+      saveServerDbMirror();
+      console.log('✅ Bootstrapped server DB mirror from Firestore via Write-Channel PATCH');
+    }
+  } catch (err) {
+    console.warn('Firestore PATCH bootstrap notice:', err);
+  }
+}
+bootstrapServerMirrorFromFirestore();
 
 function upsertById(list: any[], item: any, idField = 'id'): any[] {
   if (!item || !item[idField]) return list;
@@ -174,11 +347,14 @@ async function startServer() {
       const body = req.body || {};
       let changed = false;
 
+      const touchedCatalogs = new Set<string>();
+
       if (body.upsertCollection && body.item) {
         const col = body.upsertCollection as keyof ServerDatabaseMirror;
         if (Array.isArray(serverDbMirror[col])) {
           const idField = col === 'authorizedEmails' ? 'email' : 'id';
           (serverDbMirror[col] as any[]) = upsertById(serverDbMirror[col] as any[], body.item, idField);
+          touchedCatalogs.add(String(col));
           changed = true;
         }
       }
@@ -190,32 +366,39 @@ async function startServer() {
           (serverDbMirror[col] as any[]) = (serverDbMirror[col] as any[]).filter(
             (x) => x && String(x[idField]).toLowerCase() !== String(body.deleteId).toLowerCase() && String(x.id) !== String(body.deleteId)
           );
+          touchedCatalogs.add(String(col));
           changed = true;
         }
       }
 
       if (Array.isArray(body.products) && body.products.length > 0) {
         serverDbMirror.products = mergeArrayById(serverDbMirror.products, body.products, 'id');
+        touchedCatalogs.add('products');
         changed = true;
       }
       if (Array.isArray(body.shops) && body.shops.length > 0) {
         serverDbMirror.shops = mergeArrayById(serverDbMirror.shops, body.shops, 'id');
+        touchedCatalogs.add('shops');
         changed = true;
       }
       if (Array.isArray(body.orders) && body.orders.length > 0) {
         serverDbMirror.orders = mergeArrayById(serverDbMirror.orders, body.orders, 'id');
+        touchedCatalogs.add('orders');
         changed = true;
       }
       if (Array.isArray(body.categories) && body.categories.length > 0) {
         serverDbMirror.categories = mergeArrayById(serverDbMirror.categories, body.categories, 'id');
+        touchedCatalogs.add('categories');
         changed = true;
       }
       if (Array.isArray(body.routes) && body.routes.length > 0) {
         serverDbMirror.routes = mergeArrayById(serverDbMirror.routes, body.routes, 'id');
+        touchedCatalogs.add('routes');
         changed = true;
       }
       if (Array.isArray(body.authorizedEmails) && body.authorizedEmails.length > 0) {
         serverDbMirror.authorizedEmails = mergeArrayById(serverDbMirror.authorizedEmails, body.authorizedEmails, 'email');
+        touchedCatalogs.add('authorizedEmails');
         changed = true;
       }
       if (body.businessInfo && typeof body.businessInfo === 'object') {
@@ -225,6 +408,12 @@ async function startServer() {
 
       if (changed) {
         saveServerDbMirror();
+        touchedCatalogs.forEach((catKey) => {
+          const list = (serverDbMirror as any)[catKey];
+          if (Array.isArray(list)) {
+            writeFirestoreCatalogViaPatch(catKey, list);
+          }
+        });
       }
       res.json({ success: true, updatedAt: serverDbMirror.updatedAt });
     } catch (err: any) {

@@ -628,8 +628,7 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
   return onSnapshot(
     collection(db, path),
     (snapshot) => {
-      // Never wipe local storage with an empty uninitialized cache snapshot!
-      if (snapshot.empty && snapshot.metadata.fromCache) {
+      if (snapshot.empty) {
         return;
       }
       const shops: Shop[] = [];
@@ -642,8 +641,8 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
       });
       if (shops.length > 0) {
         pushBulkDataToServerMirror({ shops });
+        onData(shops);
       }
-      onData(shops);
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, path);
@@ -656,8 +655,7 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
   return onSnapshot(
     collection(db, path),
     (snapshot) => {
-      // Never wipe local storage with an empty uninitialized cache snapshot!
-      if (snapshot.empty && snapshot.metadata.fromCache) {
+      if (snapshot.empty) {
         return;
       }
       const products: Product[] = [];
@@ -670,8 +668,8 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
       });
       if (products.length > 0) {
         pushBulkDataToServerMirror({ products });
+        onData(products);
       }
-      onData(products);
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, path);
@@ -685,8 +683,7 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
   return onSnapshot(
     q,
     (snapshot) => {
-      // Never wipe local storage with an empty uninitialized cache snapshot!
-      if (snapshot.empty && snapshot.metadata.fromCache) {
+      if (snapshot.empty) {
         return;
       }
       const orders: Order[] = [];
@@ -699,8 +696,8 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
       });
       if (orders.length > 0) {
         pushBulkDataToServerMirror({ orders });
+        onData(orders);
       }
-      onData(orders);
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, path);
@@ -794,7 +791,7 @@ export function subscribeToCloudCategories(onData: (categories: Category[]) => v
   return onSnapshot(
     collection(db, path),
     (snapshot) => {
-      if (snapshot.empty && snapshot.metadata.fromCache) {
+      if (snapshot.empty) {
         return;
       }
       const list: Category[] = [];
@@ -807,8 +804,8 @@ export function subscribeToCloudCategories(onData: (categories: Category[]) => v
       });
       if (list.length > 0) {
         pushBulkDataToServerMirror({ categories: list });
+        onData(list);
       }
-      onData(list);
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, path);
@@ -843,7 +840,7 @@ export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
   return onSnapshot(
     collection(db, path),
     (snapshot) => {
-      if (snapshot.empty && snapshot.metadata.fromCache) {
+      if (snapshot.empty) {
         return;
       }
       const list: Route[] = [];
@@ -856,8 +853,8 @@ export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
       });
       if (list.length > 0) {
         pushBulkDataToServerMirror({ routes: list });
+        onData(list);
       }
-      onData(list);
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, path);
@@ -892,7 +889,7 @@ export function subscribeToAuthorizedEmails(onData: (emails: AuthorizedUserEmail
   return onSnapshot(
     collection(db, path),
     (snapshot) => {
-      if (snapshot.empty && snapshot.metadata.fromCache) {
+      if (snapshot.empty) {
         return;
       }
       const list: AuthorizedUserEmail[] = [];
@@ -905,8 +902,8 @@ export function subscribeToAuthorizedEmails(onData: (emails: AuthorizedUserEmail
       });
       if (list.length > 0) {
         pushBulkDataToServerMirror({ authorizedEmails: list });
+        onData(list);
       }
-      onData(list);
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, path);
@@ -918,12 +915,13 @@ export async function saveAuthorizedEmailToCloud(authEmail: AuthorizedUserEmail)
   const emailClean = authEmail.email.toLowerCase().trim();
   const safeDocId = emailClean.replace(/[@.]/g, '_');
   const path = `authorizedEmails/${safeDocId}`;
+  const cleaned = cleanForFirestore({
+    ...authEmail,
+    email: emailClean,
+    id: safeDocId,
+  });
+  syncItemToServerMirror('authorizedEmails', cleaned);
   try {
-    const cleaned = cleanForFirestore({
-      ...authEmail,
-      email: emailClean,
-      id: safeDocId,
-    });
     await setDoc(doc(db, 'authorizedEmails', safeDocId), cleaned);
 
     // Synchronize to /users collection if user document exists for this email
@@ -1014,7 +1012,7 @@ export function subscribeToBusinessInfo(onData: (info: BusinessInfo) => void) {
     (snap) => {
       if (snap.exists()) {
         const data = snap.data() as any;
-        onData({
+        const merged = {
           ...DEFAULT_BUSINESS_INFO,
           ...data,
           storeBanners: Array.isArray(data.storeBanners)
@@ -1026,9 +1024,9 @@ export function subscribeToBusinessInfo(onData: (info: BusinessInfo) => void) {
           coupons: Array.isArray(data.coupons)
             ? data.coupons.filter((c: any) => !demoCoupons.has(c.id))
             : [],
-        } as BusinessInfo);
-      } else {
-        onData(DEFAULT_BUSINESS_INFO);
+        } as BusinessInfo;
+        pushBulkDataToServerMirror({ businessInfo: merged });
+        onData(merged);
       }
     },
     (error) => {

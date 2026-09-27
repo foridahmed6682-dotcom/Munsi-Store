@@ -125,7 +125,7 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
   };
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING' | 'DELIVERED' | 'CANCELLED'>('ALL');
-  const [timeFilter, setTimeFilter] = useState<'TODAY' | 'YESTERDAY' | 'WEEK' | 'CUSTOM' | 'ALL'>('TODAY');
+  const [timeFilter, setTimeFilter] = useState<'TODAY' | 'YESTERDAY' | 'WEEK' | 'CUSTOM' | 'ALL'>('ALL');
   const [customDate, setCustomDate] = useState<string>('');
 
   // Delivery & Payment Settlement Modal State

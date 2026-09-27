@@ -20,12 +20,12 @@ const STORAGE_KEYS = {
 };
 
 export const DEFAULT_BUSINESS_INFO: BusinessInfo = {
-  name: 'Munsi Store & FMCG Distribution',
-  banglaName: 'মুন্সী স্টোর অ্যান্ড ডিস্ট্রিবিউশন',
-  tagline: 'পাইকারি ও খুচরা দ্রুত সাপ্লাই এবং ফিল্ড অর্ডার সল্যুশন',
-  address: 'চকবাজার / স্টেশন রোড, ঢাকা, বাংলাদেশ',
-  hotline: '01768-826682',
-  whatsappNumber: '01768826682',
+  name: 'Munsi enterprise',
+  banglaName: 'মুন্সী এন্টারপ্রাইজ ',
+  tagline: 'ডিস্ট্রিবিউশন ও হোলসেল অর্ডার বুকিং মেমো',
+  address: 'চৌধুরি ম্যানশন,৫ নং ছোট কাটারা চকবাজার ঢাকা,১২১১',
+  hotline: '০১৬৩৬৪১০১৫৭',
+  whatsappNumber: '01636410157',
   email: 'foridahmed6682@gmail.com',
   bkashNumber: '01711000000',
   nagadNumber: '01711000000',
@@ -33,7 +33,7 @@ export const DEFAULT_BUSINESS_INFO: BusinessInfo = {
   deliveryCharge: 0,
   minOrderAmount: 0,
   siteNotice: '🚚 সকল অনলাইন ও রিটেইল অর্ডার ২৪ ঘণ্টার মধ্যে বিশ্বস্ত ডেলিভারি করা হয়!',
-  isNoticeActive: true,
+  isNoticeActive: false,
   memoFooterNotice: 'ধন্যবাদ! বিক্রিত মাল ফেরত নেওয়া হয় না। যেকোনো প্রয়োজনে হটলাইনে যোগাযোগ করুন।',
   paymentSettings: {
     cashOnDelivery: {
@@ -41,13 +41,13 @@ export const DEFAULT_BUSINESS_INFO: BusinessInfo = {
       instructions: 'পণ্য হাতে পেয়ে দেখে বুঝে মূল্য পরিশোধ করুন।',
     },
     bkash: {
-      enabled: true,
+      enabled: false,
       number: '01711000000',
       type: 'Personal',
       instructions: 'বিকাশ অ্যাপ বা *247# ডায়াল করে সেন্ড মানি করুন।',
     },
     nagad: {
-      enabled: true,
+      enabled: false,
       number: '01711000000',
       type: 'Personal',
       instructions: 'নগদ অ্যাপ বা *167# ডায়াল করে সেন্ড মানি করুন।',
@@ -77,12 +77,12 @@ export const DEFAULT_BUSINESS_INFO: BusinessInfo = {
   ],
   coupons: [],
   flashSale: {
-    enabled: false,
+    enabled: true,
     title: 'স্পেশাল অফার',
     subtitle: '',
-    discountPercent: 0,
-    endTime: new Date(Date.now() + 1000 * 60 * 60 * 18).toISOString(),
-    timerEnabled: false,
+    discountPercent: 5,
+    endTime: '2026-09-28T08:15:45.589Z',
+    timerEnabled: true,
   },
 };
 
@@ -119,6 +119,13 @@ export function getBusinessInfo(): BusinessInfo {
     const raw = localStorage.getItem(STORAGE_KEYS.BUSINESS_INFO);
     if (!raw) return DEFAULT_BUSINESS_INFO;
     const parsed = JSON.parse(raw);
+    const isGenericFallback =
+      parsed.name === 'Munsi Store & FMCG Distribution' ||
+      parsed.banglaName === 'মুন্সী স্টোর অ্যান্ড ডিস্ট্রিবিউশন';
+    if (isGenericFallback) {
+      localStorage.setItem(STORAGE_KEYS.BUSINESS_INFO, JSON.stringify(DEFAULT_BUSINESS_INFO));
+      return DEFAULT_BUSINESS_INFO;
+    }
     return {
       ...DEFAULT_BUSINESS_INFO,
       ...parsed,

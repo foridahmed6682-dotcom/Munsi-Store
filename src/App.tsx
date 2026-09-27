@@ -32,7 +32,12 @@ import {
   saveOrders,
   saveCategories,
   saveRoutes,
-  saveAuthorizedEmails
+  saveAuthorizedEmails,
+  getDeletedProductIds,
+  getDeletedShopIds,
+  getDeletedOrderIds,
+  getDeletedCategoryIds,
+  getDeletedRouteIds
 } from './lib/storage';
 import {
   subscribeToCloudShops,
@@ -64,12 +69,7 @@ import {
   resolveRoleByEmailAndUid,
   logout,
   fetchServerDatabaseMirror,
-  pushBulkDataToServerMirror,
-  getDeletedProductIds,
-  getDeletedShopIds,
-  getDeletedOrderIds,
-  getDeletedCategoryIds,
-  getDeletedRouteIds
+  pushBulkDataToServerMirror
 } from './lib/firebase';
 import { getStoredGoogleToken } from './lib/firebaseAuth';
 import {
@@ -209,7 +209,23 @@ export default function App() {
     // Subscribe to Firestore Real-time Collections (if online)
     seedInitialCloudDataIfEmpty();
 
-    // Sync with Server-Side Persistent Mirror so data is never lost across devices or during Firebase daily quota limits
+    // Sync with Server-Side & Firestore Write-Channel Mirror so data is never lost across devices or during Firebase read quota limits
+    const mergeById = <T extends Record<string, any>>(localArr: T[], remoteArr: T[], deletedIds: Set<string>, idKey = 'id'): T[] => {
+      const map = new Map<string, T>();
+      remoteArr.forEach((item) => {
+        const key = item?.[idKey] ? String(item[idKey]) : '';
+        if (key && !deletedIds.has(key)) map.set(key, item);
+      });
+      localArr.forEach((item) => {
+        const key = item?.[idKey] ? String(item[idKey]) : '';
+        if (key && !deletedIds.has(key)) {
+          const prev = map.get(key);
+          map.set(key, prev ? { ...prev, ...item } : item);
+        }
+      });
+      return Array.from(map.values());
+    };
+
     (async () => {
       try {
         const localProds = getProducts();
@@ -218,7 +234,7 @@ export default function App() {
         const localCats = getCategories();
         const localRts = getRoutes();
 
-        if (localProds.length > 0 || localShps.length > 0 || localOrds.length > 0) {
+        if (localProds.length > 0 || localShps.length > 0 || localOrds.length > 0 || localCats.length > 0) {
           await pushBulkDataToServerMirror({
             products: localProds,
             shops: localShps,
@@ -231,33 +247,40 @@ export default function App() {
         const mirror = await fetchServerDatabaseMirror();
         if (mirror) {
           let updatedAny = false;
-          if (Array.isArray(mirror.products) && mirror.products.length > 0 && getProducts().length === 0) {
-            saveProducts(mirror.products);
-            setProducts(mirror.products);
+          if (Array.isArray(mirror.products) && mirror.products.length > 0) {
+            const merged = mergeById(getProducts(), mirror.products, getDeletedProductIds());
+            saveProducts(merged);
+            setProducts(merged);
             updatedAny = true;
           }
-          if (Array.isArray(mirror.shops) && mirror.shops.length > 0 && getShops().length === 0) {
-            saveShops(mirror.shops);
-            setShops(mirror.shops);
+          if (Array.isArray(mirror.shops) && mirror.shops.length > 0) {
+            const merged = mergeById(getShops(), mirror.shops, getDeletedShopIds());
+            saveShops(merged);
+            setShops(merged);
             updatedAny = true;
           }
-          if (Array.isArray(mirror.orders) && mirror.orders.length > 0 && getOrders().length === 0) {
-            saveOrders(mirror.orders);
-            setOrders(mirror.orders);
+          if (Array.isArray(mirror.orders) && mirror.orders.length > 0) {
+            const merged = mergeById(getOrders(), mirror.orders, getDeletedOrderIds());
+            merged.sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
+            saveOrders(merged);
+            setOrders(merged);
             updatedAny = true;
           }
-          if (Array.isArray(mirror.categories) && mirror.categories.length > 0 && getCategories().length === 0) {
-            saveCategories(mirror.categories);
-            setCategories(mirror.categories);
+          if (Array.isArray(mirror.categories) && mirror.categories.length > 0) {
+            const merged = mergeById(getCategories(), mirror.categories, getDeletedCategoryIds());
+            saveCategories(merged);
+            setCategories(merged);
             updatedAny = true;
           }
           if (Array.isArray(mirror.routes) && mirror.routes.length > 0) {
-            saveRoutes(mirror.routes);
-            setRoutes(mirror.routes);
+            const merged = mergeById(getRoutes(), mirror.routes, getDeletedRouteIds());
+            saveRoutes(merged);
+            setRoutes(merged);
           }
           if (mirror.businessInfo && typeof mirror.businessInfo === 'object') {
-            setBusinessInfo((prev) => ({ ...prev, ...mirror.businessInfo }));
-            saveBusinessInfoLocal({ ...getBusinessInfo(), ...mirror.businessInfo });
+            const mergedBiz = { ...getBusinessInfo(), ...mirror.businessInfo };
+            setBusinessInfo(mergedBiz);
+            saveBusinessInfoLocal(mergedBiz);
           }
           if (updatedAny) {
             reloadData();
