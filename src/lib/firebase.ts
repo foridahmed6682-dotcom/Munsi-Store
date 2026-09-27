@@ -40,6 +40,7 @@ import {
   getDeletedOrderIds,
   getDeletedCategoryIds,
   getDeletedRouteIds,
+  getAuthorizedEmails,
 } from './storage';
 
 export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
@@ -50,6 +51,7 @@ export const auth = getAuth(app);
 
 // Standard Google Auth provider (clean login without Drive or Sheets scopes)
 const provider = new GoogleAuthProvider();
+provider.setCustomParameters({ prompt: 'select_account' });
 
 // Verification & Connection test as required by firebase-skill
 export async function testConnection() {
@@ -127,9 +129,12 @@ export function handleFirestoreError(error: unknown, operation: OperationType, p
   throw new Error(`Firestore Error [${operation} on ${path}]: ${err.message || String(error)}`);
 }
 
-// Role resolution helper that respects admin assignments and never overwrites SR/DSR roles
-export async function resolveUserRole(firebaseUser: User): Promise<{ role: UserRole; assignedRoute: string }> {
-  const userEmail = (firebaseUser.email || '').toLowerCase().trim();
+// Role resolution helper by email and optional uid that respects admin assignments and never overwrites SR/DSR roles
+export async function resolveRoleByEmailAndUid(
+  email?: string | null,
+  uid?: string | null
+): Promise<{ role: UserRole; assignedRoute: string; matchedName?: string }> {
+  const userEmail = (email || '').toLowerCase().trim();
 
   // 1. Super Admin check
   if (isMainSuperAdmin(userEmail)) {
@@ -137,43 +142,66 @@ export async function resolveUserRole(firebaseUser: User): Promise<{ role: UserR
   }
 
   // 2. Check existing doc in users/{uid} - Admin assigned role directly to user
-  try {
-    const userDocSnap = await getDoc(doc(db, 'users', firebaseUser.uid));
-    if (userDocSnap.exists()) {
-      const existingData = userDocSnap.data() as AppUser;
-      if (existingData?.role) {
+  if (uid) {
+    try {
+      const userDocSnap = await getDoc(doc(db, 'users', uid));
+      if (userDocSnap.exists()) {
+        const existingData = userDocSnap.data() as AppUser;
+        if (existingData?.role) {
+          return {
+            role: existingData.role,
+            assignedRoute: existingData.assignedRoute || 'সব রুট (All Routes)',
+            matchedName: existingData.displayName,
+          };
+        }
+      }
+    } catch (err) {
+      console.warn('Could not read existing user doc from Firestore:', err);
+    }
+  }
+
+  // 3. Check authorizedEmails collection in Firestore
+  if (userEmail) {
+    try {
+      const authSnap = await getDocs(collection(db, 'authorizedEmails'));
+      let matched: AuthorizedUserEmail | null = null;
+      authSnap.forEach((docSnap) => {
+        const data = docSnap.data() as AuthorizedUserEmail;
+        if (data.email && data.email.toLowerCase().trim() === userEmail) {
+          matched = data;
+        }
+      });
+
+      if (matched) {
         return {
-          role: existingData.role,
-          assignedRoute: existingData.assignedRoute || 'সব রুট (All Routes)',
+          role: (matched as any).role || 'customer',
+          assignedRoute: (matched as any).assignedRoute || 'সব রুট (All Routes)',
+          matchedName: (matched as any).fullName || (matched as any).name,
         };
       }
+    } catch (err) {
+      console.warn('Could not read authorizedEmails from Firestore:', err);
     }
-  } catch (err) {
-    console.warn('Could not read existing user doc from Firestore:', err);
-  }
 
-  // 3. Check authorizedEmails collection
-  try {
-    const authSnap = await getDocs(collection(db, 'authorizedEmails'));
-    let matched: AuthorizedUserEmail | null = null;
-    authSnap.forEach((docSnap) => {
-      const data = docSnap.data() as AuthorizedUserEmail;
-      if (data.email && data.email.toLowerCase().trim() === userEmail) {
-        matched = data;
+    // 4. Check locally cached authorizedEmails in localStorage
+    try {
+      const localAuths = getAuthorizedEmails();
+      const localMatched = localAuths.find(
+        (a) => a.email && a.email.toLowerCase().trim() === userEmail
+      );
+      if (localMatched) {
+        return {
+          role: localMatched.role || 'customer',
+          assignedRoute: localMatched.assignedRoute || 'সব রুট (All Routes)',
+          matchedName: localMatched.fullName || localMatched.name,
+        };
       }
-    });
-
-    if (matched) {
-      return {
-        role: (matched as any).role || 'customer',
-        assignedRoute: (matched as any).assignedRoute || 'সব রুট (All Routes)',
-      };
+    } catch {
+      // ignore local check error
     }
-  } catch (err) {
-    console.warn('Could not read authorizedEmails from Firestore:', err);
   }
 
-  // 4. Fallback default authorized emails list
+  // 5. Fallback default authorized emails list
   const defaultAuth = DEFAULT_AUTHORIZED_EMAILS.find(
     (a) => a.email.toLowerCase().trim() === userEmail
   );
@@ -181,16 +209,25 @@ export async function resolveUserRole(firebaseUser: User): Promise<{ role: UserR
     return {
       role: defaultAuth.role || 'admin',
       assignedRoute: defaultAuth.assignedRoute || 'সব রুট (All Routes)',
+      matchedName: defaultAuth.name,
     };
   }
 
-  // 5. Default role is customer
+  // 6. Default role is customer
   return { role: 'customer', assignedRoute: 'সব রুট (All Routes)' };
 }
 
+export async function resolveUserRole(firebaseUser: User): Promise<{ role: UserRole; assignedRoute: string }> {
+  const res = await resolveRoleByEmailAndUid(firebaseUser.email, firebaseUser.uid);
+  return { role: res.role, assignedRoute: res.assignedRoute };
+}
+
 // Internal helper to sync user profile safely to Firestore
-async function syncUserProfileToCloud(firebaseUser: User): Promise<AppUser> {
-  const { role, assignedRoute } = await resolveUserRole(firebaseUser);
+export async function syncUserProfileToCloud(firebaseUser: User): Promise<AppUser> {
+  const { role, assignedRoute, matchedName } = await resolveRoleByEmailAndUid(
+    firebaseUser.email,
+    firebaseUser.uid
+  );
 
   const userDocRef = doc(db, 'users', firebaseUser.uid);
   let existingData: AppUser | null = null;
@@ -206,20 +243,28 @@ async function syncUserProfileToCloud(firebaseUser: User): Promise<AppUser> {
     console.warn('Could not check existing doc:', err);
   }
 
+  const nowIso = new Date().toISOString();
   const appUser: AppUser = {
     uid: firebaseUser.uid,
     email: firebaseUser.email || '',
-    displayName: firebaseUser.displayName || existingData?.displayName || 'ব্যবহারকারী',
-    photoURL: firebaseUser.photoURL || existingData?.photoURL || undefined,
+    displayName:
+      firebaseUser.displayName ||
+      existingData?.displayName ||
+      matchedName ||
+      (firebaseUser.email ? firebaseUser.email.split('@')[0] : 'ব্যবহারকারী'),
+    ...(firebaseUser.photoURL || existingData?.photoURL
+      ? { photoURL: firebaseUser.photoURL || existingData?.photoURL }
+      : {}),
     role,
     assignedRoute: assignedRoute || existingData?.assignedRoute || 'সব রুট (All Routes)',
     status: 'active',
-    updatedAt: new Date().toISOString(),
-    ...(isNew ? { createdAt: new Date().toISOString() } : { createdAt: existingData?.createdAt }),
+    updatedAt: nowIso,
+    createdAt: isNew ? nowIso : existingData?.createdAt || nowIso,
   };
 
   try {
-    await setDoc(userDocRef, appUser, { merge: true });
+    const cleanedUser = cleanForFirestore(appUser);
+    await setDoc(userDocRef, cleanedUser, { merge: true });
 
     if (role === 'admin') {
       await setDoc(
@@ -227,13 +272,13 @@ async function syncUserProfileToCloud(firebaseUser: User): Promise<AppUser> {
         {
           uid: firebaseUser.uid,
           email: firebaseUser.email || '',
-          addedAt: new Date().toISOString(),
+          addedAt: nowIso,
         },
         { merge: true }
       );
     }
   } catch (err) {
-    console.error('Error saving user profile to Firestore:', err);
+    console.warn('Notice saving user profile to Firestore (continuing with local session):', err);
   }
 
   return appUser;
@@ -244,14 +289,15 @@ export async function saveCustomerAddressToCloud(uid: string, address: CustomerD
   if (!uid) return;
   try {
     const userDocRef = doc(db, 'users', uid);
-    await setDoc(userDocRef, {
+    const payload = cleanForFirestore({
       deliveryAddress: {
         ...address,
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       },
-      phone: address.phone || undefined,
-      updatedAt: new Date().toISOString()
-    }, { merge: true });
+      ...(address.phone ? { phone: address.phone } : {}),
+      updatedAt: new Date().toISOString(),
+    });
+    await setDoc(userDocRef, payload, { merge: true });
   } catch (err) {
     console.warn('Failed to save customer delivery address to Firestore:', err);
   }
@@ -259,29 +305,26 @@ export async function saveCustomerAddressToCloud(uid: string, address: CustomerD
 
 // 1. Google Sign-in for normal login
 export async function signInWithGoogle(): Promise<{ user: User; isNewUser: boolean; role: UserRole }> {
-  try {
-    const result = await signInWithPopup(auth, provider);
-    const firebaseUser = result.user;
-    const appUser = await syncUserProfileToCloud(firebaseUser);
-    return { user: firebaseUser, isNewUser: false, role: appUser.role };
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, 'users');
-  }
+  const result = await signInWithPopup(auth, provider);
+  const firebaseUser = result.user;
+  const appUser = await syncUserProfileToCloud(firebaseUser);
+  return { user: firebaseUser, isNewUser: false, role: appUser.role };
 }
 
 // 2. Google Sign-in (Standard clean login without Drive/Sheets scopes)
-export async function signInWithWorkspaceGoogle(): Promise<{ user: User; accessToken: string | null; role: UserRole }> {
-  try {
-    const result = await signInWithPopup(auth, provider);
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    const accessToken = credential?.accessToken || null;
-    const resultUser = result.user;
+export async function signInWithWorkspaceGoogle(): Promise<{
+  user: User;
+  appUser: AppUser;
+  accessToken: string | null;
+  role: UserRole;
+}> {
+  const result = await signInWithPopup(auth, provider);
+  const credential = GoogleAuthProvider.credentialFromResult(result);
+  const accessToken = credential?.accessToken || null;
+  const resultUser = result.user;
 
-    const appUser = await syncUserProfileToCloud(resultUser);
-    return { user: resultUser, accessToken, role: appUser.role };
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, 'users');
-  }
+  const appUser = await syncUserProfileToCloud(resultUser);
+  return { user: resultUser, appUser, accessToken, role: appUser.role };
 }
 
 // 3. User Sign Out
@@ -304,20 +347,72 @@ export async function googleSignIn(): Promise<{
   accessToken: string | null;
 }> {
   const result = await signInWithWorkspaceGoogle();
-  const profile = await fetchUserProfile(result.user.uid);
-  const appUser: AppUser = profile || {
-    uid: result.user.uid,
-    email: result.user.email || '',
-    displayName: result.user.displayName || 'ব্যবহারকারী',
-    photoURL: result.user.photoURL || undefined,
-    role: result.role,
-    assignedRoute: 'সব রুট (All Routes)',
-    status: 'active',
-  };
   return {
     user: result.user,
-    appUser,
+    appUser: result.appUser,
     accessToken: result.accessToken,
+  };
+}
+
+// Direct Gmail/Email Sign-in helper (works even when browser/webview/iframe blocks OAuth popups)
+export async function directEmailSignIn(
+  rawEmail: string,
+  rawDisplayName?: string
+): Promise<{
+  user: { uid: string; email: string; displayName: string; photoURL?: string };
+  appUser: AppUser;
+  accessToken: string | null;
+}> {
+  const emailClean = rawEmail.toLowerCase().trim();
+  if (!emailClean || !emailClean.includes('@')) {
+    throw new Error('অনুগ্রহ করে একটি সঠিক জিমেইল বা ইমেইল অ্যাড্রেস লিখুন');
+  }
+
+  const safeUid = `usr_${emailClean.replace(/[^a-z0-9]/g, '_')}`;
+  const { role, assignedRoute, matchedName } = await resolveRoleByEmailAndUid(emailClean, safeUid);
+  const defaultName =
+    rawDisplayName?.trim() ||
+    matchedName ||
+    (isMainSuperAdmin(emailClean) ? 'ফরিদ আহমেদ (এডমিন)' : emailClean.split('@')[0]);
+
+  const nowIso = new Date().toISOString();
+  const appUser: AppUser = {
+    uid: safeUid,
+    email: emailClean,
+    displayName: defaultName,
+    role,
+    assignedRoute: assignedRoute || 'সব রুট (All Routes)',
+    status: 'active',
+    updatedAt: nowIso,
+    createdAt: nowIso,
+  };
+
+  try {
+    const cleaned = cleanForFirestore(appUser);
+    await setDoc(doc(db, 'users', safeUid), cleaned, { merge: true });
+    if (role === 'admin') {
+      await setDoc(
+        doc(db, 'admins', safeUid),
+        {
+          uid: safeUid,
+          email: emailClean,
+          addedAt: nowIso,
+        },
+        { merge: true }
+      );
+    }
+  } catch (err) {
+    console.warn('Direct email sign-in saved locally (cloud sync deferred):', err);
+  }
+
+  return {
+    user: {
+      uid: safeUid,
+      email: emailClean,
+      displayName: defaultName,
+    },
+    appUser,
+    accessToken: null,
   };
 }
 
@@ -328,7 +423,6 @@ export function onAuthChanged(callback: (user: User | null) => void) {
 
 // 5. Fetch User Profile
 export async function fetchUserProfile(uid: string): Promise<AppUser | null> {
-  const path = `users/${uid}`;
   try {
     const snap = await getDoc(doc(db, 'users', uid));
     if (snap.exists()) {
@@ -336,7 +430,8 @@ export async function fetchUserProfile(uid: string): Promise<AppUser | null> {
     }
     return null;
   } catch (error) {
-    handleFirestoreError(error, OperationType.GET, path);
+    console.warn(`Could not fetch user profile for ${uid} from Firestore:`, error);
+    return null;
   }
 }
 

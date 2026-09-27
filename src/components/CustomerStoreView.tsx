@@ -60,7 +60,7 @@ import {
   getCustomerDeliveryAddress,
   saveCustomerDeliveryAddress
 } from '../lib/storage';
-import { saveCustomerAddressToCloud, googleSignIn, logout } from '../lib/firebase';
+import { saveCustomerAddressToCloud, googleSignIn, directEmailSignIn, logout } from '../lib/firebase';
 import {
   CustomerProductDetailsView,
   CustomerOfficialMemoModal
@@ -314,6 +314,9 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
   const [accAddress, setAccAddress] = useState(savedAddress?.address || '');
   const [accCity, setAccCity] = useState(savedAddress?.city || deliveryZones[0]?.name || 'গাইবান্ধা সদর');
   const [addressSaveSuccess, setAddressSaveSuccess] = useState('');
+  const [showAccEmailLogin, setShowAccEmailLogin] = useState(false);
+  const [accLoginEmail, setAccLoginEmail] = useState('');
+  const [accLoginLoading, setAccLoginLoading] = useState(false);
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -1502,29 +1505,94 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
                       <span>লগআউট করুন</span>
                     </button>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const res = await googleSignIn();
+                    <div className="flex flex-col sm:flex-row items-end sm:items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={accLoginLoading}
+                        onClick={async () => {
+                          try {
+                            setAccLoginLoading(true);
+                            const res = await googleSignIn();
+                            if (res && onUserLoggedIn) {
+                              onUserLoggedIn({
+                                uid: res.user.uid,
+                                email: res.user.email || '',
+                                displayName: res.user.displayName || res.appUser.displayName || '',
+                                photoURL: res.user.photoURL || '',
+                                role: res.appUser.role,
+                                assignedRoute: res.appUser.assignedRoute,
+                                accessToken: res.accessToken || undefined,
+                              });
+                            }
+                          } catch {
+                            setShowAccEmailLogin(true);
+                          } finally {
+                            setAccLoginLoading(false);
+                          }
+                        }}
+                        className="px-4 py-2.5 rounded-xl bg-[#121212] hover:bg-neutral-800 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                      >
+                        <LogIn className="w-4 h-4" />
+                        <span>{accLoginLoading ? 'লগইন...' : 'Google লগইন'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowAccEmailLogin((p) => !p)}
+                        className="px-3 py-2 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-[11px] font-bold cursor-pointer"
+                      >
+                        জিমেইল দিয়ে লগইন
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {!currentUser?.email && showAccEmailLogin && (
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      if (!accLoginEmail.trim() || !accLoginEmail.includes('@')) return;
+                      try {
+                        setAccLoginLoading(true);
+                        const res = await directEmailSignIn(accLoginEmail.trim(), accName.trim());
                         if (res && onUserLoggedIn) {
                           onUserLoggedIn({
                             uid: res.user.uid,
-                            email: res.user.email || '',
-                            displayName: res.user.displayName || '',
+                            email: res.user.email,
+                            displayName: res.appUser.displayName,
                             photoURL: res.user.photoURL || '',
                             role: res.appUser.role,
                             assignedRoute: res.appUser.assignedRoute,
-                            accessToken: res.accessToken || undefined,
                           });
+                          setShowAccEmailLogin(false);
                         }
-                      }}
-                      className="px-4 py-2.5 rounded-xl bg-[#121212] hover:bg-neutral-800 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <LogIn className="w-4 h-4" />
-                      <span>Google লগইন</span>
-                    </button>
-                  )}
-                </div>
+                      } finally {
+                        setAccLoginLoading(false);
+                      }
+                    }}
+                    className="bg-white rounded-3xl p-5 border border-[#ECECEC] shadow-2xs space-y-3"
+                  >
+                    <h4 className="font-black text-sm text-[#111111]">
+                      জিমেইল অ্যাড্রেস দিয়ে সরাসরি লগইন করুন
+                    </h4>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="email"
+                        required
+                        value={accLoginEmail}
+                        onChange={(e) => setAccLoginEmail(e.target.value)}
+                        placeholder="আপনার জিমেইল লিখুন (যেমন: example@gmail.com)"
+                        className="flex-1 bg-[#F9FAFB] border border-[#ECECEC] rounded-xl px-3.5 py-2.5 text-xs font-medium outline-none focus:border-[#E21E26]"
+                      />
+                      <button
+                        type="submit"
+                        disabled={accLoginLoading}
+                        className="px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-black cursor-pointer disabled:opacity-60"
+                      >
+                        {accLoginLoading ? 'লগইন হচ্ছে...' : 'লগইন সম্পন্ন করুন'}
+                      </button>
+                    </div>
+                  </form>
+                )}
 
                 {/* Delivery Address Form */}
                 <div className="bg-white rounded-3xl p-6 border border-[#ECECEC] shadow-2xs space-y-4">

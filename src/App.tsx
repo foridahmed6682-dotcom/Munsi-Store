@@ -61,6 +61,7 @@ import {
   subscribeToCloudBusinessInfo,
   onAuthChanged,
   fetchUserProfile,
+  resolveRoleByEmailAndUid,
   logout
 } from './lib/firebase';
 import { getStoredGoogleToken } from './lib/firebaseAuth';
@@ -302,18 +303,32 @@ export default function App() {
     const unsubAuth = onAuthChanged(async (firebaseUser) => {
       if (firebaseUser) {
         try {
-          const profile = await fetchUserProfile(firebaseUser.uid);
+          const [profile, roleInfo] = await Promise.all([
+            fetchUserProfile(firebaseUser.uid).catch(() => null),
+            resolveRoleByEmailAndUid(firebaseUser.email, firebaseUser.uid).catch(() => ({
+              role: 'customer' as UserRole,
+              assignedRoute: 'সব রুট (All Routes)',
+              matchedName: undefined,
+            })),
+          ]);
           const emailClean = (firebaseUser.email || '').toLowerCase().trim();
           const isSuper = isMainSuperAdmin(emailClean);
-          const resolvedRole: UserRole = isSuper ? 'admin' : (profile?.role || 'customer');
+          const resolvedRole: UserRole = isSuper
+            ? 'admin'
+            : roleInfo.role || profile?.role || 'customer';
 
           const userObj: UserProfile = {
             uid: firebaseUser.uid,
             email: firebaseUser.email || '',
-            displayName: firebaseUser.displayName || profile?.displayName || 'ব্যবহারকারী',
+            displayName:
+              firebaseUser.displayName ||
+              profile?.displayName ||
+              roleInfo.matchedName ||
+              'ব্যবহারকারী',
             photoURL: firebaseUser.photoURL || profile?.photoURL || '',
             role: resolvedRole,
-            assignedRoute: profile?.assignedRoute || 'সব রুট (All Routes)',
+            assignedRoute:
+              roleInfo.assignedRoute || profile?.assignedRoute || 'সব রুট (All Routes)',
             accessToken: getStoredGoogleToken() || undefined,
           };
 
@@ -322,16 +337,40 @@ export default function App() {
           setActiveSimulatedRole(resolvedRole);
         } catch (err) {
           console.warn('Error syncing auth user on state change:', err);
+          const emailClean = (firebaseUser.email || '').toLowerCase().trim();
+          const fallbackRole: UserRole = isMainSuperAdmin(emailClean) ? 'admin' : 'customer';
+          const fallbackUser: UserProfile = {
+            uid: firebaseUser.uid,
+            email: firebaseUser.email || '',
+            displayName: firebaseUser.displayName || 'ব্যবহারকারী',
+            photoURL: firebaseUser.photoURL || '',
+            role: fallbackRole,
+            assignedRoute: 'সব রুট (All Routes)',
+          };
+          saveUserProfile(fallbackUser);
+          setUserProfileState(fallbackUser);
+          setActiveSimulatedRole(fallbackRole);
         }
       } else {
-        saveUserProfile(null);
-        setUserProfileState(null);
-        setActiveSimulatedRole('customer');
-        setActiveTab((prev) =>
-          prev === 'admin' || prev === 'shops' || prev === 'map' || prev === 'inventory'
-            ? 'order'
-            : prev
-        );
+        // Preserve existing localStorage user session if present (e.g. Direct Gmail Login or iframe partitioned storage)
+        const existingLocalUser = getUserProfile();
+        if (existingLocalUser && existingLocalUser.email) {
+          const emailClean = existingLocalUser.email.toLowerCase().trim();
+          const effectiveRole: UserRole = isMainSuperAdmin(emailClean)
+            ? 'admin'
+            : existingLocalUser.role || 'customer';
+          const syncedUser = { ...existingLocalUser, role: effectiveRole };
+          setUserProfileState(syncedUser);
+          setActiveSimulatedRole(effectiveRole);
+        } else {
+          setUserProfileState(null);
+          setActiveSimulatedRole('customer');
+          setActiveTab((prev) =>
+            prev === 'admin' || prev === 'shops' || prev === 'map' || prev === 'inventory'
+              ? 'order'
+              : prev
+          );
+        }
       }
     });
 

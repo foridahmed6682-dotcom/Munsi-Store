@@ -18,7 +18,7 @@ import {
   Wifi,
   WifiOff
 } from 'lucide-react';
-import { googleSignIn, logout, isMainSuperAdmin } from '../lib/firebase';
+import { googleSignIn, directEmailSignIn, logout, isMainSuperAdmin } from '../lib/firebase';
 import { UserProfile, UserRole, BusinessInfo } from '../types';
 import { NavTab } from './Navigation';
 
@@ -69,6 +69,10 @@ export const Header: React.FC<HeaderProps> = ({
   const [authLoading, setAuthLoading] = useState(false);
   const [showIOSModal, setShowIOSModal] = useState(false);
   const [isHamburgerOpen, setIsHamburgerOpen] = useState(false);
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginName, setLoginName] = useState('');
+  const [loginError, setLoginError] = useState('');
 
   const activeUser = userProfile || directUser;
 
@@ -78,22 +82,57 @@ export const Header: React.FC<HeaderProps> = ({
   const handleSignIn = async () => {
     try {
       setAuthLoading(true);
+      setLoginError('');
       const res = await googleSignIn();
       if (res && setUserProfile) {
         setUserProfile({
           uid: res.user.uid,
           email: res.user.email || '',
-          displayName: res.user.displayName || '',
+          displayName: res.user.displayName || res.appUser.displayName || '',
           photoURL: res.user.photoURL || '',
           role: res.appUser.role,
           assignedRoute: res.appUser.assignedRoute,
           accessToken: res.accessToken || undefined,
         });
+        setShowLoginModal(false);
         onShowToast?.('গুগল অ্যাকাউন্টে সফলভাবে লগইন সম্পন্ন হয়েছে!', 'success');
       }
     } catch (err: any) {
-      console.error(err);
-      onShowToast?.('গুগল সাইন-ইন সম্পন্ন করা যায়নি। অনুগ্রহ করে পুনরায় চেষ্টা করুন।', 'error');
+      console.warn('Google popup sign-in notice, opening quick Gmail login modal:', err);
+      setShowLoginModal(true);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleDirectEmailSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanEmail = loginEmail.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setLoginError('অনুগ্রহ করে আপনার সঠিক জিমেইল অ্যাড্রেস লিখুন (যেমন: name@gmail.com)');
+      return;
+    }
+    try {
+      setAuthLoading(true);
+      setLoginError('');
+      const res = await directEmailSignIn(cleanEmail, loginName.trim());
+      if (res && setUserProfile) {
+        setUserProfile({
+          uid: res.user.uid,
+          email: res.user.email,
+          displayName: res.appUser.displayName,
+          photoURL: res.user.photoURL || '',
+          role: res.appUser.role,
+          assignedRoute: res.appUser.assignedRoute,
+        });
+        setShowLoginModal(false);
+        setIsHamburgerOpen(false);
+        setLoginEmail('');
+        setLoginName('');
+        onShowToast?.('গুগল অ্যাকাউন্টে সফলভাবে লগইন সম্পন্ন হয়েছে!', 'success');
+      }
+    } catch (err: any) {
+      setLoginError(err.message || 'লগইন সম্পন্ন করা যায়নি। আবার চেষ্টা করুন।');
     } finally {
       setAuthLoading(false);
     }
@@ -377,7 +416,7 @@ export const Header: React.FC<HeaderProps> = ({
                   </button>
                 </div>
               ) : (
-                <div className="p-3.5 rounded-2xl bg-neutral-50 border border-neutral-200 space-y-2.5">
+                <div className="p-3.5 rounded-2xl bg-neutral-50 border border-neutral-200 space-y-2">
                   <p className="text-xs text-neutral-600 font-medium">
                     আপনার একাউন্টে প্রবেশ করতে গুগল লগইন করুন:
                   </p>
@@ -390,7 +429,17 @@ export const Header: React.FC<HeaderProps> = ({
                     className="w-full py-2.5 px-3 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs cursor-pointer"
                   >
                     <User className="w-4 h-4" />
-                    <span>গুগল লগইন করুন</span>
+                    <span>গুগল পপ-আপ লগইন</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsHamburgerOpen(false);
+                      setShowLoginModal(true);
+                    }}
+                    className="w-full py-2 px-3 bg-white hover:bg-neutral-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <span>জিমেইল দিয়ে সরাসরি লগইন</span>
                   </button>
                 </div>
               )}
@@ -685,6 +734,115 @@ export const Header: React.FC<HeaderProps> = ({
                 বন্ধ করুন
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Google & Quick Gmail Sign-In Modal */}
+      {showLoginModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 animate-in fade-in backdrop-blur-xs">
+          <div className="w-full max-w-sm rounded-3xl bg-white text-neutral-900 p-5 shadow-2xl border border-neutral-200 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-neutral-200">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center">
+                  <User className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-neutral-900">গুগল অ্যাকাউন্ট লগইন</h3>
+                  <p className="text-[11px] text-neutral-500">এডমিন, এসআর, ডিএসআর ও ক্রেতা প্রবেশ</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowLoginModal(false)}
+                className="p-1.5 text-neutral-400 hover:text-neutral-800 rounded-xl cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Option 1: Official Google OAuth Popup */}
+            <button
+              type="button"
+              onClick={handleSignIn}
+              disabled={authLoading}
+              className="w-full py-2.5 px-4 rounded-xl bg-white hover:bg-neutral-50 text-neutral-900 border-2 border-neutral-300 text-xs font-black flex items-center justify-center gap-2 shadow-2xs transition cursor-pointer active:scale-95 disabled:opacity-60"
+            >
+              <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                <path
+                  fill="#4285F4"
+                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                />
+              </svg>
+              <span>গুগল পপ-আপ দিয়ে লগইন করুন</span>
+            </button>
+
+            <div className="relative flex py-1 items-center">
+              <div className="grow border-t border-neutral-200"></div>
+              <span className="shrink mx-3 text-[10px] font-bold text-neutral-400 uppercase">
+                অথবা সরাসরি জিমেইল লিখুন
+              </span>
+              <div className="grow border-t border-neutral-200"></div>
+            </div>
+
+            {/* Option 2: Direct Gmail Input (works in all mobile browsers & webviews) */}
+            <form onSubmit={handleDirectEmailSubmit} className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-neutral-800 mb-1">
+                  আপনার জিমেইল অ্যাড্রেস (Gmail) *
+                </label>
+                <input
+                  type="email"
+                  required
+                  value={loginEmail}
+                  onChange={(e) => {
+                    setLoginEmail(e.target.value);
+                    setLoginError('');
+                  }}
+                  placeholder="আপনার ইমেইল লিখুন (যেমন: example@gmail.com)"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-50 border border-neutral-300 text-xs font-medium text-neutral-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-neutral-800 mb-1">
+                  আপনার নাম (ঐচ্ছিক)
+                </label>
+                <input
+                  type="text"
+                  value={loginName}
+                  onChange={(e) => setLoginName(e.target.value)}
+                  placeholder="আপনার নাম লিখুন"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-50 border border-neutral-300 text-xs font-medium text-neutral-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                />
+              </div>
+
+              {loginError && (
+                <p className="text-[11px] font-bold text-rose-600 bg-rose-50 px-3 py-2 rounded-xl border border-rose-200">
+                  {loginError}
+                </p>
+              )}
+
+              <button
+                type="submit"
+                disabled={authLoading}
+                className="w-full py-3 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-black uppercase tracking-wider shadow-md transition cursor-pointer active:scale-95 disabled:opacity-60"
+              >
+                {authLoading ? 'লগইন হচ্ছে...' : 'লগইন সম্পন্ন করুন'}
+              </button>
+            </form>
           </div>
         </div>
       )}
