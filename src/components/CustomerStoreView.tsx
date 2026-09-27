@@ -808,34 +808,6 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
               {subTotal > 0 && <span className="text-amber-300">৳{subTotal.toLocaleString('en-IN')}</span>}
             </button>
           </div>
-
-          {/* Desktop & Mobile Quick Navigation Pills */}
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-0.5">
-            {[
-              { id: 'home', label: 'সকল বাজার (হোম)', icon: Home },
-              { id: 'wishlist', label: `উইশলিস্ট (${wishlistIds.length})`, icon: Heart },
-              { id: 'my-orders', label: `অর্ডার ট্র্যাকিং (${myOrders.length})`, icon: ClipboardList },
-              { id: 'account', label: 'প্রোফাইল ও ঠিকানা', icon: User },
-            ].map((tab) => {
-              const Icon = tab.icon;
-              const active = viewMode === tab.id && !selectedProductForDetails;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => navigateToView(tab.id as SodaiViewMode)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-black whitespace-nowrap transition-all border ${
-                    active
-                      ? 'bg-[#E21E26] text-white border-[#E21E26] shadow-xs'
-                      : 'bg-white text-[#6B7280] border-[#ECECEC] hover:text-[#111111]'
-                  }`}
-                >
-                  <Icon className="w-3.5 h-3.5" />
-                  <span>{tab.label}</span>
-                </button>
-              );
-            })}
-          </div>
         </div>
       </div>
 
