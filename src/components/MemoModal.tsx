@@ -96,8 +96,8 @@ export const MemoModal: React.FC<MemoModalProps> = ({
       ),
       `---------------------------------`,
       `*মোট: ৳${order.netTotal}*`,
-      `অগ্রিম: `,
-      `বাঁকী: `,
+      `অগ্রিম: ${order.deliveryStatus === 'DELIVERED' ? `৳${order.paidAmount}` : ''}`,
+      `বাঁকী: ${order.deliveryStatus === 'DELIVERED' ? `৳${order.dueAmount}` : ''}`,
     ].filter(Boolean);
 
     return lines.join('\n');
@@ -197,6 +197,9 @@ export const MemoModal: React.FC<MemoModalProps> = ({
       return;
     }
 
+    const isDelivered = order.deliveryStatus === 'DELIVERED';
+    const nextDue = isDelivered ? Math.max(0, editedNetTotal - (order.paidAmount || 0)) : 0;
+
     const updatedOrder: Order = {
       ...order,
       shopName: editShopName.trim(),
@@ -206,9 +209,8 @@ export const MemoModal: React.FC<MemoModalProps> = ({
       items: editItems,
       subTotal: editedNetTotal,
       netTotal: editedNetTotal,
-      dueAmount: Math.max(0, editedNetTotal - (order.paidAmount || 0)),
-      totalOutstandingAfterOrder:
-        (order.previousDueAtBooking || 0) + Math.max(0, editedNetTotal - (order.paidAmount || 0)),
+      dueAmount: nextDue,
+      totalOutstandingAfterOrder: (order.previousDueAtBooking || 0) + nextDue,
       syncedWithSheets: false,
     };
 
@@ -566,13 +568,17 @@ export const MemoModal: React.FC<MemoModalProps> = ({
                       <td className="border-r border-neutral-400 px-3 py-1.5 bg-neutral-100/80 text-neutral-800 text-left">
                         অগ্রিম
                       </td>
-                      <td className="px-3 py-1.5 text-right font-mono text-sm h-7"></td>
+                      <td className="px-3 py-1.5 text-right font-mono text-sm h-7">
+                        {order.deliveryStatus === 'DELIVERED' ? `৳${order.paidAmount.toLocaleString()}` : ''}
+                      </td>
                     </tr>
                     <tr>
                       <td className="border-r border-neutral-400 px-3 py-1.5 bg-neutral-100/80 text-neutral-800 text-left">
                         বাঁকী
                       </td>
-                      <td className="px-3 py-1.5 text-right font-mono text-sm h-7"></td>
+                      <td className="px-3 py-1.5 text-right font-mono text-sm h-7">
+                        {order.deliveryStatus === 'DELIVERED' ? `৳${order.dueAmount.toLocaleString()}` : ''}
+                      </td>
                     </tr>
                   </tbody>
                 </table>

@@ -223,27 +223,14 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
     onCartCountChange?.(totalCartItemCount);
   }, [totalCartItemCount, onCartCountChange]);
 
-  // Auto-calculated paid & due
-  const paidAmount = useMemo(() => {
-    if (paymentMethod === 'CASH' || paymentMethod === 'BKASH' || paymentMethod === 'NAGAD') {
-      return netTotal;
-    }
-    if (paymentMethod === 'DUE') {
-      return 0;
-    }
-    // PARTIAL
-    const val = Number(paidAmountInput);
-    return isNaN(val) ? 0 : Math.min(val, netTotal);
-  }, [paymentMethod, netTotal, paidAmountInput]);
-
-  const dueAmount = useMemo(() => {
-    return Math.max(0, netTotal - paidAmount);
-  }, [netTotal, paidAmount]);
+  // At order booking time, goods are not delivered yet.
+  // Cash collection and due settlement happen at delivery time (next day).
+  const paidAmount = 0;
+  const dueAmount = 0;
 
   const totalOutstandingAfterOrder = useMemo(() => {
-    const prev = selectedShop ? selectedShop.previousDue : 0;
-    return prev + dueAmount;
-  }, [selectedShop, dueAmount]);
+    return selectedShop ? selectedShop.previousDue : 0;
+  }, [selectedShop]);
 
   // Handlers
   const handleQuantityChange = (productId: string, delta: number) => {
@@ -808,45 +795,11 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                   <span className="text-emerald-800 text-base">৳{netTotal.toLocaleString()}</span>
                 </div>
 
-                {/* Payment Method Selector */}
-                <div className="pt-2 space-y-1.5">
-                  <span className="font-bold text-neutral-700 text-[11px] block">পেমেন্ট ধরন নির্বাচন:</span>
-                  <div className="grid grid-cols-4 gap-1">
-                    {[
-                      { id: 'CASH', label: 'নগদ (Cash)' },
-                      { id: 'DUE', label: 'বাকী (Due)' },
-                      { id: 'PARTIAL', label: 'আংশিক' },
-                      { id: 'BKASH', label: 'বিকাশ' },
-                    ].map((m) => (
-                      <button
-                        key={m.id}
-                        type="button"
-                        onClick={() => setPaymentMethod(m.id as PaymentMethod)}
-                        className={`py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${
-                          paymentMethod === m.id
-                            ? 'bg-neutral-900 text-white border-neutral-900'
-                            : 'bg-neutral-50 text-neutral-700 border-neutral-200 hover:bg-neutral-100'
-                        }`}
-                      >
-                        {m.label}
-                      </button>
-                    ))}
-                  </div>
+                {/* Next-Day Delivery Payment Info Notice */}
+                <div className="p-2.5 bg-amber-50/90 border border-amber-200 rounded-xl text-[11px] text-amber-900 leading-relaxed">
+                  <span className="font-extrabold block text-amber-950">📦 ডেলিভারির সময় পেমেন্ট ও বাকি হিসাব:</span>
+                  <span>পরের দিন দোকানে মাল বুঝিয়ে দেওয়ার সময় <strong>"দৈনিক অর্ডার ও মেমো"</strong> থেকে নগদ টাকা বা বাকি এন্ট্রি করুন।</span>
                 </div>
-
-                {/* Partial Payment Input */}
-                {paymentMethod === 'PARTIAL' && (
-                  <div className="p-2 bg-neutral-50 rounded-xl border border-neutral-200 space-y-1">
-                    <label className="text-[11px] font-bold text-neutral-700">নগদ জমার পরিমাণ (৳):</label>
-                    <input
-                      type="number"
-                      value={paidAmountInput}
-                      onChange={(e) => setPaidAmountInput(e.target.value)}
-                      placeholder="টাকার অংক লিখুন"
-                      className="w-full text-xs p-1.5 border border-neutral-300 rounded-lg bg-white font-bold"
-                    />
-                  </div>
-                )}
 
                 {/* Financial Summary - Mot, Agrim, Baki */}
                 <div className="rounded-xl border border-neutral-300 overflow-hidden bg-white shadow-xs">
@@ -1077,46 +1030,11 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                     </div>
                   </div>
 
-                  {/* Payment Method */}
-                  <div>
-                    <span className="font-bold text-neutral-700 block mb-1.5">পেমেন্ট মেথড:</span>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      {[
-                        { id: 'CASH' as PaymentMethod, label: 'নগদ (Cash)' },
-                        { id: 'DUE' as PaymentMethod, label: 'সম্পূর্ণ বাকী (Due)' },
-                        { id: 'PARTIAL' as PaymentMethod, label: 'আংশিক পেমেন্ট' },
-                        { id: 'BKASH' as PaymentMethod, label: 'বিকাশ / নগদ' },
-                      ].map((m) => (
-                        <button
-                          key={m.id}
-                          type="button"
-                          onClick={() => setPaymentMethod(m.id)}
-                          className={`py-2 px-2.5 rounded-xl font-bold border text-left flex items-center justify-between transition-colors cursor-pointer ${
-                            paymentMethod === m.id
-                              ? 'bg-emerald-50 text-emerald-900 border-emerald-600'
-                              : 'bg-neutral-50 text-neutral-700 border-neutral-200 hover:bg-neutral-100'
-                          }`}
-                        >
-                          <span className="text-[11px]">{m.label}</span>
-                          {paymentMethod === m.id && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />}
-                        </button>
-                      ))}
-                    </div>
+                  {/* Next-Day Delivery Payment Info Notice */}
+                  <div className="p-2.5 bg-amber-50/90 border border-amber-200 rounded-xl text-[11px] text-amber-900 leading-relaxed">
+                    <span className="font-extrabold block text-amber-950">📦 ডেলিভারির সময় পেমেন্ট ও বাকি হিসাব:</span>
+                    <span>পরের দিন দোকানে মাল বুঝিয়ে দেওয়ার সময় <strong>"দৈনিক অর্ডার ও মেমো"</strong> থেকে নগদ টাকা বা বাকি এন্ট্রি করুন।</span>
                   </div>
-
-                  {/* Partial Input */}
-                  {paymentMethod === 'PARTIAL' && (
-                    <div>
-                      <label className="font-bold text-neutral-700 block mb-1">নগদ প্রদান (টাকা):</label>
-                      <input
-                        type="number"
-                        value={paidAmountInput}
-                        onChange={(e) => setPaidAmountInput(e.target.value)}
-                        placeholder="যেমন: ১০০০"
-                        className="w-full p-2 border border-neutral-300 rounded-xl font-bold"
-                      />
-                    </div>
-                  )}
 
                   {/* Calculations - Mot, Agrim, Baki structure */}
                   <div className="rounded-2xl border border-neutral-300 overflow-hidden bg-white shadow-xs">

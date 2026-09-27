@@ -19,9 +19,11 @@ import {
   Download,
   Edit3,
   Trash2,
-  Navigation
+  Navigation,
+  X,
+  Banknote
 } from 'lucide-react';
-import { Order, Shop } from '../types';
+import { Order, Shop, PaymentMethod } from '../types';
 import { getBusinessInfo } from '../lib/firebase';
 
 interface OrdersListViewProps {
@@ -29,6 +31,13 @@ interface OrdersListViewProps {
   shops?: Shop[];
   onViewMemo: (order: Order, editMode?: boolean) => void;
   onUpdateDeliveryStatus: (orderId: string, status: Order['deliveryStatus']) => void;
+  onSettleOrderDelivery?: (
+    orderId: string,
+    paidAmount: number,
+    dueAmount: number,
+    paymentMethod: PaymentMethod,
+    notes?: string
+  ) => void;
   onDeleteOrder?: (orderId: string) => void;
   isAdmin?: boolean;
   onSyncWithSheets: () => void;
@@ -45,6 +54,7 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
   shops = [],
   onViewMemo,
   onUpdateDeliveryStatus,
+  onSettleOrderDelivery,
   onDeleteOrder,
   isAdmin = false,
   onSyncWithSheets,
@@ -90,8 +100,8 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
       ),
       `---------------------------------`,
       `*মোট: ৳${order.netTotal}*`,
-      `অগ্রিম: `,
-      `বাঁকী: `,
+      `অগ্রিম: ${order.deliveryStatus === 'DELIVERED' ? `৳${order.paidAmount}` : ''}`,
+      `বাঁকী: ${order.deliveryStatus === 'DELIVERED' ? `৳${order.dueAmount}` : ''}`,
     ].filter(Boolean);
 
     const text = encodeURIComponent(lines.join('\n'));
@@ -115,16 +125,56 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
   };
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING' | 'DELIVERED' | 'CANCELLED'>('ALL');
-  const [timeFilter, setTimeFilter] = useState<'TODAY' | 'WEEK' | 'CUSTOM' | 'ALL'>('TODAY');
+  const [timeFilter, setTimeFilter] = useState<'TODAY' | 'YESTERDAY' | 'WEEK' | 'CUSTOM' | 'ALL'>('TODAY');
   const [customDate, setCustomDate] = useState<string>('');
 
+  // Delivery & Payment Settlement Modal State
+  const [settlingOrder, setSettlingOrder] = useState<Order | null>(null);
+  const [settleType, setSettleType] = useState<'FULL_CASH' | 'PARTIAL' | 'FULL_DUE'>('FULL_CASH');
+  const [settlePaidInput, setSettlePaidInput] = useState<string>('');
+  const [settleMethod, setSettleMethod] = useState<PaymentMethod>('CASH');
+  const [settleNotes, setSettleNotes] = useState<string>('');
+
+  const openSettleModal = (order: Order) => {
+    setSettlingOrder(order);
+    if (order.deliveryStatus === 'DELIVERED') {
+      if (order.dueAmount === 0) {
+        setSettleType('FULL_CASH');
+        setSettlePaidInput(order.netTotal.toString());
+      } else if (order.paidAmount === 0) {
+        setSettleType('FULL_DUE');
+        setSettlePaidInput('0');
+      } else {
+        setSettleType('PARTIAL');
+        setSettlePaidInput(order.paidAmount.toString());
+      }
+      setSettleMethod(order.paymentMethod === 'DUE' || order.paymentMethod === 'PARTIAL' ? 'CASH' : order.paymentMethod);
+    } else {
+      setSettleType('FULL_CASH');
+      setSettlePaidInput(order.netTotal.toString());
+      setSettleMethod('CASH');
+    }
+    setSettleNotes(order.notes || '');
+  };
+
   const todayStr = new Date().toISOString().split('T')[0];
+  const yesterdayStr = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().split('T')[0];
+  }, []);
+
+  const totalPendingOrdersCount = useMemo(() => {
+    return orders.filter((o) => o.deliveryStatus === 'PENDING').length;
+  }, [orders]);
 
   const filteredOrders = useMemo(() => {
     return orders.filter((order) => {
       // Time filter
       if (timeFilter === 'TODAY') {
         if (!order.orderDate.startsWith(todayStr)) return false;
+      } else if (timeFilter === 'YESTERDAY') {
+        if (!order.orderDate.startsWith(yesterdayStr)) return false;
       } else if (timeFilter === 'WEEK') {
         const orderTime = new Date(order.orderDate).getTime();
         const sevenDaysAgo = Date.now() - 7 * 24 * 3600 * 1000;
@@ -151,7 +201,7 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
 
       return true;
     });
-  }, [orders, timeFilter, statusFilter, searchQuery, todayStr]);
+  }, [orders, timeFilter, statusFilter, searchQuery, todayStr, yesterdayStr, customDate]);
 
   // Financial statistics of currently filtered list
   const metrics = useMemo(() => {
@@ -285,6 +335,47 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
         </div>
       </div>
 
+      {/* Pending Next-Day Delivery Alert Banner */}
+      {totalPendingOrdersCount > 0 && (
+        <div className="bg-amber-50 border border-amber-300 rounded-2xl p-3 sm:p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-xs">
+          <div className="flex items-start sm:items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-xs">
+              <Truck className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="text-xs sm:text-sm font-extrabold text-amber-950">
+                ডেলিভারি ও টাকা আদায়ের জন্য অপেক্ষমান অর্ডার: {totalPendingOrdersCount} টি
+              </h4>
+              <p className="text-[11px] text-amber-800">
+                আগের দিনের কাটা অর্ডারের মাল দোকানে বুঝিয়ে দিয়ে নগদ টাকা বা বাকি এন্ট্রি করতে ডানপাশের <strong>"ডেলিভারি ও পেমেন্ট নিন"</strong> বাটনে ক্লিক করুন।
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setTimeFilter('YESTERDAY');
+                setStatusFilter('PENDING');
+              }}
+              className="px-3 py-2 bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 rounded-xl text-xs font-bold cursor-pointer transition-colors"
+            >
+              গতকালের অর্ডার দেখুন
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setTimeFilter('ALL');
+                setStatusFilter('PENDING');
+              }}
+              className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-extrabold shadow-xs cursor-pointer transition-colors"
+            >
+              সব অপেক্ষমান ({totalPendingOrdersCount}টি)
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Filter and Search Bar */}
       <div className="bg-white rounded-2xl p-3 border border-neutral-200 shadow-xs space-y-2.5">
         <div className="flex flex-col sm:flex-row gap-2">
@@ -303,15 +394,23 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
           <div className="flex flex-wrap items-center gap-1 bg-neutral-100 p-1 rounded-xl shrink-0">
             <button
               onClick={() => setTimeFilter('TODAY')}
-              className={`px-3 py-1 rounded-lg text-xs font-semibold ${
+              className={`px-3 py-1 rounded-lg text-xs font-semibold cursor-pointer ${
                 timeFilter === 'TODAY' ? 'bg-white text-neutral-900 shadow-xs' : 'text-neutral-600'
               }`}
             >
               আজ
             </button>
             <button
+              onClick={() => setTimeFilter('YESTERDAY')}
+              className={`px-3 py-1 rounded-lg text-xs font-semibold cursor-pointer ${
+                timeFilter === 'YESTERDAY' ? 'bg-white text-neutral-900 shadow-xs' : 'text-neutral-600'
+              }`}
+            >
+              গতকাল
+            </button>
+            <button
               onClick={() => setTimeFilter('WEEK')}
-              className={`px-3 py-1 rounded-lg text-xs font-semibold ${
+              className={`px-3 py-1 rounded-lg text-xs font-semibold cursor-pointer ${
                 timeFilter === 'WEEK' ? 'bg-white text-neutral-900 shadow-xs' : 'text-neutral-600'
               }`}
             >
@@ -319,7 +418,7 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
             </button>
             <button
               onClick={() => setTimeFilter('ALL')}
-              className={`px-3 py-1 rounded-lg text-xs font-semibold ${
+              className={`px-3 py-1 rounded-lg text-xs font-semibold cursor-pointer ${
                 timeFilter === 'ALL' ? 'bg-white text-neutral-900 shadow-xs' : 'text-neutral-600'
               }`}
             >
@@ -470,10 +569,16 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                     <p className="text-sm sm:text-base font-extrabold text-neutral-900">
                       ৳{order.netTotal.toLocaleString()}
                     </p>
-                    <p className="text-[11px] text-neutral-500">
-                      নগদ: <span className="text-emerald-700 font-bold">৳{order.paidAmount}</span> | বাকী:{' '}
-                      <span className="text-rose-600 font-bold">৳{order.dueAmount}</span>
-                    </p>
+                    {isDelivered ? (
+                      <p className="text-[11px] text-neutral-500">
+                        নগদ জমা: <span className="text-emerald-700 font-bold">৳{order.paidAmount.toLocaleString()}</span> | বাকী:{' '}
+                        <span className="text-rose-600 font-bold">৳{order.dueAmount.toLocaleString()}</span>
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-amber-700 font-bold">
+                        ⏳ ডেলিভারির সময় টাকা/বাকি হিসাব
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex flex-wrap items-center gap-1.5">
@@ -499,22 +604,20 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                       <span>হোয়াটসঅ্যাপ</span>
                     </button>
 
-                    {/* Delivery status toggle */}
+                    {/* Delivery & Payment Collection Button */}
                     <button
-                      onClick={() =>
-                        onUpdateDeliveryStatus(order.id, isDelivered ? 'PENDING' : 'DELIVERED')
-                      }
-                      className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-colors flex items-center gap-1 cursor-pointer ${
+                      onClick={() => openSettleModal(order)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-extrabold border transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs ${
                         isDelivered
                           ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
                           : isCancelled
                           ? 'bg-neutral-100 text-neutral-500 border-neutral-200'
-                          : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
+                          : 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600'
                       }`}
-                      title="ক্লিক করে ডেলিভারি স্ট্যাটাস পরিবর্তন করুন"
+                      title="মাল ডেলিভারি দিয়ে নগদ টাকা বা বাকি হিসাব এন্ট্রি করুন"
                     >
                       <Truck className="w-3.5 h-3.5" />
-                      <span>{isDelivered ? 'ডেলিভার্ড' : 'অপেক্ষমান'}</span>
+                      <span>{isDelivered ? 'ডেলিভার্ড (হিসাব)' : 'ডেলিভারি ও পেমেন্ট নিন'}</span>
                     </button>
 
                     {/* Edit Memo Button */}
@@ -672,6 +775,248 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
           );
         })}
       </div>
+
+      {/* Next-Day Delivery & Cash / Due Settlement Modal */}
+      {settlingOrder && (() => {
+        const matchedShop = shops.find((s) => s.id === settlingOrder.shopId);
+        const prevOrderDueApplied =
+          settlingOrder.deliveryStatus === 'DELIVERED' ? settlingOrder.dueAmount || 0 : 0;
+        const baseShopDue = Math.max(0, (matchedShop?.previousDue || 0) - prevOrderDueApplied);
+
+        const calculatedPaid =
+          settleType === 'FULL_CASH'
+            ? settlingOrder.netTotal
+            : settleType === 'FULL_DUE'
+            ? 0
+            : Math.min(settlingOrder.netTotal, Math.max(0, Number(settlePaidInput) || 0));
+
+        const calculatedDue = Math.max(0, settlingOrder.netTotal - calculatedPaid);
+        const finalMethod: PaymentMethod =
+          calculatedDue === 0
+            ? settleMethod
+            : calculatedPaid === 0
+            ? 'DUE'
+            : 'PARTIAL';
+
+        return (
+          <div className="fixed inset-0 z-50 bg-neutral-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in">
+            <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl border border-neutral-200 overflow-hidden">
+              {/* Header */}
+              <div className="bg-emerald-900 text-white px-5 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-700 flex items-center justify-center">
+                    <Truck className="w-5 h-5 text-emerald-200" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-sm sm:text-base">
+                      মাল ডেলিভারি ও টাকা/বাকি হিসাব
+                    </h3>
+                    <p className="text-[11px] text-emerald-200">
+                      {settlingOrder.shopName} • মেমো: {settlingOrder.memoNumber}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSettlingOrder(null)}
+                  className="p-1.5 rounded-xl bg-emerald-800 hover:bg-emerald-700 text-emerald-100 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-4 sm:p-5 space-y-4 text-xs">
+                {/* Bill Summary & Quick Edit Link */}
+                <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-3.5 flex items-center justify-between">
+                  <div>
+                    <span className="text-neutral-500 font-medium block">মেমোর মোট বিল:</span>
+                    <span className="text-xl font-black text-neutral-900 font-mono">
+                      ৳{settlingOrder.netTotal.toLocaleString()}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const ord = settlingOrder;
+                      setSettlingOrder(null);
+                      onViewMemo(ord, true);
+                    }}
+                    className="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-950 rounded-xl font-bold flex items-center gap-1 cursor-pointer"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                    <span>মাল কম-বেশি হলে এডিট</span>
+                  </button>
+                </div>
+
+                {/* 3 Payment Settlement Modes */}
+                <div>
+                  <label className="font-extrabold text-neutral-800 block mb-2">
+                    ডোকানদার কীভাবে পেমেন্ট করছেন?
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSettleType('FULL_CASH');
+                        setSettlePaidInput(settlingOrder.netTotal.toString());
+                      }}
+                      className={`p-2.5 rounded-2xl border text-center font-bold transition-all cursor-pointer ${
+                        settleType === 'FULL_CASH'
+                          ? 'bg-emerald-700 text-white border-emerald-700 shadow-sm'
+                          : 'bg-neutral-50 text-neutral-700 border-neutral-200 hover:bg-neutral-100'
+                      }`}
+                    >
+                      <CheckCircle2 className="w-4 h-4 mx-auto mb-1" />
+                      <span className="block text-[11px]">পূর্ণ নগদ</span>
+                      <span className="text-[10px] opacity-80">বাকি নাই</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSettleType('PARTIAL');
+                        if (settlePaidInput === settlingOrder.netTotal.toString() || settlePaidInput === '0') {
+                          setSettlePaidInput('');
+                        }
+                      }}
+                      className={`p-2.5 rounded-2xl border text-center font-bold transition-all cursor-pointer ${
+                        settleType === 'PARTIAL'
+                          ? 'bg-amber-500 text-white border-amber-500 shadow-sm'
+                          : 'bg-neutral-50 text-neutral-700 border-neutral-200 hover:bg-neutral-100'
+                      }`}
+                    >
+                      <Banknote className="w-4 h-4 mx-auto mb-1" />
+                      <span className="block text-[11px]">আংশিক ও বাকি</span>
+                      <span className="text-[10px] opacity-80">কিছু নগদ, কিছু বাকি</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSettleType('FULL_DUE');
+                        setSettlePaidInput('0');
+                      }}
+                      className={`p-2.5 rounded-2xl border text-center font-bold transition-all cursor-pointer ${
+                        settleType === 'FULL_DUE'
+                          ? 'bg-rose-600 text-white border-rose-600 shadow-sm'
+                          : 'bg-neutral-50 text-neutral-700 border-neutral-200 hover:bg-neutral-100'
+                      }`}
+                    >
+                      <Clock className="w-4 h-4 mx-auto mb-1" />
+                      <span className="block text-[11px]">সম্পূর্ণ বাকি</span>
+                      <span className="text-[10px] opacity-80">পুরোটাই খাতায় যোগ</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Partial Cash Input */}
+                {settleType === 'PARTIAL' && (
+                  <div className="bg-amber-50/80 border border-amber-200 rounded-2xl p-3 space-y-1.5">
+                    <label className="font-extrabold text-amber-950 block">
+                      নগদ কত টাকা দিয়েছেন তা লিখুন (৳):
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max={settlingOrder.netTotal}
+                      value={settlePaidInput}
+                      onChange={(e) => setSettlePaidInput(e.target.value)}
+                      placeholder={`যেমন: ${Math.round(settlingOrder.netTotal / 2)}`}
+                      className="w-full p-2.5 rounded-xl border border-amber-300 bg-white font-black text-base text-neutral-900 focus:ring-2 focus:ring-amber-500 focus:outline-hidden"
+                      autoFocus
+                    />
+                  </div>
+                )}
+
+                {/* Payment Channel (Cash / bKash / Nagad) when collecting money */}
+                {calculatedPaid > 0 && (
+                  <div>
+                    <label className="font-bold text-neutral-700 block mb-1.5">জমা নেওয়ার মাধ্যম:</label>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {[
+                        { id: 'CASH' as PaymentMethod, label: 'নগদ ক্যাশ' },
+                        { id: 'BKASH' as PaymentMethod, label: 'বিকাশ' },
+                        { id: 'NAGAD' as PaymentMethod, label: 'নগদ অ্যাপ' },
+                      ].map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => setSettleMethod(m.id)}
+                          className={`py-1.5 rounded-xl font-bold border text-[11px] cursor-pointer ${
+                            settleMethod === m.id
+                              ? 'bg-neutral-900 text-white border-neutral-900'
+                              : 'bg-neutral-50 text-neutral-700 border-neutral-200'
+                          }`}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Live Financial Breakdown Box */}
+                <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3 space-y-1.5 font-bold">
+                  <div className="flex justify-between text-emerald-800">
+                    <span>আজকে নগদ আদায়:</span>
+                    <span className="font-mono text-sm">৳{calculatedPaid.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between text-rose-600">
+                    <span>এই মেমোর বাকি (দোকানের খাতায় যোগ হবে):</span>
+                    <span className="font-mono text-sm">৳{calculatedDue.toLocaleString()}</span>
+                  </div>
+                  {matchedShop && (
+                    <div className="pt-1.5 border-t border-neutral-200 flex justify-between text-neutral-700 text-[11px]">
+                      <span>ডেলিভারির পর দোকানের মোট বকেয়া দাঁড়াবে:</span>
+                      <span className="font-mono font-black text-neutral-900">
+                        ৳{(baseShopDue + calculatedDue).toLocaleString()}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Action Buttons */}
+                <div className="space-y-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onSettleOrderDelivery) {
+                        onSettleOrderDelivery(
+                          settlingOrder.id,
+                          calculatedPaid,
+                          calculatedDue,
+                          finalMethod,
+                          settleNotes
+                        );
+                      } else {
+                        onUpdateDeliveryStatus(settlingOrder.id, 'DELIVERED');
+                      }
+                      setSettlingOrder(null);
+                    }}
+                    className="w-full py-3 bg-emerald-700 hover:bg-emerald-600 text-white rounded-2xl font-black text-sm shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>ডেলিভারি ও হিসাব কনফার্ম করুন</span>
+                  </button>
+
+                  {settlingOrder.deliveryStatus === 'DELIVERED' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onUpdateDeliveryStatus(settlingOrder.id, 'PENDING');
+                        setSettlingOrder(null);
+                      }}
+                      className="w-full py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 rounded-xl font-bold text-xs cursor-pointer"
+                    >
+                      অপেক্ষমান (Pending) স্ট্যাটাসে ফিরিয়ে নিন
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

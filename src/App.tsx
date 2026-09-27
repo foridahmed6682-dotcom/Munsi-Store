@@ -436,13 +436,14 @@ export default function App() {
         }
       }
 
-      // 3. Update shop's debt in local storage & Firestore (if a regular shop order)
+      // 3. Update shop's last visit date at booking time (Due is only added upon delivery!)
       if (newOrder.shopId && newOrder.shopId !== 'shop-direct-customer') {
         const shopToUpdate = shops.find((s) => s.id === newOrder.shopId);
         if (shopToUpdate) {
+          const addedDueNow = newOrder.deliveryStatus === 'DELIVERED' ? (newOrder.dueAmount || 0) : 0;
           const updatedShop: Shop = {
             ...shopToUpdate,
-            previousDue: newOrder.totalOutstandingAfterOrder,
+            previousDue: Math.max(0, (shopToUpdate.previousDue || 0) + addedDueNow),
             lastVisitDate: new Date().toISOString().split('T')[0],
           };
           saveShop(updatedShop);
@@ -792,13 +793,99 @@ export default function App() {
     showToast('স্টক সফলভাবে আপডেট করা হয়েছে', 'success');
   };
 
+  // Next-Day Delivery & Cash/Due Settlement Handler
+  const handleSettleOrderDelivery = (
+    orderId: string,
+    paidAmount: number,
+    dueAmount: number,
+    paymentMethod: PaymentMethod,
+    notes?: string
+  ) => {
+    const ord = orders.find((o) => o.id === orderId);
+    if (!ord) return;
+
+    const prevOrderDueApplied = ord.deliveryStatus === 'DELIVERED' ? ord.dueAmount || 0 : 0;
+    const dueDelta = dueAmount - prevOrderDueApplied;
+
+    let updatedShopDue = ord.totalOutstandingAfterOrder || 0;
+    if (ord.shopId && ord.shopId !== 'shop-direct-customer') {
+      const targetShop = shops.find((s) => s.id === ord.shopId);
+      if (targetShop) {
+        updatedShopDue = Math.max(0, (targetShop.previousDue || 0) + dueDelta);
+        const updatedShop: Shop = {
+          ...targetShop,
+          previousDue: updatedShopDue,
+          lastVisitDate: new Date().toISOString().split('T')[0],
+        };
+        saveShop(updatedShop);
+        saveShopToCloud(updatedShop).catch(() => {});
+      }
+    }
+
+    const updatedOrder: Order = {
+      ...ord,
+      deliveryStatus: 'DELIVERED',
+      paidAmount,
+      dueAmount,
+      paymentMethod,
+      totalOutstandingAfterOrder: updatedShopDue,
+      notes: notes !== undefined ? notes : ord.notes,
+      syncedWithSheets: false,
+    };
+
+    saveOrder(updatedOrder);
+    saveOrderToCloud(updatedOrder).catch(() => {});
+    if (selectedMemoOrder?.id === orderId) {
+      setSelectedMemoOrder(updatedOrder);
+    }
+    reloadData();
+
+    if (dueAmount > 0) {
+      showToast(
+        `ডেলিভারি সম্পন্ন! নগদ জমা: ৳${paidAmount.toLocaleString()} এবং বাকি ৳${dueAmount.toLocaleString()} দোকানের খাতায় যোগ হয়েছে।`,
+        'success'
+      );
+    } else {
+      showToast(
+        `ডেলিভারি সম্পন্ন! সম্পূর্ণ বিল ৳${paidAmount.toLocaleString()} নগদ আদায় হয়েছে।`,
+        'success'
+      );
+    }
+  };
+
   // Delivery status update
   const handleUpdateDeliveryStatus = (orderId: string, status: Order['deliveryStatus']) => {
-    updateOrderStatus(orderId, status);
     const ord = orders.find((o) => o.id === orderId);
-    if (ord) {
+    if (!ord) return;
+
+    // If reverting from DELIVERED to PENDING/CANCELLED, remove any due that was added to shop
+    if (ord.deliveryStatus === 'DELIVERED' && status !== 'DELIVERED') {
+      const prevDueFromOrder = ord.dueAmount || 0;
+      if (prevDueFromOrder > 0 && ord.shopId && ord.shopId !== 'shop-direct-customer') {
+        const targetShop = shops.find((s) => s.id === ord.shopId);
+        if (targetShop) {
+          const updatedShop: Shop = {
+            ...targetShop,
+            previousDue: Math.max(0, (targetShop.previousDue || 0) - prevDueFromOrder),
+          };
+          saveShop(updatedShop);
+          saveShopToCloud(updatedShop).catch(() => {});
+        }
+      }
+      const resetOrder: Order = {
+        ...ord,
+        deliveryStatus: status,
+        paidAmount: 0,
+        dueAmount: 0,
+        syncedWithSheets: false,
+      };
+      saveOrder(resetOrder);
+      saveOrderToCloud(resetOrder).catch(() => {});
+    } else {
+      updateOrderStatus(orderId, status);
       saveOrderToCloud({ ...ord, deliveryStatus: status }).catch(() => {});
     }
+
     reloadData();
     showToast(
       status === 'DELIVERED'
@@ -810,6 +897,29 @@ export default function App() {
 
   // Update Order / Memo Edit Handler
   const handleUpdateOrder = (updatedOrder: Order) => {
+    const oldOrder = orders.find((o) => o.id === updatedOrder.id);
+    if (
+      oldOrder &&
+      updatedOrder.deliveryStatus === 'DELIVERED' &&
+      updatedOrder.shopId &&
+      updatedOrder.shopId !== 'shop-direct-customer'
+    ) {
+      const oldDue = oldOrder.deliveryStatus === 'DELIVERED' ? oldOrder.dueAmount || 0 : 0;
+      const newDue = updatedOrder.dueAmount || 0;
+      const dueDiff = newDue - oldDue;
+      if (dueDiff !== 0) {
+        const targetShop = shops.find((s) => s.id === updatedOrder.shopId);
+        if (targetShop) {
+          const updatedShop: Shop = {
+            ...targetShop,
+            previousDue: Math.max(0, (targetShop.previousDue || 0) + dueDiff),
+          };
+          saveShop(updatedShop);
+          saveShopToCloud(updatedShop).catch(() => {});
+        }
+      }
+    }
+
     saveOrder(updatedOrder);
     saveOrderToCloud(updatedOrder).catch(() => {});
     setOrders((prev) => prev.map((o) => (o.id === updatedOrder.id ? updatedOrder : o)));
@@ -821,6 +931,23 @@ export default function App() {
   // Delete Order Handler (Admin)
   const handleDeleteOrder = (orderId: string) => {
     const target = orders.find((o) => o.id === orderId);
+    if (
+      target &&
+      target.deliveryStatus === 'DELIVERED' &&
+      (target.dueAmount || 0) > 0 &&
+      target.shopId &&
+      target.shopId !== 'shop-direct-customer'
+    ) {
+      const targetShop = shops.find((s) => s.id === target.shopId);
+      if (targetShop) {
+        const updatedShop: Shop = {
+          ...targetShop,
+          previousDue: Math.max(0, (targetShop.previousDue || 0) - (target.dueAmount || 0)),
+        };
+        saveShop(updatedShop);
+        saveShopToCloud(updatedShop).catch(() => {});
+      }
+    }
     deleteOrder(orderId);
     deleteOrderFromCloud(orderId).catch(() => {});
     setOrders((prev) => prev.filter((o) => o.id !== orderId));
@@ -1160,6 +1287,7 @@ export default function App() {
                   setIsMemoOpen(true);
                 }}
                 onUpdateDeliveryStatus={handleUpdateDeliveryStatus}
+                onSettleOrderDelivery={handleSettleOrderDelivery}
                 onDeleteOrder={handleDeleteOrder}
                 isAdmin={activeSimulatedRole === 'admin'}
                 onSyncWithSheets={handleSyncWithSheets}
