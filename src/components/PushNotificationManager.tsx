@@ -110,18 +110,14 @@ export const PushNotificationManager: React.FC<PushNotificationManagerProps> = (
       ? 'ডিএসআর (DSR)'
       : 'কাস্টমার';
 
-  // Refresh status & subscriber count
-  const refreshStatus = async () => {
+  // Refresh status & subscriber count (uses lightweight server API on startup to save daily Firestore read quota)
+  const refreshStatus = async (includeFirestoreScan = false) => {
     const s = await getPushStatus();
     setStatus(s);
     onSubscriptionChange?.(s.subscribed);
 
     try {
-      const [{ totalCount }, apiRes] = await Promise.all([
-        fetchAllFirestorePushSubscriptions(),
-        fetch('/api/push/subscribers-count').catch(() => null),
-      ]);
-
+      const apiRes = await fetch('/api/push/subscribers-count').catch(() => null);
       let serverCount = 0;
       if (apiRes && apiRes.ok) {
         const contentType = apiRes.headers.get('content-type');
@@ -130,6 +126,13 @@ export const PushNotificationManager: React.FC<PushNotificationManagerProps> = (
           serverCount = data.count ?? 0;
         }
       }
+
+      let totalCount = 0;
+      if (includeFirestoreScan) {
+        const fbRes = await fetchAllFirestorePushSubscriptions().catch(() => ({ totalCount: 0 }));
+        totalCount = fbRes.totalCount || 0;
+      }
+
       setSubscribersCount(Math.max(totalCount, serverCount, s.subscribed ? 1 : 0));
     } catch {
       setSubscribersCount(s.subscribed ? 1 : 0);
@@ -137,7 +140,7 @@ export const PushNotificationManager: React.FC<PushNotificationManagerProps> = (
   };
 
   useEffect(() => {
-    refreshStatus();
+    refreshStatus(false);
   }, []);
 
   // Sync subscription state upward whenever status.subscribed changes

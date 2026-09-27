@@ -9,6 +9,9 @@ import {
 } from 'firebase/auth';
 import {
   getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   doc,
   getDoc,
   setDoc,
@@ -46,16 +49,93 @@ import {
 export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
 /* CRITICAL: The app will break without this line */
-export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
+function initFirestoreWithCache() {
+  const dbId = (firebaseConfig as any).firestoreDatabaseId;
+  try {
+    return initializeFirestore(
+      app,
+      {
+        localCache: persistentLocalCache({
+          tabManager: persistentMultipleTabManager(),
+        }),
+      },
+      dbId
+    );
+  } catch {
+    return getFirestore(app, dbId);
+  }
+}
+export const db = initFirestoreWithCache();
 export const auth = getAuth(app);
+
+// Server Mirror Helpers (Protects data across devices even when Firebase Free Daily Read Quota is reached)
+export async function syncItemToServerMirror(upsertCollection: string, item: any) {
+  try {
+    await fetch('/api/db/mirror', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ upsertCollection, item }),
+    });
+  } catch {
+    // ignore mirror error
+  }
+}
+
+export async function deleteItemFromServerMirror(deleteCollection: string, deleteId: string) {
+  try {
+    await fetch('/api/db/mirror', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deleteCollection, deleteId }),
+    });
+  } catch {
+    // ignore mirror error
+  }
+}
+
+export async function pushBulkDataToServerMirror(payload: {
+  products?: Product[];
+  shops?: Shop[];
+  orders?: Order[];
+  categories?: Category[];
+  routes?: Route[];
+  authorizedEmails?: AuthorizedUserEmail[];
+  businessInfo?: BusinessInfo;
+}) {
+  try {
+    await fetch('/api/db/mirror', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    // ignore mirror error
+  }
+}
+
+export async function fetchServerDatabaseMirror(): Promise<any | null> {
+  try {
+    const res = await fetch('/api/db/mirror');
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
 
 // Standard Google Auth provider (clean login without Drive or Sheets scopes)
 const provider = new GoogleAuthProvider();
 provider.setCustomParameters({ prompt: 'select_account' });
 
-// Verification & Connection test as required by firebase-skill
+// Verification & Connection test as required by firebase-skill (runs once per session to save daily quota)
 export async function testConnection() {
+  if (typeof window !== 'undefined' && sessionStorage.getItem('munsi_fb_conn_checked') === 'true') {
+    return;
+  }
   try {
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('munsi_fb_conn_checked', 'true');
+    }
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
@@ -108,12 +188,23 @@ export interface FirestoreErrorInfo {
   };
 }
 
-export function handleFirestoreError(error: unknown, operation: OperationType, path: string | null): never {
+export function handleFirestoreError(error: unknown, operation: OperationType, path: string | null): void {
   const err = error as { code?: string; message?: string };
-  const currentUser = auth.currentUser;
+  const msg = err?.message || String(error);
 
+  if (
+    err?.code === 'resource-exhausted' ||
+    msg.includes('Quota limit exceeded') ||
+    msg.includes('Quota exceeded') ||
+    msg.includes('offline')
+  ) {
+    console.warn(`Firestore [${operation} on ${path}] using Local & Server Mirror fallback (Daily Free Quota / Offline):`, msg);
+    return;
+  }
+
+  const currentUser = auth.currentUser;
   const errorInfo: FirestoreErrorInfo = {
-    error: err.message || String(error),
+    error: msg,
     operation,
     path,
     authInfo: {
@@ -125,8 +216,7 @@ export function handleFirestoreError(error: unknown, operation: OperationType, p
     },
   };
 
-  console.error('Firestore Error Context:', JSON.stringify(errorInfo, null, 2));
-  throw new Error(`Firestore Error [${operation} on ${path}]: ${err.message || String(error)}`);
+  console.warn('Firestore Notice Context:', JSON.stringify(errorInfo, null, 2));
 }
 
 // Role resolution helper by email and optional uid that respects admin assignments and never overwrites SR/DSR roles
@@ -463,6 +553,7 @@ export async function fetchAllUsers(): Promise<AppUser[]> {
     return users;
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
+    return [];
   }
 }
 
@@ -537,6 +628,10 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
   return onSnapshot(
     collection(db, path),
     (snapshot) => {
+      // Never wipe local storage with an empty uninitialized cache snapshot!
+      if (snapshot.empty && snapshot.metadata.fromCache) {
+        return;
+      }
       const shops: Shop[] = [];
       const deletedIds = getDeletedShopIds();
       snapshot.forEach((d) => {
@@ -545,6 +640,9 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
           shops.push(s);
         }
       });
+      if (shops.length > 0) {
+        pushBulkDataToServerMirror({ shops });
+      }
       onData(shops);
     },
     (error) => {
@@ -558,6 +656,10 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
   return onSnapshot(
     collection(db, path),
     (snapshot) => {
+      // Never wipe local storage with an empty uninitialized cache snapshot!
+      if (snapshot.empty && snapshot.metadata.fromCache) {
+        return;
+      }
       const products: Product[] = [];
       const deletedIds = getDeletedProductIds();
       snapshot.forEach((d) => {
@@ -566,6 +668,9 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
           products.push(p);
         }
       });
+      if (products.length > 0) {
+        pushBulkDataToServerMirror({ products });
+      }
       onData(products);
     },
     (error) => {
@@ -580,6 +685,10 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
   return onSnapshot(
     q,
     (snapshot) => {
+      // Never wipe local storage with an empty uninitialized cache snapshot!
+      if (snapshot.empty && snapshot.metadata.fromCache) {
+        return;
+      }
       const orders: Order[] = [];
       const deletedIds = getDeletedOrderIds();
       snapshot.forEach((d) => {
@@ -588,6 +697,9 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
           orders.push(o);
         }
       });
+      if (orders.length > 0) {
+        pushBulkDataToServerMirror({ orders });
+      }
       onData(orders);
     },
     (error) => {
@@ -599,8 +711,9 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
 // Cloud Mutation Operations
 export async function saveShopToCloud(shop: Shop) {
   const path = `shops/${shop.id}`;
+  const cleaned = cleanForFirestore(shop);
+  syncItemToServerMirror('shops', cleaned);
   try {
-    const cleaned = cleanForFirestore(shop);
     await setDoc(doc(db, 'shops', shop.id), cleaned);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
@@ -609,6 +722,7 @@ export async function saveShopToCloud(shop: Shop) {
 
 export async function deleteShopFromCloud(shopId: string) {
   const path = `shops/${shopId}`;
+  deleteItemFromServerMirror('shops', shopId);
   try {
     await deleteDoc(doc(db, 'shops', shopId));
   } catch (error) {
@@ -618,14 +732,15 @@ export async function deleteShopFromCloud(shopId: string) {
 
 export async function saveProductToCloud(product: Product) {
   const path = `products/${product.id}`;
+  const safeImageUrl = product.imageUrl
+    ? await compressDataUrlIfNeeded(product.imageUrl)
+    : '';
+  const cleaned = cleanForFirestore({
+    ...product,
+    imageUrl: safeImageUrl,
+  });
+  syncItemToServerMirror('products', cleaned);
   try {
-    const safeImageUrl = product.imageUrl
-      ? await compressDataUrlIfNeeded(product.imageUrl)
-      : '';
-    const cleaned = cleanForFirestore({
-      ...product,
-      imageUrl: safeImageUrl,
-    });
     await setDoc(doc(db, 'products', product.id), cleaned);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
@@ -634,6 +749,7 @@ export async function saveProductToCloud(product: Product) {
 
 export async function deleteProductFromCloud(productId: string) {
   const path = `products/${productId}`;
+  deleteItemFromServerMirror('products', productId);
   try {
     await deleteDoc(doc(db, 'products', productId));
   } catch (error) {
@@ -643,8 +759,9 @@ export async function deleteProductFromCloud(productId: string) {
 
 export async function saveOrderToCloud(order: Order) {
   const path = `orders/${order.id}`;
+  const cleaned = cleanForFirestore(order);
+  syncItemToServerMirror('orders', cleaned);
   try {
-    const cleaned = cleanForFirestore(order);
     await setDoc(doc(db, 'orders', order.id), cleaned);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
@@ -653,6 +770,7 @@ export async function saveOrderToCloud(order: Order) {
 
 export async function deleteOrderFromCloud(orderId: string) {
   const path = `orders/${orderId}`;
+  deleteItemFromServerMirror('orders', orderId);
   try {
     await deleteDoc(doc(db, 'orders', orderId));
   } catch (error) {
@@ -676,6 +794,9 @@ export function subscribeToCloudCategories(onData: (categories: Category[]) => v
   return onSnapshot(
     collection(db, path),
     (snapshot) => {
+      if (snapshot.empty && snapshot.metadata.fromCache) {
+        return;
+      }
       const list: Category[] = [];
       const deletedIds = getDeletedCategoryIds();
       snapshot.forEach((d) => {
@@ -684,6 +805,9 @@ export function subscribeToCloudCategories(onData: (categories: Category[]) => v
           list.push(c);
         }
       });
+      if (list.length > 0) {
+        pushBulkDataToServerMirror({ categories: list });
+      }
       onData(list);
     },
     (error) => {
@@ -694,8 +818,9 @@ export function subscribeToCloudCategories(onData: (categories: Category[]) => v
 
 export async function saveCategoryToCloud(category: Category) {
   const path = `categories/${category.id}`;
+  const cleaned = cleanForFirestore(category);
+  syncItemToServerMirror('categories', cleaned);
   try {
-    const cleaned = cleanForFirestore(category);
     await setDoc(doc(db, 'categories', category.id), cleaned);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
@@ -704,6 +829,7 @@ export async function saveCategoryToCloud(category: Category) {
 
 export async function deleteCategoryFromCloud(categoryId: string) {
   const path = `categories/${categoryId}`;
+  deleteItemFromServerMirror('categories', categoryId);
   try {
     await deleteDoc(doc(db, 'categories', categoryId));
   } catch (error) {
@@ -717,6 +843,9 @@ export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
   return onSnapshot(
     collection(db, path),
     (snapshot) => {
+      if (snapshot.empty && snapshot.metadata.fromCache) {
+        return;
+      }
       const list: Route[] = [];
       const deletedIds = getDeletedRouteIds();
       snapshot.forEach((d) => {
@@ -725,6 +854,9 @@ export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
           list.push(r);
         }
       });
+      if (list.length > 0) {
+        pushBulkDataToServerMirror({ routes: list });
+      }
       onData(list);
     },
     (error) => {
@@ -735,8 +867,9 @@ export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
 
 export async function saveRouteToCloud(route: Route) {
   const path = `routes/${route.id}`;
+  const cleaned = cleanForFirestore(route);
+  syncItemToServerMirror('routes', cleaned);
   try {
-    const cleaned = cleanForFirestore(route);
     await setDoc(doc(db, 'routes', route.id), cleaned);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
@@ -745,6 +878,7 @@ export async function saveRouteToCloud(route: Route) {
 
 export async function deleteRouteFromCloud(routeId: string) {
   const path = `routes/${routeId}`;
+  deleteItemFromServerMirror('routes', routeId);
   try {
     await deleteDoc(doc(db, 'routes', routeId));
   } catch (error) {
@@ -758,6 +892,9 @@ export function subscribeToAuthorizedEmails(onData: (emails: AuthorizedUserEmail
   return onSnapshot(
     collection(db, path),
     (snapshot) => {
+      if (snapshot.empty && snapshot.metadata.fromCache) {
+        return;
+      }
       const list: AuthorizedUserEmail[] = [];
       const mockEmails = new Set(['sr.karim@munsistore.com', 'dsr.habib@munsistore.com']);
       snapshot.forEach((d) => {
@@ -766,6 +903,9 @@ export function subscribeToAuthorizedEmails(onData: (emails: AuthorizedUserEmail
           list.push(item);
         }
       });
+      if (list.length > 0) {
+        pushBulkDataToServerMirror({ authorizedEmails: list });
+      }
       onData(list);
     },
     (error) => {
@@ -901,41 +1041,24 @@ export const subscribeToCloudBusinessInfo = subscribeToBusinessInfo;
 
 export async function saveBusinessInfoToCloud(info: BusinessInfo) {
   const path = 'settings/businessInfo';
+  const cleaned = cleanForFirestore(info);
+  pushBulkDataToServerMirror({ businessInfo: cleaned });
   try {
-    const cleaned = cleanForFirestore(info);
     await setDoc(doc(db, 'settings', 'businessInfo'), cleaned);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
 
-// Automatic bootstrap function - ensures main admin email and purges any old demo data
+// Automatic bootstrap function - runs once per browser to avoid wasting daily Firestore reads
 export async function seedInitialCloudDataIfEmpty() {
+  if (typeof window !== 'undefined' && localStorage.getItem('dsr_cloud_init_v3') === 'true') {
+    return;
+  }
   try {
-    // Ensure main admin email is registered
-    const authSnap = await getDocs(collection(db, 'authorizedEmails'));
-    if (authSnap.empty) {
-      for (const authItem of DEFAULT_AUTHORIZED_EMAILS) {
-        const safeDocId = authItem.email.toLowerCase().replace(/[@.]/g, '_');
-        await setDoc(doc(db, 'authorizedEmails', safeDocId), {
-          ...authItem,
-          id: safeDocId,
-        });
-      }
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('dsr_cloud_init_v3', 'true');
     }
-
-    // Ensure default routes exist in Firestore if routes collection is empty
-    const routesSnap = await getDocs(collection(db, 'routes'));
-    if (routesSnap.empty) {
-      const deletedRouteIds = getDeletedRouteIds();
-      for (const r of DEFAULT_ROUTES) {
-        if (!deletedRouteIds.has(r.id)) {
-          await setDoc(doc(db, 'routes', r.id), r).catch(() => {});
-        }
-      }
-    }
-
-    // Automatically purge legacy demo data from Firestore if present
     const initSnap = await getDoc(doc(db, 'settings', 'system_init'));
     if (!initSnap.exists() || !initSnap.data()?.demoPurgedV2) {
       await clearAllCloudMockData();

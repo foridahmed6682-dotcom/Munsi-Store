@@ -38,6 +38,75 @@ interface PushSubRecord {
 const SUBS_FILE = path.join(process.cwd(), '.push_subscriptions.json');
 let pushSubscriptions: Map<string, PushSubRecord> = new Map();
 
+// Server-side Persistent Database Mirror (Protects against Firebase Free Tier Daily Quota exhaustion)
+const DB_MIRROR_FILE = path.join(process.cwd(), '.server_database_mirror.json');
+interface ServerDatabaseMirror {
+  products: any[];
+  shops: any[];
+  orders: any[];
+  categories: any[];
+  routes: any[];
+  authorizedEmails: any[];
+  businessInfo: any | null;
+  updatedAt: string;
+}
+
+let serverDbMirror: ServerDatabaseMirror = {
+  products: [],
+  shops: [],
+  orders: [],
+  categories: [],
+  routes: [],
+  authorizedEmails: [],
+  businessInfo: null,
+  updatedAt: new Date().toISOString(),
+};
+
+try {
+  if (fs.existsSync(DB_MIRROR_FILE)) {
+    const raw = fs.readFileSync(DB_MIRROR_FILE, 'utf-8');
+    const parsed = JSON.parse(raw);
+    serverDbMirror = { ...serverDbMirror, ...parsed };
+  }
+} catch (err) {
+  console.warn('Could not read server DB mirror file:', err);
+}
+
+function saveServerDbMirror() {
+  try {
+    serverDbMirror.updatedAt = new Date().toISOString();
+    fs.writeFileSync(DB_MIRROR_FILE, JSON.stringify(serverDbMirror, null, 2));
+  } catch (err) {
+    console.warn('Failed to write server DB mirror file:', err);
+  }
+}
+
+function upsertById(list: any[], item: any, idField = 'id'): any[] {
+  if (!item || !item[idField]) return list;
+  const idx = list.findIndex((x) => x && x[idField] === item[idField]);
+  if (idx >= 0) {
+    const next = [...list];
+    next[idx] = { ...next[idx], ...item };
+    return next;
+  }
+  return [item, ...list];
+}
+
+function mergeArrayById(existing: any[], incoming: any[], idField = 'id'): any[] {
+  if (!Array.isArray(incoming) || incoming.length === 0) return existing;
+  const map = new Map<string, any>();
+  existing.forEach((item) => {
+    if (item && item[idField]) map.set(String(item[idField]), item);
+  });
+  incoming.forEach((item) => {
+    if (item && item[idField]) {
+      const prev = map.get(String(item[idField]));
+      map.set(String(item[idField]), prev ? { ...prev, ...item } : item);
+    }
+  });
+  return Array.from(map.values());
+}
+
 // Load cached subscriptions from local disk if available
 try {
   if (fs.existsSync(SUBS_FILE)) {
@@ -93,6 +162,74 @@ async function startServer() {
   // API Routes
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  // Persistent Server Database Mirror API (ensures data is always available across devices even during Firebase quota limits)
+  app.get('/api/db/mirror', (req, res) => {
+    res.json(serverDbMirror);
+  });
+
+  app.post('/api/db/mirror', (req, res) => {
+    try {
+      const body = req.body || {};
+      let changed = false;
+
+      if (body.upsertCollection && body.item) {
+        const col = body.upsertCollection as keyof ServerDatabaseMirror;
+        if (Array.isArray(serverDbMirror[col])) {
+          const idField = col === 'authorizedEmails' ? 'email' : 'id';
+          (serverDbMirror[col] as any[]) = upsertById(serverDbMirror[col] as any[], body.item, idField);
+          changed = true;
+        }
+      }
+
+      if (body.deleteCollection && body.deleteId) {
+        const col = body.deleteCollection as keyof ServerDatabaseMirror;
+        if (Array.isArray(serverDbMirror[col])) {
+          const idField = col === 'authorizedEmails' ? 'email' : 'id';
+          (serverDbMirror[col] as any[]) = (serverDbMirror[col] as any[]).filter(
+            (x) => x && String(x[idField]).toLowerCase() !== String(body.deleteId).toLowerCase() && String(x.id) !== String(body.deleteId)
+          );
+          changed = true;
+        }
+      }
+
+      if (Array.isArray(body.products) && body.products.length > 0) {
+        serverDbMirror.products = mergeArrayById(serverDbMirror.products, body.products, 'id');
+        changed = true;
+      }
+      if (Array.isArray(body.shops) && body.shops.length > 0) {
+        serverDbMirror.shops = mergeArrayById(serverDbMirror.shops, body.shops, 'id');
+        changed = true;
+      }
+      if (Array.isArray(body.orders) && body.orders.length > 0) {
+        serverDbMirror.orders = mergeArrayById(serverDbMirror.orders, body.orders, 'id');
+        changed = true;
+      }
+      if (Array.isArray(body.categories) && body.categories.length > 0) {
+        serverDbMirror.categories = mergeArrayById(serverDbMirror.categories, body.categories, 'id');
+        changed = true;
+      }
+      if (Array.isArray(body.routes) && body.routes.length > 0) {
+        serverDbMirror.routes = mergeArrayById(serverDbMirror.routes, body.routes, 'id');
+        changed = true;
+      }
+      if (Array.isArray(body.authorizedEmails) && body.authorizedEmails.length > 0) {
+        serverDbMirror.authorizedEmails = mergeArrayById(serverDbMirror.authorizedEmails, body.authorizedEmails, 'email');
+        changed = true;
+      }
+      if (body.businessInfo && typeof body.businessInfo === 'object') {
+        serverDbMirror.businessInfo = { ...(serverDbMirror.businessInfo || {}), ...body.businessInfo };
+        changed = true;
+      }
+
+      if (changed) {
+        saveServerDbMirror();
+      }
+      res.json({ success: true, updatedAt: serverDbMirror.updatedAt });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Mirror sync error' });
+    }
   });
 
   // Deep AI Sales & Inventory Business Advisor (Uses gemini-3.1-pro-preview with HIGH thinking)

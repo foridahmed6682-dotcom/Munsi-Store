@@ -62,7 +62,14 @@ import {
   onAuthChanged,
   fetchUserProfile,
   resolveRoleByEmailAndUid,
-  logout
+  logout,
+  fetchServerDatabaseMirror,
+  pushBulkDataToServerMirror,
+  getDeletedProductIds,
+  getDeletedShopIds,
+  getDeletedOrderIds,
+  getDeletedCategoryIds,
+  getDeletedRouteIds
 } from './lib/firebase';
 import { getStoredGoogleToken } from './lib/firebaseAuth';
 import {
@@ -202,6 +209,65 @@ export default function App() {
     // Subscribe to Firestore Real-time Collections (if online)
     seedInitialCloudDataIfEmpty();
 
+    // Sync with Server-Side Persistent Mirror so data is never lost across devices or during Firebase daily quota limits
+    (async () => {
+      try {
+        const localProds = getProducts();
+        const localShps = getShops();
+        const localOrds = getOrders();
+        const localCats = getCategories();
+        const localRts = getRoutes();
+
+        if (localProds.length > 0 || localShps.length > 0 || localOrds.length > 0) {
+          await pushBulkDataToServerMirror({
+            products: localProds,
+            shops: localShps,
+            orders: localOrds,
+            categories: localCats,
+            routes: localRts,
+          });
+        }
+
+        const mirror = await fetchServerDatabaseMirror();
+        if (mirror) {
+          let updatedAny = false;
+          if (Array.isArray(mirror.products) && mirror.products.length > 0 && getProducts().length === 0) {
+            saveProducts(mirror.products);
+            setProducts(mirror.products);
+            updatedAny = true;
+          }
+          if (Array.isArray(mirror.shops) && mirror.shops.length > 0 && getShops().length === 0) {
+            saveShops(mirror.shops);
+            setShops(mirror.shops);
+            updatedAny = true;
+          }
+          if (Array.isArray(mirror.orders) && mirror.orders.length > 0 && getOrders().length === 0) {
+            saveOrders(mirror.orders);
+            setOrders(mirror.orders);
+            updatedAny = true;
+          }
+          if (Array.isArray(mirror.categories) && mirror.categories.length > 0 && getCategories().length === 0) {
+            saveCategories(mirror.categories);
+            setCategories(mirror.categories);
+            updatedAny = true;
+          }
+          if (Array.isArray(mirror.routes) && mirror.routes.length > 0) {
+            saveRoutes(mirror.routes);
+            setRoutes(mirror.routes);
+          }
+          if (mirror.businessInfo && typeof mirror.businessInfo === 'object') {
+            setBusinessInfo((prev) => ({ ...prev, ...mirror.businessInfo }));
+            saveBusinessInfoLocal({ ...getBusinessInfo(), ...mirror.businessInfo });
+          }
+          if (updatedAny) {
+            reloadData();
+          }
+        }
+      } catch (e) {
+        console.warn('Server mirror sync skipped:', e);
+      }
+    })();
+
     let unsubscribeShops: (() => void) | undefined;
     let unsubscribeProducts: (() => void) | undefined;
     let unsubscribeOrders: (() => void) | undefined;
@@ -217,23 +283,31 @@ export default function App() {
       });
 
       unsubscribeShops = subscribeToCloudShops((cloudShops) => {
-        saveShops(cloudShops);
-        setShops(cloudShops);
+        if (cloudShops.length > 0 || getShops().length === 0) {
+          saveShops(cloudShops);
+          setShops(cloudShops);
+        }
       });
 
       unsubscribeProducts = subscribeToCloudProducts((cloudProducts) => {
-        saveProducts(cloudProducts);
-        setProducts(cloudProducts);
+        if (cloudProducts.length > 0 || getProducts().length === 0) {
+          saveProducts(cloudProducts);
+          setProducts(cloudProducts);
+        }
       });
 
       unsubscribeOrders = subscribeToCloudOrders((cloudOrders) => {
-        saveOrders(cloudOrders);
-        setOrders(cloudOrders);
+        if (cloudOrders.length > 0 || getOrders().length === 0) {
+          saveOrders(cloudOrders);
+          setOrders(cloudOrders);
+        }
       });
 
       unsubscribeCategories = subscribeToCloudCategories((cloudCategories) => {
-        saveCategories(cloudCategories);
-        setCategories(cloudCategories);
+        if (cloudCategories.length > 0 || getCategories().length === 0) {
+          saveCategories(cloudCategories);
+          setCategories(cloudCategories);
+        }
       });
 
       unsubscribeRoutes = subscribeToCloudRoutes((cloudRoutes) => {
