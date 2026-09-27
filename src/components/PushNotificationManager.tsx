@@ -110,8 +110,8 @@ export const PushNotificationManager: React.FC<PushNotificationManagerProps> = (
       ? 'ডিএসআর (DSR)'
       : 'কাস্টমার';
 
-  // Refresh status & subscriber count (uses lightweight server API on startup to save daily Firestore read quota)
-  const refreshStatus = async (includeFirestoreScan = false) => {
+  // Refresh status & subscriber count directly from Firebase & server
+  const refreshStatus = async (includeFirestoreScan = true) => {
     const s = await getPushStatus();
     setStatus(s);
     onSubscriptionChange?.(s.subscribed);
@@ -140,7 +140,7 @@ export const PushNotificationManager: React.FC<PushNotificationManagerProps> = (
   };
 
   useEffect(() => {
-    refreshStatus(false);
+    refreshStatus(true);
   }, []);
 
   // Sync subscription state upward whenever status.subscribed changes

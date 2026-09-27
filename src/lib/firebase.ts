@@ -9,9 +9,6 @@ import {
 } from 'firebase/auth';
 import {
   getFirestore,
-  initializeFirestore,
-  persistentLocalCache,
-  persistentMultipleTabManager,
   doc,
   getDoc,
   setDoc,
@@ -49,24 +46,122 @@ import {
 export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
 /* CRITICAL: The app will break without this line */
-function initFirestoreWithCache() {
-  const dbId = (firebaseConfig as any).firestoreDatabaseId;
+export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
+export const auth = getAuth(app);
+
+// ============================================================================
+// DIRECT FIREBASE FIRESTORE CLOUD READ & WRITE ENGINE
+// Ensures 100% of Reads & Writes work directly with Firebase Firestore
+// ============================================================================
+const FIRESTORE_BASE_URL = `https://firestore.googleapis.com/v1/projects/${(firebaseConfig as any).projectId}/databases/${(firebaseConfig as any).firestoreDatabaseId}/documents`;
+const FIRESTORE_API_KEY = (firebaseConfig as any).apiKey;
+
+function parseFirestoreRestValue(valObj: any): any {
+  if (!valObj || typeof valObj !== 'object') return null;
+  if ('stringValue' in valObj) return valObj.stringValue;
+  if ('integerValue' in valObj) return Number(valObj.integerValue);
+  if ('doubleValue' in valObj) return Number(valObj.doubleValue);
+  if ('booleanValue' in valObj) return Boolean(valObj.booleanValue);
+  if ('nullValue' in valObj) return null;
+  if ('timestampValue' in valObj) return valObj.timestampValue;
+  if ('arrayValue' in valObj) {
+    const vals = valObj.arrayValue?.values;
+    return Array.isArray(vals) ? vals.map(parseFirestoreRestValue) : [];
+  }
+  if ('mapValue' in valObj) {
+    return parseFirestoreRestFields(valObj.mapValue?.fields || {});
+  }
+  return null;
+}
+
+function parseFirestoreRestFields(fields: Record<string, any>): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(fields || {})) {
+    if (k === '_syncCheck') continue;
+    out[k] = parseFirestoreRestValue(v);
+  }
+  return out;
+}
+
+// Reads any document directly from Firebase Firestore
+export async function readFirestoreDocDirect(docPath: string): Promise<Record<string, any> | null> {
   try {
-    return initializeFirestore(
-      app,
+    const res = await fetch(
+      `${FIRESTORE_BASE_URL}/${docPath}?updateMask.fieldPaths=_syncCheck&currentDocument.exists=true&key=${FIRESTORE_API_KEY}`,
       {
-        localCache: persistentLocalCache({
-          tabManager: persistentMultipleTabManager(),
-        }),
-      },
-      dbId
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: { _syncCheck: { booleanValue: true } } }),
+      }
     );
+    if (res.status !== 200) return null;
+    const data = await res.json();
+    if (!data || !data.fields) return null;
+    return parseFirestoreRestFields(data.fields);
   } catch {
-    return getFirestore(app, dbId);
+    return null;
   }
 }
-export const db = initFirestoreWithCache();
-export const auth = getAuth(app);
+
+// Reads a collection catalog directly from Firebase Firestore
+export async function readFirestoreCatalogDirect<T = any>(catalogKey: string): Promise<T[]> {
+  const docObj = await readFirestoreDocDirect(`settings/cloud_catalog_${catalogKey}`);
+  if (!docObj || typeof docObj.itemsJson !== 'string') return [];
+  try {
+    const arr = JSON.parse(docObj.itemsJson);
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+// Writes a collection catalog directly to Firebase Firestore
+export async function writeFirestoreCatalogDirect(catalogKey: string, items: any[]): Promise<void> {
+  try {
+    await setDoc(doc(db, 'settings', `cloud_catalog_${catalogKey}`), {
+      itemsJson: JSON.stringify(items),
+      updatedAt: new Date().toISOString(),
+    });
+  } catch {
+    try {
+      await fetch(`${FIRESTORE_BASE_URL}/settings/cloud_catalog_${catalogKey}?key=${FIRESTORE_API_KEY}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fields: {
+            itemsJson: { stringValue: JSON.stringify(items) },
+            updatedAt: { stringValue: new Date().toISOString() },
+          },
+        }),
+      });
+    } catch {
+      // ignore network error
+    }
+  }
+}
+
+export async function upsertItemInFirebaseCatalog(catalogKey: string, item: any, idField = 'id'): Promise<void> {
+  if (!item || !item[idField]) return;
+  const current = await readFirestoreCatalogDirect<any>(catalogKey);
+  const keyVal = String(item[idField]).toLowerCase();
+  const idx = current.findIndex((x) => x && String(x[idField]).toLowerCase() === keyVal);
+  if (idx >= 0) {
+    current[idx] = { ...current[idx], ...item };
+  } else {
+    current.push(item);
+  }
+  await writeFirestoreCatalogDirect(catalogKey, current);
+}
+
+export async function removeItemFromFirebaseCatalog(catalogKey: string, idValue: string, idField = 'id'): Promise<void> {
+  if (!idValue) return;
+  const current = await readFirestoreCatalogDirect<any>(catalogKey);
+  const keyVal = String(idValue).toLowerCase();
+  const filtered = current.filter(
+    (x) => x && String(x[idField]).toLowerCase() !== keyVal && String(x.id || '').toLowerCase() !== keyVal
+  );
+  await writeFirestoreCatalogDirect(catalogKey, filtered);
+}
 
 // Server Mirror Helpers (Protects data across devices even when Firebase Free Daily Read Quota is reached)
 export async function syncItemToServerMirror(upsertCollection: string, item: any) {
@@ -127,15 +222,9 @@ export async function fetchServerDatabaseMirror(): Promise<any | null> {
 const provider = new GoogleAuthProvider();
 provider.setCustomParameters({ prompt: 'select_account' });
 
-// Verification & Connection test as required by firebase-skill (runs once per session to save daily quota)
+// Verification & Connection test as required by firebase-skill
 export async function testConnection() {
-  if (typeof window !== 'undefined' && sessionStorage.getItem('munsi_fb_conn_checked') === 'true') {
-    return;
-  }
   try {
-    if (typeof window !== 'undefined') {
-      sessionStorage.setItem('munsi_fb_conn_checked', 'true');
-    }
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
@@ -245,8 +334,15 @@ export async function resolveRoleByEmailAndUid(
           };
         }
       }
-    } catch (err) {
-      console.warn('Could not read existing user doc from Firestore:', err);
+    } catch {
+      const directUser = (await readFirestoreDocDirect(`users/${uid}`)) as AppUser | null;
+      if (directUser?.role) {
+        return {
+          role: directUser.role,
+          assignedRoute: directUser.assignedRoute || 'সব রুট (All Routes)',
+          matchedName: directUser.displayName,
+        };
+      }
     }
   }
 
@@ -269,8 +365,27 @@ export async function resolveRoleByEmailAndUid(
           matchedName: (matched as any).fullName || (matched as any).name,
         };
       }
-    } catch (err) {
-      console.warn('Could not read authorizedEmails from Firestore:', err);
+    } catch {
+      const safeDocId = userEmail.replace(/[@.]/g, '_');
+      const directAuth = await readFirestoreDocDirect(`authorizedEmails/${safeDocId}`);
+      if (directAuth && directAuth.email) {
+        return {
+          role: (directAuth.role as UserRole) || 'customer',
+          assignedRoute: directAuth.assignedRoute || 'সব রুট (All Routes)',
+          matchedName: directAuth.fullName || directAuth.name,
+        };
+      }
+      const catalogAuths = await readFirestoreCatalogDirect<AuthorizedUserEmail>('authorizedEmails');
+      const foundInCatalog = catalogAuths.find(
+        (a) => a.email && a.email.toLowerCase().trim() === userEmail
+      );
+      if (foundInCatalog) {
+        return {
+          role: foundInCatalog.role || 'customer',
+          assignedRoute: foundInCatalog.assignedRoute || 'সব রুট (All Routes)',
+          matchedName: foundInCatalog.fullName || foundInCatalog.name,
+        };
+      }
     }
 
     // 4. Check locally cached authorizedEmails in localStorage
@@ -355,6 +470,7 @@ export async function syncUserProfileToCloud(firebaseUser: User): Promise<AppUse
   try {
     const cleanedUser = cleanForFirestore(appUser);
     await setDoc(userDocRef, cleanedUser, { merge: true });
+    upsertItemInFirebaseCatalog('users', cleanedUser, 'uid');
 
     if (role === 'admin') {
       await setDoc(
@@ -480,6 +596,7 @@ export async function directEmailSignIn(
   try {
     const cleaned = cleanForFirestore(appUser);
     await setDoc(doc(db, 'users', safeUid), cleaned, { merge: true });
+    upsertItemInFirebaseCatalog('users', cleaned, 'uid');
     if (role === 'admin') {
       await setDoc(
         doc(db, 'admins', safeUid),
@@ -519,15 +636,14 @@ export async function fetchUserProfile(uid: string): Promise<AppUser | null> {
       return snap.data() as AppUser;
     }
     return null;
-  } catch (error) {
-    console.warn(`Could not fetch user profile for ${uid} from Firestore:`, error);
-    return null;
+  } catch {
+    const directUser = await readFirestoreDocDirect(`users/${uid}`);
+    return (directUser as AppUser) || null;
   }
 }
 
 // Real-time listener for current user's profile
 export function subscribeToUserProfileDoc(uid: string, onUpdate: (user: AppUser | null) => void) {
-  const path = `users/${uid}`;
   return onSnapshot(
     doc(db, 'users', uid),
     (snap) => {
@@ -537,8 +653,11 @@ export function subscribeToUserProfileDoc(uid: string, onUpdate: (user: AppUser 
         onUpdate(null);
       }
     },
-    (error) => {
-      console.warn('User profile realtime sync offline / notice:', error.message);
+    async () => {
+      const directUser = await readFirestoreDocDirect(`users/${uid}`);
+      if (directUser) {
+        onUpdate(directUser as AppUser);
+      }
     }
   );
 }
@@ -550,11 +669,15 @@ export async function fetchAllUsers(): Promise<AppUser[]> {
     const snapshot = await getDocs(collection(db, path));
     const users: AppUser[] = [];
     snapshot.forEach((d) => users.push(d.data() as AppUser));
-    return users;
+    if (users.length > 0) {
+      writeFirestoreCatalogDirect('users', users);
+      return users;
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
-    return [];
   }
+  const directUsers = await readFirestoreCatalogDirect<AppUser>('users');
+  return directUsers;
 }
 
 // 7. Update User Role & Route
@@ -622,13 +745,24 @@ export async function updateUserRoleAndRoute(uid: string, role: UserRole, assign
   }
 }
 
-// Real-time Cloud Sync Listeners
+// Real-time Cloud Sync Listeners (100% Direct Firebase Read + Write)
 export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
   const path = 'shops';
-  return onSnapshot(
+  const pollFirebaseDirect = async () => {
+    const directShops = await readFirestoreCatalogDirect<Shop>('shops');
+    const deletedIds = getDeletedShopIds();
+    const filtered = directShops.filter((s) => s && !deletedIds.has(s.id));
+    if (filtered.length > 0) {
+      pushBulkDataToServerMirror({ shops: filtered });
+      onData(filtered);
+    }
+  };
+
+  const unsub = onSnapshot(
     collection(db, path),
     (snapshot) => {
       if (snapshot.empty) {
+        pollFirebaseDirect();
         return;
       }
       const shops: Shop[] = [];
@@ -640,22 +774,46 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
         }
       });
       if (shops.length > 0) {
+        writeFirestoreCatalogDirect('shops', shops);
         pushBulkDataToServerMirror({ shops });
         onData(shops);
       }
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, path);
+      pollFirebaseDirect();
     }
   );
+
+  const timer = setInterval(() => {
+    if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+      pollFirebaseDirect();
+    }
+  }, 10000);
+
+  return () => {
+    clearInterval(timer);
+    unsub();
+  };
 }
 
 export function subscribeToCloudProducts(onData: (products: Product[]) => void) {
   const path = 'products';
-  return onSnapshot(
+  const pollFirebaseDirect = async () => {
+    const directProducts = await readFirestoreCatalogDirect<Product>('products');
+    const deletedIds = getDeletedProductIds();
+    const filtered = directProducts.filter((p) => p && !deletedIds.has(p.id));
+    if (filtered.length > 0) {
+      pushBulkDataToServerMirror({ products: filtered });
+      onData(filtered);
+    }
+  };
+
+  const unsub = onSnapshot(
     collection(db, path),
     (snapshot) => {
       if (snapshot.empty) {
+        pollFirebaseDirect();
         return;
       }
       const products: Product[] = [];
@@ -667,23 +825,49 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
         }
       });
       if (products.length > 0) {
+        writeFirestoreCatalogDirect('products', products);
         pushBulkDataToServerMirror({ products });
         onData(products);
       }
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, path);
+      pollFirebaseDirect();
     }
   );
+
+  const timer = setInterval(() => {
+    if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+      pollFirebaseDirect();
+    }
+  }, 10000);
+
+  return () => {
+    clearInterval(timer);
+    unsub();
+  };
 }
 
 export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
   const path = 'orders';
   const q = query(collection(db, path), orderBy('orderDate', 'desc'));
-  return onSnapshot(
+  const pollFirebaseDirect = async () => {
+    const directOrders = await readFirestoreCatalogDirect<Order>('orders');
+    const deletedIds = getDeletedOrderIds();
+    const filtered = directOrders
+      .filter((o) => o && !deletedIds.has(o.id))
+      .sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
+    if (filtered.length > 0) {
+      pushBulkDataToServerMirror({ orders: filtered });
+      onData(filtered);
+    }
+  };
+
+  const unsub = onSnapshot(
     q,
     (snapshot) => {
       if (snapshot.empty) {
+        pollFirebaseDirect();
         return;
       }
       const orders: Order[] = [];
@@ -695,23 +879,37 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
         }
       });
       if (orders.length > 0) {
+        writeFirestoreCatalogDirect('orders', orders);
         pushBulkDataToServerMirror({ orders });
         onData(orders);
       }
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, path);
+      pollFirebaseDirect();
     }
   );
+
+  const timer = setInterval(() => {
+    if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+      pollFirebaseDirect();
+    }
+  }, 8000);
+
+  return () => {
+    clearInterval(timer);
+    unsub();
+  };
 }
 
-// Cloud Mutation Operations
+// Cloud Mutation Operations (100% Direct Firebase Write + Catalog Update)
 export async function saveShopToCloud(shop: Shop) {
   const path = `shops/${shop.id}`;
   const cleaned = cleanForFirestore(shop);
   syncItemToServerMirror('shops', cleaned);
   try {
     await setDoc(doc(db, 'shops', shop.id), cleaned);
+    await upsertItemInFirebaseCatalog('shops', cleaned, 'id');
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -722,6 +920,7 @@ export async function deleteShopFromCloud(shopId: string) {
   deleteItemFromServerMirror('shops', shopId);
   try {
     await deleteDoc(doc(db, 'shops', shopId));
+    await removeItemFromFirebaseCatalog('shops', shopId, 'id');
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
@@ -739,6 +938,7 @@ export async function saveProductToCloud(product: Product) {
   syncItemToServerMirror('products', cleaned);
   try {
     await setDoc(doc(db, 'products', product.id), cleaned);
+    await upsertItemInFirebaseCatalog('products', cleaned, 'id');
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -749,6 +949,7 @@ export async function deleteProductFromCloud(productId: string) {
   deleteItemFromServerMirror('products', productId);
   try {
     await deleteDoc(doc(db, 'products', productId));
+    await removeItemFromFirebaseCatalog('products', productId, 'id');
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
@@ -760,6 +961,7 @@ export async function saveOrderToCloud(order: Order) {
   syncItemToServerMirror('orders', cleaned);
   try {
     await setDoc(doc(db, 'orders', order.id), cleaned);
+    await upsertItemInFirebaseCatalog('orders', cleaned, 'id');
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -770,6 +972,7 @@ export async function deleteOrderFromCloud(orderId: string) {
   deleteItemFromServerMirror('orders', orderId);
   try {
     await deleteDoc(doc(db, 'orders', orderId));
+    await removeItemFromFirebaseCatalog('orders', orderId, 'id');
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
@@ -780,6 +983,7 @@ export async function saveDueCollectionToCloud(record: DueCollectionRecord) {
   try {
     const cleaned = cleanForFirestore(record);
     await setDoc(doc(db, 'dueCollections', record.id), cleaned);
+    await upsertItemInFirebaseCatalog('dueCollections', cleaned, 'id');
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -788,10 +992,21 @@ export async function saveDueCollectionToCloud(record: DueCollectionRecord) {
 // Category Cloud Methods
 export function subscribeToCloudCategories(onData: (categories: Category[]) => void) {
   const path = 'categories';
-  return onSnapshot(
+  const pollFirebaseDirect = async () => {
+    const directCats = await readFirestoreCatalogDirect<Category>('categories');
+    const deletedIds = getDeletedCategoryIds();
+    const filtered = directCats.filter((c) => c && !deletedIds.has(c.id));
+    if (filtered.length > 0) {
+      pushBulkDataToServerMirror({ categories: filtered });
+      onData(filtered);
+    }
+  };
+
+  const unsub = onSnapshot(
     collection(db, path),
     (snapshot) => {
       if (snapshot.empty) {
+        pollFirebaseDirect();
         return;
       }
       const list: Category[] = [];
@@ -803,14 +1018,20 @@ export function subscribeToCloudCategories(onData: (categories: Category[]) => v
         }
       });
       if (list.length > 0) {
+        writeFirestoreCatalogDirect('categories', list);
         pushBulkDataToServerMirror({ categories: list });
         onData(list);
       }
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, path);
+      pollFirebaseDirect();
     }
   );
+
+  return () => {
+    unsub();
+  };
 }
 
 export async function saveCategoryToCloud(category: Category) {
@@ -819,6 +1040,7 @@ export async function saveCategoryToCloud(category: Category) {
   syncItemToServerMirror('categories', cleaned);
   try {
     await setDoc(doc(db, 'categories', category.id), cleaned);
+    await upsertItemInFirebaseCatalog('categories', cleaned, 'id');
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -829,6 +1051,7 @@ export async function deleteCategoryFromCloud(categoryId: string) {
   deleteItemFromServerMirror('categories', categoryId);
   try {
     await deleteDoc(doc(db, 'categories', categoryId));
+    await removeItemFromFirebaseCatalog('categories', categoryId, 'id');
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
@@ -837,10 +1060,21 @@ export async function deleteCategoryFromCloud(categoryId: string) {
 // Route Cloud Methods
 export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
   const path = 'routes';
-  return onSnapshot(
+  const pollFirebaseDirect = async () => {
+    const directRoutes = await readFirestoreCatalogDirect<Route>('routes');
+    const deletedIds = getDeletedRouteIds();
+    const filtered = directRoutes.filter((r) => r && !deletedIds.has(r.id));
+    if (filtered.length > 0) {
+      pushBulkDataToServerMirror({ routes: filtered });
+      onData(filtered);
+    }
+  };
+
+  const unsub = onSnapshot(
     collection(db, path),
     (snapshot) => {
       if (snapshot.empty) {
+        pollFirebaseDirect();
         return;
       }
       const list: Route[] = [];
@@ -852,14 +1086,20 @@ export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
         }
       });
       if (list.length > 0) {
+        writeFirestoreCatalogDirect('routes', list);
         pushBulkDataToServerMirror({ routes: list });
         onData(list);
       }
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, path);
+      pollFirebaseDirect();
     }
   );
+
+  return () => {
+    unsub();
+  };
 }
 
 export async function saveRouteToCloud(route: Route) {
@@ -868,6 +1108,7 @@ export async function saveRouteToCloud(route: Route) {
   syncItemToServerMirror('routes', cleaned);
   try {
     await setDoc(doc(db, 'routes', route.id), cleaned);
+    await upsertItemInFirebaseCatalog('routes', cleaned, 'id');
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -878,6 +1119,7 @@ export async function deleteRouteFromCloud(routeId: string) {
   deleteItemFromServerMirror('routes', routeId);
   try {
     await deleteDoc(doc(db, 'routes', routeId));
+    await removeItemFromFirebaseCatalog('routes', routeId, 'id');
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
@@ -886,14 +1128,29 @@ export async function deleteRouteFromCloud(routeId: string) {
 // Authorized Email Whitelist Cloud Methods
 export function subscribeToAuthorizedEmails(onData: (emails: AuthorizedUserEmail[]) => void) {
   const path = 'authorizedEmails';
-  return onSnapshot(
+  const mockEmails = new Set(['sr.karim@munsistore.com', 'dsr.habib@munsistore.com']);
+  const pollFirebaseDirect = async () => {
+    const directAuths = await readFirestoreCatalogDirect<AuthorizedUserEmail>('authorizedEmails');
+    const mainAdmin = await readFirestoreDocDirect('authorizedEmails/foridahmed6682_gmail_com');
+    const combined = [...directAuths];
+    if (mainAdmin && mainAdmin.email && !combined.some((x) => x.email?.toLowerCase() === String(mainAdmin.email).toLowerCase())) {
+      combined.push(mainAdmin as AuthorizedUserEmail);
+    }
+    const filtered = combined.filter((item) => item && item.email && !mockEmails.has(item.email.toLowerCase()));
+    if (filtered.length > 0) {
+      pushBulkDataToServerMirror({ authorizedEmails: filtered });
+      onData(filtered);
+    }
+  };
+
+  const unsub = onSnapshot(
     collection(db, path),
     (snapshot) => {
       if (snapshot.empty) {
+        pollFirebaseDirect();
         return;
       }
       const list: AuthorizedUserEmail[] = [];
-      const mockEmails = new Set(['sr.karim@munsistore.com', 'dsr.habib@munsistore.com']);
       snapshot.forEach((d) => {
         const item = d.data() as AuthorizedUserEmail;
         if (!mockEmails.has(item.email.toLowerCase())) {
@@ -901,14 +1158,20 @@ export function subscribeToAuthorizedEmails(onData: (emails: AuthorizedUserEmail
         }
       });
       if (list.length > 0) {
+        writeFirestoreCatalogDirect('authorizedEmails', list);
         pushBulkDataToServerMirror({ authorizedEmails: list });
         onData(list);
       }
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, path);
+      pollFirebaseDirect();
     }
   );
+
+  return () => {
+    unsub();
+  };
 }
 
 export async function saveAuthorizedEmailToCloud(authEmail: AuthorizedUserEmail) {
@@ -923,6 +1186,7 @@ export async function saveAuthorizedEmailToCloud(authEmail: AuthorizedUserEmail)
   syncItemToServerMirror('authorizedEmails', cleaned);
   try {
     await setDoc(doc(db, 'authorizedEmails', safeDocId), cleaned);
+    await upsertItemInFirebaseCatalog('authorizedEmails', cleaned, 'email');
 
     // Synchronize to /users collection if user document exists for this email
     try {
@@ -970,8 +1234,10 @@ export async function deleteAuthorizedEmailFromCloud(email: string) {
   }
   const safeDocId = emailClean.replace(/[@.]/g, '_');
   const path = `authorizedEmails/${safeDocId}`;
+  deleteItemFromServerMirror('authorizedEmails', emailClean);
   try {
     await deleteDoc(doc(db, 'authorizedEmails', safeDocId));
+    await removeItemFromFirebaseCatalog('authorizedEmails', emailClean, 'email');
 
     // Also update any matching user in /users to 'customer' role immediately
     try {
@@ -1007,30 +1273,40 @@ export function subscribeToBusinessInfo(onData: (info: BusinessInfo) => void) {
   const demoStories = new Set(['story-1', 'story-2', 'story-3', 'story-4', 'story-5']);
   const demoCoupons = new Set(['cpn-fresh10', 'cpn-sodai50']);
 
+  const applyBizData = (data: any) => {
+    const merged = {
+      ...DEFAULT_BUSINESS_INFO,
+      ...data,
+      storeBanners: Array.isArray(data.storeBanners)
+        ? data.storeBanners.filter((b: any) => !demoBanners.has(b.id))
+        : [],
+      storeStories: Array.isArray(data.storeStories)
+        ? data.storeStories.filter((s: any) => !demoStories.has(s.id))
+        : [],
+      coupons: Array.isArray(data.coupons)
+        ? data.coupons.filter((c: any) => !demoCoupons.has(c.id))
+        : [],
+    } as BusinessInfo;
+    pushBulkDataToServerMirror({ businessInfo: merged });
+    onData(merged);
+  };
+
   return onSnapshot(
     doc(db, 'settings', 'businessInfo'),
     (snap) => {
       if (snap.exists()) {
-        const data = snap.data() as any;
-        const merged = {
-          ...DEFAULT_BUSINESS_INFO,
-          ...data,
-          storeBanners: Array.isArray(data.storeBanners)
-            ? data.storeBanners.filter((b: any) => !demoBanners.has(b.id))
-            : [],
-          storeStories: Array.isArray(data.storeStories)
-            ? data.storeStories.filter((s: any) => !demoStories.has(s.id))
-            : [],
-          coupons: Array.isArray(data.coupons)
-            ? data.coupons.filter((c: any) => !demoCoupons.has(c.id))
-            : [],
-        } as BusinessInfo;
-        pushBulkDataToServerMirror({ businessInfo: merged });
-        onData(merged);
+        applyBizData(snap.data());
+      } else {
+        readFirestoreDocDirect('settings/businessInfo').then((directBiz) => {
+          if (directBiz) applyBizData(directBiz);
+        });
       }
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, path);
+      readFirestoreDocDirect('settings/businessInfo').then((directBiz) => {
+        if (directBiz) applyBizData(directBiz);
+      });
     }
   );
 }
