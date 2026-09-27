@@ -94,7 +94,9 @@ import {
   downloadShopsCSV,
   downloadJSONFile,
   generateFullBackupObject,
-  FullBackupData
+  FullBackupData,
+  saveAutoBackupSnapshot,
+  checkAndTriggerDailyAutoDownload
 } from './lib/backupService';
 import { Header } from './components/Header';
 import { Navigation, NavTab } from './components/Navigation';
@@ -1226,7 +1228,14 @@ export default function App() {
   // Full Database Backup JSON Download
   const handleDownloadFullBackupJSON = () => {
     try {
-      const backup = generateFullBackupObject(orders, products, shops, categories, routes);
+      const backup = generateFullBackupObject(orders, products, shops, categories, routes, {
+        dueCollections,
+        dailyExpenses,
+        authorizedEmails,
+        businessInfo,
+        triggerReason: 'ম্যানুয়াল ফুল ব্যাকআপ',
+      });
+      saveAutoBackupSnapshot(backup, 'ম্যানুয়াল ব্যাকআপ ডাউনলোড');
       const today = new Date().toISOString().split('T')[0];
       downloadJSONFile(backup, `MunsiStore_FullBackup_${today}.json`);
       showToast('সম্পূর্ণ ডাটাবেজ ব্যাকআপ (JSON) সফলভাবে ডাউনলোড হয়েছে!', 'success');
@@ -1234,6 +1243,28 @@ export default function App() {
       showToast('ব্যাকআপ ফাইল তৈরিতে সমস্যা হয়েছে', 'error');
     }
   };
+
+  // Automatic Background Rolling Snapshot & Daily Auto-Download
+  useEffect(() => {
+    if (orders.length === 0 && products.length === 0 && shops.length === 0) return;
+    const timer = setTimeout(() => {
+      const fullBackup = generateFullBackupObject(orders, products, shops, categories, routes, {
+        dueCollections,
+        dailyExpenses,
+        authorizedEmails,
+        businessInfo,
+        triggerReason: 'স্বয়ংক্রিয় ব্যাকআপ',
+      });
+      saveAutoBackupSnapshot(fullBackup, 'স্বয়ংক্রিয় ব্যাকআপ');
+      if (activeSimulatedRole === 'admin') {
+        const downloaded = checkAndTriggerDailyAutoDownload(fullBackup);
+        if (downloaded) {
+          showToast('আজকের স্বয়ংক্রিয় দৈনিক ব্যাকআপ ফাইল ডিভাইসে ডাউনলোড হয়েছে!', 'info');
+        }
+      }
+    }, 3500);
+    return () => clearTimeout(timer);
+  }, [orders, products, shops, categories, routes, dueCollections, dailyExpenses, authorizedEmails, businessInfo, activeSimulatedRole]);
 
   // Restore Database from JSON Backup
   const handleRestoreFromBackupJSON = async (backupData: FullBackupData) => {
@@ -1273,7 +1304,32 @@ export default function App() {
           saveRouteToCloud(r).catch(console.warn);
         }
       }
-      showToast('ব্যাকআপ থেকে সম্পূর্ণ ডাটা সফলভাবে রিস্টোর হয়েছে!', 'success');
+      if (backupData.dueCollections && backupData.dueCollections.length > 0) {
+        setDueCollections(backupData.dueCollections);
+        saveDueCollections(backupData.dueCollections);
+        for (const dc of backupData.dueCollections) {
+          saveDueCollectionToCloud(dc).catch(console.warn);
+        }
+      }
+      if (backupData.dailyExpenses && backupData.dailyExpenses.length > 0) {
+        setDailyExpenses(backupData.dailyExpenses);
+        saveDailyExpenses(backupData.dailyExpenses);
+        for (const exp of backupData.dailyExpenses) {
+          saveDailyExpenseToCloud(exp).catch(console.warn);
+        }
+      }
+      if (backupData.authorizedEmails && backupData.authorizedEmails.length > 0) {
+        setAuthorizedEmails(backupData.authorizedEmails);
+        saveAuthorizedEmails(backupData.authorizedEmails);
+        for (const ae of backupData.authorizedEmails) {
+          saveAuthorizedEmailToCloud(ae).catch(console.warn);
+        }
+      }
+      if (backupData.businessInfo) {
+        setBusinessInfo(backupData.businessInfo);
+        saveBusinessInfoLocal(backupData.businessInfo);
+      }
+      showToast('ব্যাকআপ থেকে সম্পূর্ণ ডাটা সফলভাবে রিস্টোর ও ক্লাউড সিঙ্ক হয়েছে!', 'success');
     } catch (e: any) {
       console.error('Restore failed:', e);
       showToast('ডাটা রিস্টোর করতে সমস্যা হয়েছে', 'error');

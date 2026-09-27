@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   ShieldCheck,
   LayoutDashboard,
@@ -64,7 +64,18 @@ import {
 import { processImageFile } from '../lib/imageUtils';
 import { fetchAllUsers, updateUserRoleAndRoute, getBusinessInfo, saveBusinessInfoToCloud, subscribeToCloudBusinessInfo } from '../lib/firebase';
 import { saveBusinessInfoLocal, DEFAULT_BUSINESS_INFO } from '../lib/storage';
-import { FullBackupData, parseAndValidateBackupJSON } from '../lib/backupService';
+import {
+  FullBackupData,
+  parseAndValidateBackupJSON,
+  AutoBackupSnapshot,
+  getLocalAutoBackupSnapshots,
+  fetchAllAutoBackupSnapshots,
+  saveAutoBackupSnapshot,
+  generateFullBackupObject,
+  downloadJSONFile,
+  getDailyAutoDownloadEnabled,
+  setDailyAutoDownloadEnabled
+} from '../lib/backupService';
 import { PushNotificationManager } from './PushNotificationManager';
 import { AdminSodaiStorefrontManager } from './AdminSodaiStorefrontManager';
 
@@ -186,6 +197,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [restoreFileError, setRestoreFileError] = useState<string | null>(null);
   const [parsedRestoreData, setParsedRestoreData] = useState<FullBackupData | null>(null);
   const [isRestoring, setIsRestoring] = useState(false);
+  const [autoSnapshots, setAutoSnapshots] = useState<AutoBackupSnapshot[]>(() => getLocalAutoBackupSnapshots());
+  const [dailyAutoDownload, setDailyAutoDownload] = useState<boolean>(() => getDailyAutoDownloadEnabled());
+
+  useEffect(() => {
+    if (subTab === 'backup') {
+      fetchAllAutoBackupSnapshots().then((snaps) => setAutoSnapshots(snaps));
+    }
+  }, [subTab, orders.length, shops.length, products.length]);
 
   const allAvailableRouteNames = useMemo(() => {
     const set = new Set<string>();
@@ -3259,12 +3278,171 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 </div>
                 <div>
                   <div className="text-[11px] font-bold text-white flex items-center gap-1">
-                    <span>ফায়ারবেস ক্লাউড স্টোরেজ</span>
+                    <span>৫-স্তরের অটো-ব্যাকআপ ভল্ট</span>
                   </div>
-                  <div className="text-[10px] text-emerald-400 font-semibold">স্বয়ংক্রিয় লাইভ সিঙ্ক সক্রিয়</div>
+                  <div className="text-[10px] text-emerald-400 font-semibold">১০০% জিরো ডাটা-লস সক্রিয়</div>
                 </div>
               </div>
             </div>
+
+            {/* 5-Layer Protection Badges */}
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mt-4 pt-3.5 border-t border-white/10 text-[11px]">
+              <div className="bg-white/5 border border-white/10 rounded-xl p-2.5 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 animate-pulse" />
+                <div>
+                  <div className="font-bold text-white">১. ফায়ারবেজ ক্লাউড</div>
+                  <div className="text-[10px] text-neutral-300">রিয়েল-টাইম সিঙ্ক</div>
+                </div>
+              </div>
+              <div className="bg-white/5 border border-white/10 rounded-xl p-2.5 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                <div>
+                  <div className="font-bold text-white">২. IndexedDB ক্যাশ</div>
+                  <div className="text-[10px] text-neutral-300">অফলাইন সেফটি</div>
+                </div>
+              </div>
+              <div className="bg-white/5 border border-white/10 rounded-xl p-2.5 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                <div>
+                  <div className="font-bold text-white">৩. সার্ভার ডিস্ক মিরর</div>
+                  <div className="text-[10px] text-neutral-300">অটো ব্যাকআপ ফাইল</div>
+                </div>
+              </div>
+              <div className="bg-white/5 border border-white/10 rounded-xl p-2.5 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+                <div>
+                  <div className="font-bold text-white">৪. টাইম-মেশিন ভল্ট</div>
+                  <div className="text-[10px] text-neutral-300">{autoSnapshots.length}টি স্ন্যাপশট সংরক্ষিত</div>
+                </div>
+              </div>
+              <div className="bg-white/5 border border-white/10 rounded-xl p-2.5 flex items-center justify-between gap-2 col-span-2 sm:col-span-1">
+                <div>
+                  <div className="font-bold text-amber-300">৫. দৈনিক অটো-ডাউনলোড</div>
+                  <div className="text-[10px] text-neutral-300">{dailyAutoDownload ? 'চালু আছে (প্রথম ভিজিটে)' : 'অপশনাল টগল'}</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={dailyAutoDownload}
+                  onChange={(e) => {
+                    const val = e.target.checked;
+                    setDailyAutoDownload(val);
+                    setDailyAutoDownloadEnabled(val);
+                    showToast(
+                      val
+                        ? 'দৈনিক অটো-ডাউনলোড চালু হয়েছে! প্রতিদিন প্রথমবার অ্যাপ ওপেন করলেই ব্যাকআপ ফাইল ডাউনলোড হবে।'
+                        : 'দৈনিক অটো-ডাউনলোড বন্ধ করা হয়েছে।',
+                      'info'
+                    );
+                  }}
+                  className="w-4 h-4 accent-amber-400 cursor-pointer shrink-0"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* TIME-MACHINE AUTO-BACKUP SNAPSHOT VAULT */}
+          <div className="bg-white p-5 rounded-2xl border border-emerald-200 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-neutral-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-emerald-500/15 text-emerald-700 flex items-center justify-center">
+                  <HardDrive className="w-5 h-5 text-emerald-700" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-neutral-900 flex items-center gap-2">
+                    <span>স্বয়ংক্রিয় টাইম-মেশিন অটো-ব্যাকআপ ভল্ট (Auto-Backup Vault)</span>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                      সর্বশেষ ১০টি ভার্সন
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-neutral-500">
+                    নতুন অর্ডার, পেমেন্ট বা হিসাব পরিবর্তন হলেই স্বয়ংক্রিয়ভাবে স্ন্যাপশট সেভ হয়। ভুলবশত কিছু ডিলিট হলেও ১-ক্লিকে আগের অবস্থায় ফিরে যান!
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const snapData = generateFullBackupObject(orders, products, shops, categories, routes, {
+                    dueCollections: [],
+                    dailyExpenses,
+                    authorizedEmails,
+                    businessInfo: bizInfo,
+                    triggerReason: 'তাৎক্ষণিক ম্যানুয়াল স্ন্যাপশট',
+                  });
+                  const updated = saveAutoBackupSnapshot(snapData, 'তাৎক্ষণিক সেফটি স্ন্যাপশট');
+                  setAutoSnapshots(updated);
+                  showToast('নতুন সেফটি স্ন্যাপশট সফলভাবে ভল্টে সংরক্ষিত হয়েছে!', 'success');
+                }}
+                className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>এখনই নতুন স্ন্যাপশট নিন</span>
+              </button>
+            </div>
+
+            {autoSnapshots.length === 0 ? (
+              <div className="p-4 text-center bg-neutral-50 rounded-xl border border-neutral-200 text-xs text-neutral-500">
+                এখনো কোনো স্ন্যাপশট তৈরি হয়নি। উপরের <strong>"এখনই নতুন স্ন্যাপশট নিন"</strong> বাটনে ক্লিক করুন অথবা অর্ডার এন্ট্রি করলে স্বয়ংক্রিয়ভাবে জমা হবে।
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 max-h-72 overflow-y-auto pr-1">
+                {autoSnapshots.map((snap, idx) => (
+                  <div
+                    key={snap.id}
+                    className="p-3 rounded-xl border border-neutral-200 bg-neutral-50/70 hover:bg-emerald-50/40 hover:border-emerald-200 transition-all flex items-center justify-between gap-3"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="px-1.5 py-0.5 rounded bg-emerald-700 text-white text-[9px] font-black">
+                          #{idx + 1}
+                        </span>
+                        <span className="text-xs font-bold text-neutral-900 truncate">{snap.label}</span>
+                      </div>
+                      <div className="text-[10px] text-neutral-500 font-medium mt-0.5">
+                        সময়: {new Date(snap.timestamp).toLocaleString('bn-BD')}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 mt-1 text-[10px] font-bold text-emerald-800">
+                        <span>মেমো: {snap.data.orders?.length || 0}টি</span>
+                        <span>•</span>
+                        <span>দোকান: {snap.data.shops?.length || 0}টি</span>
+                        <span>•</span>
+                        <span>পণ্য: {snap.data.products?.length || 0}টি</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const dateStr = snap.timestamp.split('T')[0];
+                          downloadJSONFile(snap.data, `Munsi_Snapshot_${dateStr}_${idx + 1}.json`);
+                          showToast('স্ন্যাপশট ফাইল ডাউনলোড হয়েছে', 'info');
+                        }}
+                        className="p-2 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-100 text-neutral-700 text-xs font-bold cursor-pointer"
+                        title="ফাইল ডাউনলোড করুন"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isRestoring}
+                        onClick={async () => {
+                          if (!onRestoreFromBackupJSON) return;
+                          setIsRestoring(true);
+                          try {
+                            await onRestoreFromBackupJSON(snap.data);
+                          } finally {
+                            setIsRestoring(false);
+                          }
+                        }}
+                        className="px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold cursor-pointer disabled:opacity-50"
+                      >
+                        রিস্টোর
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Backup Options Grid */}

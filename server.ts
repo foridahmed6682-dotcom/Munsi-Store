@@ -121,6 +121,8 @@ async function writeFirestoreCatalogViaPatch(catalogKey: string, items: any[]): 
 
 // Server-side Persistent Database Mirror (Protects against Firebase Free Tier Daily Quota exhaustion)
 const DB_MIRROR_FILE = path.join(process.cwd(), '.server_database_mirror.json');
+const SNAPSHOTS_FILE = path.join(process.cwd(), '.server_backup_snapshots.json');
+
 interface ServerDatabaseMirror {
   products: any[];
   shops: any[];
@@ -128,6 +130,9 @@ interface ServerDatabaseMirror {
   categories: any[];
   routes: any[];
   authorizedEmails: any[];
+  dueCollections: any[];
+  dailyExpenses: any[];
+  staffTargets: any[];
   businessInfo: any | null;
   updatedAt: string;
 }
@@ -139,9 +144,30 @@ let serverDbMirror: ServerDatabaseMirror = {
   categories: [],
   routes: [],
   authorizedEmails: [],
+  dueCollections: [],
+  dailyExpenses: [],
+  staffTargets: [],
   businessInfo: null,
   updatedAt: new Date().toISOString(),
 };
+
+let serverSnapshots: any[] = [];
+try {
+  if (fs.existsSync(SNAPSHOTS_FILE)) {
+    const parsed = JSON.parse(fs.readFileSync(SNAPSHOTS_FILE, 'utf-8'));
+    if (Array.isArray(parsed)) serverSnapshots = parsed;
+  }
+} catch (err) {
+  console.warn('Could not read server backup snapshots file:', err);
+}
+
+function saveServerSnapshots() {
+  try {
+    fs.writeFileSync(SNAPSHOTS_FILE, JSON.stringify(serverSnapshots.slice(0, 10), null, 2));
+  } catch (err) {
+    console.warn('Failed to write server backup snapshots:', err);
+  }
+}
 
 try {
   if (fs.existsSync(DB_MIRROR_FILE)) {
@@ -401,6 +427,21 @@ async function startServer() {
         touchedCatalogs.add('authorizedEmails');
         changed = true;
       }
+      if (Array.isArray(body.dueCollections) && body.dueCollections.length > 0) {
+        serverDbMirror.dueCollections = mergeArrayById(serverDbMirror.dueCollections, body.dueCollections, 'id');
+        touchedCatalogs.add('dueCollections');
+        changed = true;
+      }
+      if (Array.isArray(body.dailyExpenses) && body.dailyExpenses.length > 0) {
+        serverDbMirror.dailyExpenses = mergeArrayById(serverDbMirror.dailyExpenses, body.dailyExpenses, 'id');
+        touchedCatalogs.add('dailyExpenses');
+        changed = true;
+      }
+      if (Array.isArray(body.staffTargets) && body.staffTargets.length > 0) {
+        serverDbMirror.staffTargets = mergeArrayById(serverDbMirror.staffTargets, body.staffTargets, 'id');
+        touchedCatalogs.add('staffTargets');
+        changed = true;
+      }
       if (body.businessInfo && typeof body.businessInfo === 'object') {
         serverDbMirror.businessInfo = { ...(serverDbMirror.businessInfo || {}), ...body.businessInfo };
         changed = true;
@@ -418,6 +459,26 @@ async function startServer() {
       res.json({ success: true, updatedAt: serverDbMirror.updatedAt });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Mirror sync error' });
+    }
+  });
+
+  // Rolling Auto-Backup Vault API (Stores up to 10 time-machine snapshots on server disk + Firestore)
+  app.get('/api/db/snapshots', (req, res) => {
+    res.json({ snapshots: serverSnapshots });
+  });
+
+  app.post('/api/db/snapshots', (req, res) => {
+    try {
+      const { snapshot } = req.body || {};
+      if (snapshot && snapshot.id && snapshot.data) {
+        const filtered = serverSnapshots.filter((s) => s && s.id !== snapshot.id);
+        serverSnapshots = [snapshot, ...filtered].slice(0, 10);
+        saveServerSnapshots();
+        writeFirestoreCatalogViaPatch('auto_backup_snapshots', serverSnapshots.slice(0, 3));
+      }
+      res.json({ success: true, count: serverSnapshots.length });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Snapshot save error' });
     }
   });
 

@@ -1,9 +1,21 @@
-import { Order, Product, Shop, Category, Route } from '../types';
+import {
+  Order,
+  Product,
+  Shop,
+  Category,
+  Route,
+  DueCollectionRecord,
+  DailyExpenseRecord,
+  StaffTargetConfig,
+  AuthorizedUserEmail,
+  BusinessInfo,
+} from '../types';
 
 export interface FullBackupData {
   version: string;
   exportDate: string;
   businessName: string;
+  triggerReason?: string;
   summary: {
     totalOrders: number;
     totalSalesAmount: number;
@@ -11,13 +23,32 @@ export interface FullBackupData {
     totalDueAmount: number;
     totalShops: number;
     totalProducts: number;
+    totalDueCollections?: number;
+    totalExpenses?: number;
   };
   orders: Order[];
   products: Product[];
   shops: Shop[];
   categories: Category[];
   routes: Route[];
+  dueCollections?: DueCollectionRecord[];
+  dailyExpenses?: DailyExpenseRecord[];
+  staffTargets?: StaffTargetConfig[];
+  authorizedEmails?: AuthorizedUserEmail[];
+  businessInfo?: BusinessInfo;
 }
+
+export interface AutoBackupSnapshot {
+  id: string;
+  timestamp: string;
+  label: string;
+  data: FullBackupData;
+}
+
+const AUTO_BACKUP_VAULT_KEY = 'munsi_auto_backup_vault_v1';
+const AUTO_DOWNLOAD_ENABLED_KEY = 'munsi_daily_auto_download_enabled_v1';
+const LAST_AUTO_DOWNLOAD_DATE_KEY = 'munsi_last_auto_download_date_v1';
+const MAX_SNAPSHOTS = 10;
 
 /**
  * Compile all application state into a clean structured backup object
@@ -27,16 +58,25 @@ export function generateFullBackupObject(
   products: Product[],
   shops: Shop[],
   categories: Category[],
-  routes: Route[]
+  routes: Route[],
+  extra?: {
+    dueCollections?: DueCollectionRecord[];
+    dailyExpenses?: DailyExpenseRecord[];
+    staffTargets?: StaffTargetConfig[];
+    authorizedEmails?: AuthorizedUserEmail[];
+    businessInfo?: BusinessInfo;
+    triggerReason?: string;
+  }
 ): FullBackupData {
   const totalSales = orders.reduce((sum, o) => sum + (o.netTotal || 0), 0);
   const totalCash = orders.reduce((sum, o) => sum + (o.paidAmount || 0), 0);
-  const totalDue = orders.reduce((sum, o) => sum + (o.dueAmount || 0), 0);
+  const totalDue = shops.reduce((sum, s) => sum + (s.previousDue || 0), 0);
 
   return {
-    version: '1.0',
+    version: '2.0',
     exportDate: new Date().toISOString(),
-    businessName: 'মুন্সী স্টোর (Munsi Store)',
+    businessName: extra?.businessInfo?.banglaName || 'মুন্সী এন্টারপ্রাইজ (Munsi Enterprise)',
+    triggerReason: extra?.triggerReason || 'স্বয়ংক্রিয় স্ন্যাপশট',
     summary: {
       totalOrders: orders.length,
       totalSalesAmount: totalSales,
@@ -44,13 +84,149 @@ export function generateFullBackupObject(
       totalDueAmount: totalDue,
       totalShops: shops.length,
       totalProducts: products.length,
+      totalDueCollections: extra?.dueCollections?.length || 0,
+      totalExpenses: extra?.dailyExpenses?.length || 0,
     },
     orders,
     products,
     shops,
     categories,
     routes,
+    dueCollections: extra?.dueCollections || [],
+    dailyExpenses: extra?.dailyExpenses || [],
+    staffTargets: extra?.staffTargets || [],
+    authorizedEmails: extra?.authorizedEmails || [],
+    businessInfo: extra?.businessInfo,
   };
+}
+
+/**
+ * Save a rolling auto-backup snapshot locally and to the server/cloud vault
+ */
+export function saveAutoBackupSnapshot(
+  backupData: FullBackupData,
+  label: string = 'স্বয়ংক্রিয় ব্যাকআপ'
+): AutoBackupSnapshot[] {
+  try {
+    // Don't overwrite vault with empty state
+    if (
+      backupData.orders.length === 0 &&
+      backupData.products.length === 0 &&
+      backupData.shops.length === 0
+    ) {
+      return getLocalAutoBackupSnapshots();
+    }
+
+    const existing = getLocalAutoBackupSnapshots();
+
+    // Avoid duplicate snapshot if record counts & latest order haven't changed within 2 minutes
+    if (existing.length > 0) {
+      const latest = existing[0];
+      const timeDiffMs = Date.now() - new Date(latest.timestamp).getTime();
+      const sameCounts =
+        latest.data.orders.length === backupData.orders.length &&
+        latest.data.shops.length === backupData.shops.length &&
+        latest.data.products.length === backupData.products.length &&
+        latest.data.summary.totalSalesAmount === backupData.summary.totalSalesAmount &&
+        latest.data.summary.totalDueAmount === backupData.summary.totalDueAmount &&
+        (latest.data.dueCollections?.length || 0) === (backupData.dueCollections?.length || 0) &&
+        (latest.data.dailyExpenses?.length || 0) === (backupData.dailyExpenses?.length || 0);
+
+      if (sameCounts && timeDiffMs < 120_000 && label === 'স্বয়ংক্রিয় ব্যাকআপ') {
+        return existing;
+      }
+    }
+
+    const snapshot: AutoBackupSnapshot = {
+      id: `snap-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      label,
+      data: { ...backupData, triggerReason: label },
+    };
+
+    const updated = [snapshot, ...existing].slice(0, MAX_SNAPSHOTS);
+    localStorage.setItem(AUTO_BACKUP_VAULT_KEY, JSON.stringify(updated));
+
+    // Also push asynchronously to server & cloud vault
+    fetch('/api/db/snapshots', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ snapshot }),
+    }).catch(() => {});
+
+    return updated;
+  } catch (err) {
+    console.warn('Auto backup snapshot warning:', err);
+    return getLocalAutoBackupSnapshots();
+  }
+}
+
+export function getLocalAutoBackupSnapshots(): AutoBackupSnapshot[] {
+  try {
+    const raw = localStorage.getItem(AUTO_BACKUP_VAULT_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchAllAutoBackupSnapshots(): Promise<AutoBackupSnapshot[]> {
+  const local = getLocalAutoBackupSnapshots();
+  try {
+    const res = await fetch('/api/db/snapshots');
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.snapshots)) {
+        const map = new Map<string, AutoBackupSnapshot>();
+        local.forEach((s) => map.set(s.id, s));
+        data.snapshots.forEach((s: AutoBackupSnapshot) => {
+          if (s && s.id && s.data) map.set(s.id, s);
+        });
+        const merged = Array.from(map.values())
+          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+          .slice(0, MAX_SNAPSHOTS);
+        localStorage.setItem(AUTO_BACKUP_VAULT_KEY, JSON.stringify(merged));
+        return merged;
+      }
+    }
+  } catch {
+    // Offline fallback
+  }
+  return local;
+}
+
+export function getDailyAutoDownloadEnabled(): boolean {
+  try {
+    return localStorage.getItem(AUTO_DOWNLOAD_ENABLED_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function setDailyAutoDownloadEnabled(enabled: boolean): void {
+  try {
+    localStorage.setItem(AUTO_DOWNLOAD_ENABLED_KEY, enabled ? 'true' : 'false');
+  } catch {
+    // ignore
+  }
+}
+
+export function checkAndTriggerDailyAutoDownload(backupData: FullBackupData): boolean {
+  try {
+    if (!getDailyAutoDownloadEnabled()) return false;
+    if (backupData.orders.length === 0 && backupData.shops.length === 0) return false;
+    const today = new Date().toISOString().split('T')[0];
+    const lastDate = localStorage.getItem(LAST_AUTO_DOWNLOAD_DATE_KEY);
+    if (lastDate === today) return false;
+
+    localStorage.setItem(LAST_AUTO_DOWNLOAD_DATE_KEY, today);
+    downloadJSONFile(backupData, `MunsiEnterprise_AutoBackup_${today}.json`);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
