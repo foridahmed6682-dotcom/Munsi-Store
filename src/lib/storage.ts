@@ -355,6 +355,15 @@ export function saveProducts(products: Product[]) {
 }
 
 export function addOrUpdateProduct(product: Product): Product {
+  try {
+    const rawDel = localStorage.getItem(STORAGE_KEYS.DELETED_PRODUCTS);
+    if (rawDel) {
+      const list: string[] = JSON.parse(rawDel).filter((id: string) => id !== product.id);
+      localStorage.setItem(STORAGE_KEYS.DELETED_PRODUCTS, JSON.stringify(list));
+    }
+  } catch {
+    // ignore
+  }
   const products = getProducts();
   const idx = products.findIndex((p) => p.id === product.id);
   if (idx >= 0) {
@@ -588,6 +597,15 @@ export function saveShops(shops: Shop[]) {
 }
 
 export function addOrUpdateShop(shop: Shop): Shop {
+  try {
+    const rawDel = localStorage.getItem(STORAGE_KEYS.DELETED_SHOPS);
+    if (rawDel) {
+      const list: string[] = JSON.parse(rawDel).filter((id: string) => id !== shop.id);
+      localStorage.setItem(STORAGE_KEYS.DELETED_SHOPS, JSON.stringify(list));
+    }
+  } catch {
+    // ignore
+  }
   const shops = getShops();
   const idx = shops.findIndex((s) => s.id === shop.id);
   if (idx >= 0) {
@@ -597,6 +615,19 @@ export function addOrUpdateShop(shop: Shop): Shop {
   }
   saveShops(shops);
   return shop;
+}
+
+export function normalizeBanglaDigits(input: string | number | undefined | null): string {
+  if (input === undefined || input === null) return '';
+  return String(input).replace(/[০-৯]/g, (d) => '০১২৩৪৫৬৭৮৯'.indexOf(d).toString());
+}
+
+export function parseBanglaNumber(input: string | number | undefined | null, fallback = 0): number {
+  if (typeof input === 'number') return isNaN(input) ? fallback : input;
+  const normalized = normalizeBanglaDigits(input).replace(/[^0-9.-]/g, '');
+  if (!normalized) return fallback;
+  const parsed = parseFloat(normalized);
+  return isNaN(parsed) ? fallback : parsed;
 }
 
 export function deleteShop(shopId: string) {

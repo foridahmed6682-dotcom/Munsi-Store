@@ -41,6 +41,11 @@ import {
   getDeletedCategoryIds,
   getDeletedRouteIds,
   getAuthorizedEmails,
+  getProducts,
+  getShops,
+  getOrders,
+  getCategories,
+  getRoutes,
 } from './storage';
 
 export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
@@ -115,29 +120,67 @@ export async function readFirestoreCatalogDirect<T = any>(catalogKey: string): P
   }
 }
 
-// Writes a collection catalog directly to Firebase Firestore
-export async function writeFirestoreCatalogDirect(catalogKey: string, items: any[]): Promise<void> {
-  try {
-    await setDoc(doc(db, 'settings', `cloud_catalog_${catalogKey}`), {
-      itemsJson: JSON.stringify(items),
-      updatedAt: new Date().toISOString(),
-    });
-  } catch {
-    try {
-      await fetch(`${FIRESTORE_BASE_URL}/settings/cloud_catalog_${catalogKey}?key=${FIRESTORE_API_KEY}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fields: {
-            itemsJson: { stringValue: JSON.stringify(items) },
-            updatedAt: { stringValue: new Date().toISOString() },
-          },
-        }),
-      });
-    } catch {
-      // ignore network error
+// Helper to merge cloud/mirror items with local items without ever losing newly added local items
+function mergeLocalAndCloud<T extends Record<string, any>>(
+  localItems: T[],
+  remoteItems: T[],
+  deletedIds: Set<string>,
+  idField = 'id'
+): T[] {
+  const map = new Map<string, T>();
+  for (const item of remoteItems) {
+    const key = item?.[idField] ? String(item[idField]) : '';
+    if (key && !deletedIds.has(key)) {
+      map.set(key, item);
     }
   }
+  for (const item of localItems) {
+    const key = item?.[idField] ? String(item[idField]) : '';
+    if (key && !deletedIds.has(key)) {
+      const existing = map.get(key);
+      map.set(key, existing ? { ...existing, ...item } : item);
+    }
+  }
+  return Array.from(map.values());
+}
+
+// Writes a collection catalog directly to Firebase Firestore (safe against 1MB limit and hanging WebChannel)
+export async function writeFirestoreCatalogDirect(catalogKey: string, items: any[]): Promise<void> {
+  let serialized = JSON.stringify(items);
+  // Protect against Firestore 1MB single-document limit when many products have base64 images
+  if (serialized.length > 650000 && catalogKey === 'products') {
+    const compacted = items.map((item) => {
+      if (item && typeof item.imageUrl === 'string' && item.imageUrl.startsWith('data:') && item.imageUrl.length > 45000) {
+        return { ...item, imageUrl: '' };
+      }
+      return item;
+    });
+    serialized = JSON.stringify(compacted);
+  }
+
+  const nowIso = new Date().toISOString();
+
+  // 1. Immediate REST PATCH (never hangs even when Firebase WebChannel is offline/throttled)
+  try {
+    await fetch(`${FIRESTORE_BASE_URL}/settings/cloud_catalog_${catalogKey}?key=${FIRESTORE_API_KEY}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fields: {
+          itemsJson: { stringValue: serialized },
+          updatedAt: { stringValue: nowIso },
+        },
+      }),
+    });
+  } catch {
+    // ignore network error
+  }
+
+  // 2. Non-blocking SDK setDoc in background
+  setDoc(doc(db, 'settings', `cloud_catalog_${catalogKey}`), {
+    itemsJson: serialized,
+    updatedAt: nowIso,
+  }).catch(() => {});
 }
 
 export async function upsertItemInFirebaseCatalog(catalogKey: string, item: any, idField = 'id'): Promise<void> {
@@ -148,7 +191,7 @@ export async function upsertItemInFirebaseCatalog(catalogKey: string, item: any,
   if (idx >= 0) {
     current[idx] = { ...current[idx], ...item };
   } else {
-    current.push(item);
+    current.unshift(item);
   }
   await writeFirestoreCatalogDirect(catalogKey, current);
 }
@@ -745,16 +788,21 @@ export async function updateUserRoleAndRoute(uid: string, role: UserRole, assign
   }
 }
 
-// Real-time Cloud Sync Listeners (100% Direct Firebase Read + Write)
+// Real-time Cloud Sync Listeners (100% Direct Firebase Read + Write + Local Merge Protection)
 export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
   const path = 'shops';
   const pollFirebaseDirect = async () => {
-    const directShops = await readFirestoreCatalogDirect<Shop>('shops');
+    const [directShops, mirror] = await Promise.all([
+      readFirestoreCatalogDirect<Shop>('shops'),
+      fetchServerDatabaseMirror(),
+    ]);
     const deletedIds = getDeletedShopIds();
-    const filtered = directShops.filter((s) => s && !deletedIds.has(s.id));
-    if (filtered.length > 0) {
-      pushBulkDataToServerMirror({ shops: filtered });
-      onData(filtered);
+    const mirrorShops: Shop[] = Array.isArray(mirror?.shops) ? mirror.shops : [];
+    const combinedRemote = mergeLocalAndCloud(mirrorShops, directShops, deletedIds);
+    const merged = mergeLocalAndCloud(getShops(), combinedRemote, deletedIds);
+    if (merged.length > 0) {
+      pushBulkDataToServerMirror({ shops: merged });
+      onData(merged);
     }
   };
 
@@ -773,10 +821,11 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
           shops.push(s);
         }
       });
-      if (shops.length > 0) {
-        writeFirestoreCatalogDirect('shops', shops);
-        pushBulkDataToServerMirror({ shops });
-        onData(shops);
+      const merged = mergeLocalAndCloud(getShops(), shops, deletedIds);
+      if (merged.length > 0) {
+        writeFirestoreCatalogDirect('shops', merged);
+        pushBulkDataToServerMirror({ shops: merged });
+        onData(merged);
       }
     },
     (error) => {
@@ -800,12 +849,32 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
 export function subscribeToCloudProducts(onData: (products: Product[]) => void) {
   const path = 'products';
   const pollFirebaseDirect = async () => {
-    const directProducts = await readFirestoreCatalogDirect<Product>('products');
+    const [directProducts, mirror] = await Promise.all([
+      readFirestoreCatalogDirect<Product>('products'),
+      fetchServerDatabaseMirror(),
+    ]);
     const deletedIds = getDeletedProductIds();
-    const filtered = directProducts.filter((p) => p && !deletedIds.has(p.id));
-    if (filtered.length > 0) {
-      pushBulkDataToServerMirror({ products: filtered });
-      onData(filtered);
+    const mirrorProducts: Product[] = Array.isArray(mirror?.products) ? mirror.products : [];
+    // Keep rich images from mirrorProducts/localProducts if catalog had compacted images
+    const combinedRemote = mergeLocalAndCloud(mirrorProducts, directProducts, deletedIds).map((item) => {
+      const mirrorMatch = mirrorProducts.find((m) => m.id === item.id);
+      if (!item.imageUrl && mirrorMatch?.imageUrl) {
+        return { ...item, imageUrl: mirrorMatch.imageUrl };
+      }
+      return item;
+    });
+    const localProds = getProducts();
+    const merged = mergeLocalAndCloud(localProds, combinedRemote, deletedIds).map((item) => {
+      const localMatch = localProds.find((l) => l.id === item.id);
+      const mirrorMatch = mirrorProducts.find((m) => m.id === item.id);
+      if (!item.imageUrl && (localMatch?.imageUrl || mirrorMatch?.imageUrl)) {
+        return { ...item, imageUrl: localMatch?.imageUrl || mirrorMatch?.imageUrl || '' };
+      }
+      return item;
+    });
+    if (merged.length > 0) {
+      pushBulkDataToServerMirror({ products: merged });
+      onData(merged);
     }
   };
 
@@ -824,10 +893,11 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
           products.push(p);
         }
       });
-      if (products.length > 0) {
-        writeFirestoreCatalogDirect('products', products);
-        pushBulkDataToServerMirror({ products });
-        onData(products);
+      const merged = mergeLocalAndCloud(getProducts(), products, deletedIds);
+      if (merged.length > 0) {
+        writeFirestoreCatalogDirect('products', merged);
+        pushBulkDataToServerMirror({ products: merged });
+        onData(merged);
       }
     },
     (error) => {
@@ -852,14 +922,19 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
   const path = 'orders';
   const q = query(collection(db, path), orderBy('orderDate', 'desc'));
   const pollFirebaseDirect = async () => {
-    const directOrders = await readFirestoreCatalogDirect<Order>('orders');
+    const [directOrders, mirror] = await Promise.all([
+      readFirestoreCatalogDirect<Order>('orders'),
+      fetchServerDatabaseMirror(),
+    ]);
     const deletedIds = getDeletedOrderIds();
-    const filtered = directOrders
-      .filter((o) => o && !deletedIds.has(o.id))
-      .sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
-    if (filtered.length > 0) {
-      pushBulkDataToServerMirror({ orders: filtered });
-      onData(filtered);
+    const mirrorOrders: Order[] = Array.isArray(mirror?.orders) ? mirror.orders : [];
+    const combinedRemote = mergeLocalAndCloud(mirrorOrders, directOrders, deletedIds);
+    const merged = mergeLocalAndCloud(getOrders(), combinedRemote, deletedIds).sort(
+      (a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime()
+    );
+    if (merged.length > 0) {
+      pushBulkDataToServerMirror({ orders: merged });
+      onData(merged);
     }
   };
 
@@ -878,10 +953,13 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
           orders.push(o);
         }
       });
-      if (orders.length > 0) {
-        writeFirestoreCatalogDirect('orders', orders);
-        pushBulkDataToServerMirror({ orders });
-        onData(orders);
+      const merged = mergeLocalAndCloud(getOrders(), orders, deletedIds).sort(
+        (a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime()
+      );
+      if (merged.length > 0) {
+        writeFirestoreCatalogDirect('orders', merged);
+        pushBulkDataToServerMirror({ orders: merged });
+        onData(merged);
       }
     },
     (error) => {
@@ -902,28 +980,24 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
   };
 }
 
-// Cloud Mutation Operations (100% Direct Firebase Write + Catalog Update)
+// Cloud Mutation Operations (100% Direct Firebase Write + Catalog Update + Server Mirror)
 export async function saveShopToCloud(shop: Shop) {
   const path = `shops/${shop.id}`;
   const cleaned = cleanForFirestore(shop);
-  syncItemToServerMirror('shops', cleaned);
-  try {
-    await setDoc(doc(db, 'shops', shop.id), cleaned);
-    await upsertItemInFirebaseCatalog('shops', cleaned, 'id');
-  } catch (error) {
+  await syncItemToServerMirror('shops', cleaned);
+  await upsertItemInFirebaseCatalog('shops', cleaned, 'id');
+  setDoc(doc(db, 'shops', shop.id), cleaned).catch((error) => {
     handleFirestoreError(error, OperationType.WRITE, path);
-  }
+  });
 }
 
 export async function deleteShopFromCloud(shopId: string) {
   const path = `shops/${shopId}`;
-  deleteItemFromServerMirror('shops', shopId);
-  try {
-    await deleteDoc(doc(db, 'shops', shopId));
-    await removeItemFromFirebaseCatalog('shops', shopId, 'id');
-  } catch (error) {
+  await deleteItemFromServerMirror('shops', shopId);
+  await removeItemFromFirebaseCatalog('shops', shopId, 'id');
+  deleteDoc(doc(db, 'shops', shopId)).catch((error) => {
     handleFirestoreError(error, OperationType.DELETE, path);
-  }
+  });
 }
 
 export async function saveProductToCloud(product: Product) {
@@ -935,58 +1009,49 @@ export async function saveProductToCloud(product: Product) {
     ...product,
     imageUrl: safeImageUrl,
   });
-  syncItemToServerMirror('products', cleaned);
-  try {
-    await setDoc(doc(db, 'products', product.id), cleaned);
-    await upsertItemInFirebaseCatalog('products', cleaned, 'id');
-  } catch (error) {
+  await syncItemToServerMirror('products', cleaned);
+  await upsertItemInFirebaseCatalog('products', cleaned, 'id');
+  setDoc(doc(db, 'products', product.id), cleaned).catch((error) => {
     handleFirestoreError(error, OperationType.WRITE, path);
-  }
+  });
 }
 
 export async function deleteProductFromCloud(productId: string) {
   const path = `products/${productId}`;
-  deleteItemFromServerMirror('products', productId);
-  try {
-    await deleteDoc(doc(db, 'products', productId));
-    await removeItemFromFirebaseCatalog('products', productId, 'id');
-  } catch (error) {
+  await deleteItemFromServerMirror('products', productId);
+  await removeItemFromFirebaseCatalog('products', productId, 'id');
+  deleteDoc(doc(db, 'products', productId)).catch((error) => {
     handleFirestoreError(error, OperationType.DELETE, path);
-  }
+  });
 }
 
 export async function saveOrderToCloud(order: Order) {
   const path = `orders/${order.id}`;
   const cleaned = cleanForFirestore(order);
-  syncItemToServerMirror('orders', cleaned);
-  try {
-    await setDoc(doc(db, 'orders', order.id), cleaned);
-    await upsertItemInFirebaseCatalog('orders', cleaned, 'id');
-  } catch (error) {
+  await syncItemToServerMirror('orders', cleaned);
+  await upsertItemInFirebaseCatalog('orders', cleaned, 'id');
+  setDoc(doc(db, 'orders', order.id), cleaned).catch((error) => {
     handleFirestoreError(error, OperationType.WRITE, path);
-  }
+  });
 }
 
 export async function deleteOrderFromCloud(orderId: string) {
   const path = `orders/${orderId}`;
-  deleteItemFromServerMirror('orders', orderId);
-  try {
-    await deleteDoc(doc(db, 'orders', orderId));
-    await removeItemFromFirebaseCatalog('orders', orderId, 'id');
-  } catch (error) {
+  await deleteItemFromServerMirror('orders', orderId);
+  await removeItemFromFirebaseCatalog('orders', orderId, 'id');
+  deleteDoc(doc(db, 'orders', orderId)).catch((error) => {
     handleFirestoreError(error, OperationType.DELETE, path);
-  }
+  });
 }
 
 export async function saveDueCollectionToCloud(record: DueCollectionRecord) {
   const path = `dueCollections/${record.id}`;
-  try {
-    const cleaned = cleanForFirestore(record);
-    await setDoc(doc(db, 'dueCollections', record.id), cleaned);
-    await upsertItemInFirebaseCatalog('dueCollections', cleaned, 'id');
-  } catch (error) {
+  const cleaned = cleanForFirestore(record);
+  await syncItemToServerMirror('dueCollections', cleaned);
+  await upsertItemInFirebaseCatalog('dueCollections', cleaned, 'id');
+  setDoc(doc(db, 'dueCollections', record.id), cleaned).catch((error) => {
     handleFirestoreError(error, OperationType.WRITE, path);
-  }
+  });
 }
 
 // Category Cloud Methods

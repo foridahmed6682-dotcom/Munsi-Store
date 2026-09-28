@@ -63,7 +63,8 @@ import {
 } from '../types';
 import { processImageFile } from '../lib/imageUtils';
 import { fetchAllUsers, updateUserRoleAndRoute, getBusinessInfo, saveBusinessInfoToCloud, subscribeToCloudBusinessInfo } from '../lib/firebase';
-import { saveBusinessInfoLocal, DEFAULT_BUSINESS_INFO } from '../lib/storage';
+import { saveBusinessInfoLocal, DEFAULT_BUSINESS_INFO, parseBanglaNumber } from '../lib/storage';
+import { AddShopModal } from './AddShopModal';
 import {
   FullBackupData,
   parseAndValidateBackupJSON,
@@ -95,6 +96,9 @@ interface AdminDashboardViewProps {
   onUpdateProduct: (product: Product) => void;
   onDeleteProduct: (productId: string) => void;
   onAdjustStock: (productId: string, delta: number) => void;
+  onAddShop?: (shop: Shop) => void;
+  onUpdateShop?: (shop: Shop) => void;
+  onDeleteShop?: (shopId: string) => void;
   onAddCategory: (category: Category) => void;
   onUpdateCategory: (category: Category) => void;
   onDeleteCategory: (categoryId: string) => void;
@@ -163,6 +167,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   onUpdateProduct,
   onDeleteProduct,
   onAdjustStock,
+  onAddShop,
+  onUpdateShop,
+  onDeleteShop,
   onAddCategory,
   onUpdateCategory,
   onDeleteCategory,
@@ -255,6 +262,8 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
   // Product Modal State
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
+  const [isAddShopModalOpen, setIsAddShopModalOpen] = useState(false);
+  const [productFormError, setProductFormError] = useState<string | null>(null);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [prodName, setProdName] = useState('');
   const [prodBanglaName, setProdBanglaName] = useState('');
@@ -669,30 +678,43 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   // Product Submit
   const handleProductSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setProductFormError(null);
     if (isUploadingImage) {
+      setProductFormError('অনুগ্রহ করে অপেক্ষা করুন, ছবি প্রসেস হচ্ছে...');
       showToast('অনুগ্রহ করে অপেক্ষা করুন, ছবি প্রসেস হচ্ছে...', 'info');
       return;
     }
-    if (!prodBanglaName.trim() || !prodUnitPrice || !prodCostPrice) {
-      showToast('পণ্যের নাম, বিক্রয় মূল্য ও ক্রয় মূল্য আবশ্যক', 'error');
+    const cleanBangla = prodBanglaName.trim() || prodName.trim();
+    const cleanEng = prodName.trim() || prodBanglaName.trim();
+    if (!cleanBangla) {
+      setProductFormError('পণ্যের নাম লিখুন');
+      showToast('পণ্যের নাম আবশ্যক', 'error');
       return;
     }
 
-    const unitPriceNum = parseFloat(prodUnitPrice) || 0;
-    const discountPriceNum = parseFloat(prodDiscountPrice);
-    const costPriceNum = parseFloat(prodCostPrice) || 0;
-    const stockNum = parseInt(prodStock, 10) || 0;
-    const minAlertNum = parseInt(prodMinAlert, 10) || 5;
+    const unitPriceNum = Math.max(0, parseBanglaNumber(prodUnitPrice, 0));
+    if (unitPriceNum <= 0) {
+      setProductFormError('বিক্রয় মূল্য (৳) সঠিকভাবে লিখুন');
+      showToast('বিক্রয় মূল্য (৳) সঠিকভাবে লিখুন', 'error');
+      return;
+    }
+    const discountPriceNum = parseBanglaNumber(prodDiscountPrice, 0);
+    const rawCost = parseBanglaNumber(prodCostPrice, -1);
+    const costPriceNum = rawCost >= 0 ? rawCost : Math.max(0, Math.round(unitPriceNum * 0.9));
+    const rawStock = prodStock.trim() === '' ? (editingProduct ? editingProduct.stock : 50) : parseBanglaNumber(prodStock, 0);
+    const stockNum = Math.max(0, Math.round(rawStock));
+    const minAlertNum = Math.max(1, Math.round(parseBanglaNumber(prodMinAlert, 5)));
+    const resolvedCategory = prodCategory || categories[0]?.banglaName || 'সাবান ও ডিটারজেন্ট';
 
     if (editingProduct) {
       const updated: Product = {
         ...editingProduct,
         id: editingProduct.id,
-        name: prodName.trim() || prodBanglaName.trim(),
-        banglaName: prodBanglaName.trim(),
+        name: cleanEng,
+        banglaName: cleanBangla,
         sku: prodSku.trim() || editingProduct.sku,
-        category: prodCategory,
-        unit: prodUnit,
+        category: resolvedCategory,
+        unit: prodUnit || 'পিস',
         unitPrice: unitPriceNum,
         discountPrice: !isNaN(discountPriceNum) && discountPriceNum > 0 ? discountPriceNum : undefined,
         costPrice: costPriceNum,
@@ -704,15 +726,15 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         imageUrl: prodImageUrl.trim() || editingProduct.imageUrl || '',
       };
       onUpdateProduct(updated);
-      showToast(`'${prodBanglaName}' পণ্যের তথ্য আপডেট করা হয়েছে`, 'success');
+      showToast(`'${cleanBangla}' পণ্যের তথ্য আপডেট করা হয়েছে`, 'success');
     } else {
       const newProduct: Product = {
         id: `prod-${Date.now()}`,
-        name: prodName.trim() || prodBanglaName.trim(),
-        banglaName: prodBanglaName.trim(),
+        name: cleanEng,
+        banglaName: cleanBangla,
         sku: prodSku.trim() || `SKU-${Date.now().toString().slice(-5)}`,
-        category: prodCategory,
-        unit: prodUnit,
+        category: resolvedCategory,
+        unit: prodUnit || 'পিস',
         unitPrice: unitPriceNum,
         discountPrice: !isNaN(discountPriceNum) && discountPriceNum > 0 ? discountPriceNum : undefined,
         costPrice: costPriceNum,
@@ -726,7 +748,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500&auto=format&fit=crop&q=80',
       };
       onAddProduct(newProduct);
-      showToast(`নতুন পণ্য '${prodBanglaName}' সফলভাবে আপলোড করা হয়েছে!`, 'success');
+      setProductSearch('');
+      setProductCategoryFilter('all');
+      showToast(`নতুন পণ্য '${cleanBangla}' সফলভাবে আপলোড করা হয়েছে!`, 'success');
     }
 
     setIsProductModalOpen(false);
@@ -949,10 +973,17 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={openCreateProductModal}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold text-xs shadow-md transition-all active:scale-95"
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold text-xs shadow-md transition-all active:scale-95 cursor-pointer"
             >
               <Upload className="w-3.5 h-3.5" />
               <span>প্রোডাক্ট আপলোড</span>
+            </button>
+            <button
+              onClick={() => setIsAddShopModalOpen(true)}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-neutral-950 font-bold text-xs shadow-md transition-all active:scale-95 cursor-pointer"
+            >
+              <Store className="w-3.5 h-3.5" />
+              <span>নতুন দোকান যুক্ত</span>
             </button>
             <button
               onClick={openCreateCategoryModal}
@@ -3887,6 +3918,13 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             </div>
 
             <form onSubmit={handleProductSubmit} className="mt-4 space-y-3">
+              {productFormError && (
+                <div className="p-3 bg-rose-50 border border-rose-300 rounded-xl text-rose-800 font-bold text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{productFormError}</span>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-neutral-700 mb-1">
@@ -3951,6 +3989,8 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                     <option value="ডজন">ডজন</option>
                     <option value="বস্তা">বস্তা</option>
                     <option value="প্যাকেট">প্যাকেট</option>
+                    <option value="বক্স">বক্স</option>
+                    <option value="বোতল">বোতল</option>
                     <option value="কেজি">কেজি</option>
                     <option value="লিটার">লিটার</option>
                   </select>
@@ -3974,27 +4014,27 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                     বিক্রয় মূল্য (৳) <span className="text-rose-500">*</span>
                   </label>
                   <input
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
                     required
-                    min="0"
-                    step="0.01"
-                    placeholder="3850"
+                    placeholder="৩৮৫০"
                     value={prodUnitPrice}
-                    onChange={(e) => setProdUnitPrice(e.target.value)}
+                    onChange={(e) => {
+                      setProdUnitPrice(e.target.value);
+                      if (productFormError) setProductFormError(null);
+                    }}
                     className="w-full px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600 font-mono font-bold"
                   />
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold text-neutral-700 mb-1">
-                    ক্রয় মূল্য (৳) <span className="text-rose-500">*</span>
+                    ক্রয় মূল্য (৳) (ঐচ্ছিক)
                   </label>
                   <input
-                    type="number"
-                    required
-                    min="0"
-                    step="0.01"
-                    placeholder="3680"
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="৩৬৮০"
                     value={prodCostPrice}
                     onChange={(e) => setProdCostPrice(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600 font-mono"
@@ -4004,9 +4044,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 <div>
                   <label className="block text-xs font-bold text-neutral-700 mb-1">বর্তমান স্টক</label>
                   <input
-                    type="number"
-                    min="0"
-                    placeholder="25"
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="৫০"
                     value={prodStock}
                     onChange={(e) => setProdStock(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600 font-mono"
@@ -4016,9 +4056,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 <div>
                   <label className="block text-xs font-bold text-neutral-700 mb-1">মিনিমাম অ্যালার্ট</label>
                   <input
-                    type="number"
-                    min="1"
-                    placeholder="10"
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="১০"
                     value={prodMinAlert}
                     onChange={(e) => setProdMinAlert(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600 font-mono"
@@ -4032,10 +4072,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                     কাস্টমার ডিসকাউন্ট মূল্য (৳) (ঐচ্ছিক)
                   </label>
                   <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    placeholder="যেমন: 165 (ছাড়ের পর দাম)"
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="যেমন: ১৬৫ (ছাড়ের পর দাম)"
                     value={prodDiscountPrice}
                     onChange={(e) => setProdDiscountPrice(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl border border-red-200 bg-red-50/30 text-xs focus:outline-none focus:border-[#E21E26] font-mono font-bold text-[#E21E26]"
@@ -4369,6 +4408,21 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* MODAL: ADD SHOP FROM ADMIN DASHBOARD */}
+      <AddShopModal
+        isOpen={isAddShopModalOpen}
+        onClose={() => setIsAddShopModalOpen(false)}
+        onSaveShop={(newShop) => {
+          if (onAddShop) {
+            onAddShop(newShop);
+          }
+          setIsAddShopModalOpen(false);
+          showToast(`দোকান "${newShop.name}" সফলভাবে যুক্ত হয়েছে!`, 'success');
+        }}
+        existingShops={shops}
+        routes={routes}
+      />
     </div>
   );
 };

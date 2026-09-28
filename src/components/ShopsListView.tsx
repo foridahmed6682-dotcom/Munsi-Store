@@ -22,6 +22,7 @@ import {
 import { Shop, PaymentMethod, Route, Order, DueCollectionRecord } from '../types';
 import { AddShopModal } from './AddShopModal';
 import { getBusinessInfo } from '../lib/firebase';
+import { parseBanglaNumber } from '../lib/storage';
 
 interface ShopsListViewProps {
   shops: Shop[];
@@ -139,9 +140,8 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
   const handleDueSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!collectingShop) return;
-    const amount = parseFloat(collectAmount);
+    const amount = parseBanglaNumber(collectAmount, 0);
     if (isNaN(amount) || amount <= 0) {
-      alert('সঠিক টাকার অংক লিখুন');
       return;
     }
 
@@ -641,7 +641,8 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
               <div>
                 <label className="font-bold text-neutral-700 block mb-1">আদায়কৃত টাকার পরিমাণ (৳) *</label>
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   required
                   value={collectAmount}
                   onChange={(e) => setCollectAmount(e.target.value)}
@@ -713,6 +714,11 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
             onUpdateShop(shop);
           } else {
             onAddShop(shop);
+            setSearch('');
+            setDateFilter('');
+            if (selectedRoute !== 'all' && selectedRoute !== shop.routeArea) {
+              setSelectedRoute('all');
+            }
           }
           setIsAddOpen(false);
           setEditingShop(null);

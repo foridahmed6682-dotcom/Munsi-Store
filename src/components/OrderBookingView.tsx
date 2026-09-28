@@ -1188,6 +1188,11 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
         onClose={() => setIsAddShopModalOpen(false)}
         onSaveShop={(newShop) => {
           onAddShop(newShop);
+          setShopSearch('');
+          setShopDateFilter('');
+          if (routeFilter !== 'all' && routeFilter !== newShop.routeArea) {
+            setRouteFilter('all');
+          }
           setSelectedShopId(newShop.id);
         }}
         existingShops={shops}

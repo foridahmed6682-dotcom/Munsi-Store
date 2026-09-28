@@ -284,6 +284,81 @@ export default function App() {
             setOrders(merged);
             updatedAny = true;
           }
+          // Auto-recover any products referenced inside orders that are missing from catalog and not deleted
+          const currentOrds = getOrders();
+          const currentProds = getProducts();
+          const delProdIds = getDeletedProductIds();
+          const existingProdIds = new Set(currentProds.map((p) => p.id));
+          let recoveredAnyProd = false;
+          for (const ord of currentOrds) {
+            for (const item of ord.items || []) {
+              if (
+                item.productId &&
+                item.productName &&
+                !existingProdIds.has(item.productId) &&
+                !delProdIds.has(item.productId)
+              ) {
+                existingProdIds.add(item.productId);
+                const recoveredProd: Product = {
+                  id: item.productId,
+                  name: item.productName,
+                  banglaName: item.productName,
+                  sku: `SKU-${item.productId.slice(-5)}`,
+                  category: 'সাবান ও ডিটারজেন্ট',
+                  unit: item.unit || 'পিস',
+                  unitPrice: item.unitPrice || 100,
+                  costPrice: Math.max(1, Math.round((item.unitPrice || 100) * 0.88)),
+                  stock: 50,
+                  minStockAlert: 5,
+                  imageUrl: 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500&auto=format&fit=crop&q=80',
+                };
+                currentProds.unshift(recoveredProd);
+                saveProductToCloud(recoveredProd).catch(() => {});
+                recoveredAnyProd = true;
+              }
+            }
+          }
+          if (recoveredAnyProd) {
+            saveProducts(currentProds);
+            setProducts([...currentProds]);
+            updatedAny = true;
+          }
+          // Auto-recover any shops referenced inside orders that are missing from catalog and not deleted
+          const currentShps = getShops();
+          const delShopIds = getDeletedShopIds();
+          const existingShopIds = new Set(currentShps.map((s) => s.id));
+          let recoveredAnyShop = false;
+          for (const ord of currentOrds) {
+            if (
+              ord.shopId &&
+              ord.shopId !== 'shop-direct-customer' &&
+              ord.shopName &&
+              !existingShopIds.has(ord.shopId) &&
+              !delShopIds.has(ord.shopId)
+            ) {
+              existingShopIds.add(ord.shopId);
+              const recoveredShop: Shop = {
+                id: ord.shopId,
+                name: ord.shopName,
+                ownerName: ord.customerName || 'মালিক',
+                phone: ord.shopPhone || '',
+                routeArea: ord.deliveryZone || 'পলাশবাড়ী',
+                address: ord.shopAddress || 'পলাশবাড়ী',
+                previousDue: 0,
+                category: 'জেনারেল স্টোর / মুদি',
+                lastVisitDate: ord.orderDate ? ord.orderDate.split('T')[0] : new Date().toISOString().split('T')[0],
+                createdAt: ord.orderDate || new Date().toISOString(),
+              };
+              currentShps.unshift(recoveredShop);
+              saveShopToCloud(recoveredShop).catch(() => {});
+              recoveredAnyShop = true;
+            }
+          }
+          if (recoveredAnyShop) {
+            saveShops(currentShps);
+            setShops([...currentShps]);
+            updatedAny = true;
+          }
           if (Array.isArray(mirror.categories) && mirror.categories.length > 0) {
             const merged = mergeById(getCategories(), mirror.categories, getDeletedCategoryIds());
             saveCategories(merged);
@@ -340,37 +415,43 @@ export default function App() {
       });
 
       unsubscribeShops = subscribeToCloudShops((cloudShops) => {
-        if (cloudShops.length > 0 || getShops().length === 0) {
-          saveShops(cloudShops);
-          setShops(cloudShops);
+        const merged = mergeById(getShops(), cloudShops, getDeletedShopIds());
+        if (merged.length > 0 || getShops().length === 0) {
+          saveShops(merged);
+          setShops(merged);
         }
       });
 
       unsubscribeProducts = subscribeToCloudProducts((cloudProducts) => {
-        if (cloudProducts.length > 0 || getProducts().length === 0) {
-          saveProducts(cloudProducts);
-          setProducts(cloudProducts);
+        const merged = mergeById(getProducts(), cloudProducts, getDeletedProductIds());
+        if (merged.length > 0 || getProducts().length === 0) {
+          saveProducts(merged);
+          setProducts(merged);
         }
       });
 
       unsubscribeOrders = subscribeToCloudOrders((cloudOrders) => {
-        if (cloudOrders.length > 0 || getOrders().length === 0) {
-          saveOrders(cloudOrders);
-          setOrders(cloudOrders);
+        const merged = mergeById(getOrders(), cloudOrders, getDeletedOrderIds());
+        merged.sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
+        if (merged.length > 0 || getOrders().length === 0) {
+          saveOrders(merged);
+          setOrders(merged);
         }
       });
 
       unsubscribeCategories = subscribeToCloudCategories((cloudCategories) => {
-        if (cloudCategories.length > 0 || getCategories().length === 0) {
-          saveCategories(cloudCategories);
-          setCategories(cloudCategories);
+        const merged = mergeById(getCategories(), cloudCategories, getDeletedCategoryIds());
+        if (merged.length > 0 || getCategories().length === 0) {
+          saveCategories(merged);
+          setCategories(merged);
         }
       });
 
       unsubscribeRoutes = subscribeToCloudRoutes((cloudRoutes) => {
-        if (cloudRoutes && cloudRoutes.length > 0) {
-          saveRoutes(cloudRoutes);
-          setRoutes(cloudRoutes);
+        const merged = mergeById(getRoutes(), cloudRoutes || [], getDeletedRouteIds());
+        if (merged.length > 0) {
+          saveRoutes(merged);
+          setRoutes(merged);
         } else {
           const fallbackRoutes = getRoutes();
           setRoutes(fallbackRoutes);
@@ -670,6 +751,7 @@ export default function App() {
 
   // Add Shop Handler (also auto-creates Route if custom/new routeArea)
   const handleAddShop = (shop: Shop) => {
+    setShops((prev) => [shop, ...prev.filter((s) => s.id !== shop.id)]);
     saveShop(shop);
     saveShopToCloud(shop).catch(() => {});
     if (shop.routeArea && shop.routeArea.trim()) {
@@ -697,6 +779,15 @@ export default function App() {
 
   // Update Shop Handler (also auto-creates Route if custom/new routeArea)
   const handleUpdateShop = (shop: Shop) => {
+    setShops((prev) => {
+      const idx = prev.findIndex((s) => s.id === shop.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = shop;
+        return next;
+      }
+      return [shop, ...prev];
+    });
     saveShop(shop);
     saveShopToCloud(shop).catch(() => {});
     if (shop.routeArea && shop.routeArea.trim()) {
@@ -744,16 +835,38 @@ export default function App() {
 
   // Add Product Handler
   const handleAddProduct = (product: Product) => {
-    setProducts((prev) => [product, ...prev.filter((p) => p.id !== product.id)]);
     saveProduct(product);
+    setProducts((prev) => [product, ...prev.filter((p) => p.id !== product.id)]);
     saveProductToCloud(product).catch((err) => {
       console.warn('Could not sync added product to cloud:', err);
     });
+    if (product.category && product.category.trim()) {
+      const cleanCat = product.category.trim();
+      const catExists = categories.some(
+        (c) =>
+          c.banglaName.trim() === cleanCat ||
+          c.name.trim().toLowerCase() === cleanCat.toLowerCase()
+      );
+      if (!catExists) {
+        const newCat: Category = {
+          id: `cat-${Date.now()}`,
+          name: cleanCat,
+          banglaName: cleanCat,
+          description: `${cleanCat} পণ্য সমূহ`,
+          color: '#10b981',
+          createdAt: new Date().toISOString(),
+        };
+        addOrUpdateCategory(newCat);
+        saveCategoryToCloud(newCat).catch(() => {});
+      }
+    }
+    reloadData();
     showToast(`পণ্য "${product.banglaName}" সফলভাবে যুক্ত হয়েছে!`, 'success');
   };
 
   // Update Product Handler
   const handleUpdateProduct = (product: Product) => {
+    saveProduct(product);
     setProducts((prev) => {
       const idx = prev.findIndex((p) => p.id === product.id);
       if (idx >= 0) {
@@ -763,10 +876,10 @@ export default function App() {
       }
       return [product, ...prev];
     });
-    saveProduct(product);
     saveProductToCloud(product).catch((err) => {
       console.warn('Could not sync updated product to cloud:', err);
     });
+    reloadData();
     showToast(`পণ্য "${product.banglaName}" সফলভাবে আপডেট হয়েছে!`, 'success');
   };
 
@@ -1584,6 +1697,9 @@ export default function App() {
                 onUpdateProduct={handleUpdateProduct}
                 onDeleteProduct={handleDeleteProduct}
                 onAdjustStock={handleAdjustStock}
+                onAddShop={handleAddShop}
+                onUpdateShop={handleUpdateShop}
+                onDeleteShop={handleDeleteShop}
                 onAddCategory={handleAddCategory}
                 onUpdateCategory={handleUpdateCategory}
                 onDeleteCategory={handleDeleteCategory}

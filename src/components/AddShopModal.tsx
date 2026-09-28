@@ -17,6 +17,7 @@ import {
   ShieldAlert
 } from 'lucide-react';
 import { Shop, Route } from '../types';
+import { normalizeBanglaDigits, parseBanglaNumber } from '../lib/storage';
 
 interface AddShopModalProps {
   isOpen: boolean;
@@ -304,6 +305,8 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
   const [name, setName] = useState('');
   const [ownerName, setOwnerName] = useState('');
   const [phone, setPhone] = useState('');
+  const [previousDueInput, setPreviousDueInput] = useState('0');
+  const [formError, setFormError] = useState<string | null>(null);
   const [routeArea, setRouteArea] = useState(initialRoute || '');
   const [isCustomRoute, setIsCustomRoute] = useState(false);
   const [customRouteInput, setCustomRouteInput] = useState('');
@@ -450,11 +453,13 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
       setMapSearchQuery('');
       setNearbyLandmarkSuggestions([]);
       setShowLocationPermissionPopup(false);
+      setFormError(null);
 
       if (editShop) {
         setName(editShop.name || '');
         setOwnerName(editShop.ownerName || '');
         setPhone(editShop.phone || '');
+        setPreviousDueInput(String(editShop.previousDue || 0));
         const existingRoute = editShop.routeArea || '';
         if (existingRoute && !availableRouteNames.includes(existingRoute)) {
           setIsCustomRoute(true);
@@ -478,6 +483,7 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
         setName('');
         setOwnerName('');
         setPhone('');
+        setPreviousDueInput('0');
         const defaultRoute =
           initialRoute ||
           (routes && routes.length > 0 ? routes[0].banglaName : availableRouteNames[0] || 'পলাশবাড়ী');
@@ -796,32 +802,27 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError(null);
     if (!name.trim()) {
-      alert('দোকানের নাম আবশ্যক');
-      return;
-    }
-    if (!phone.trim()) {
-      alert('মোবাইল নম্বর আবশ্যক');
+      setFormError('দোকানের নাম লিখুন');
       return;
     }
 
-    const resolvedRoute = isCustomRoute ? customRouteInput.trim() : routeArea.trim();
-    if (!resolvedRoute) {
-      alert('অনুগ্রহ করে একটি রুট নির্বাচন করুন অথবা নতুন রুটের নাম লিখুন');
-      return;
-    }
+    const rawRoute = isCustomRoute ? customRouteInput.trim() : routeArea.trim();
+    const resolvedRoute = rawRoute || availableRouteNames[0] || 'পলাশবাড়ী';
+    const parsedDue = Math.max(0, Math.round(parseBanglaNumber(previousDueInput, editShop?.previousDue || 0)));
 
     const savedShop: Shop = {
       ...(editShop
         ? editShop
         : {
             id: `shop-${Date.now()}`,
-            previousDue: 0,
             createdAt: new Date().toISOString(),
           }),
       name: name.trim(),
       ownerName: ownerName.trim() || 'মালিক',
-      phone: phone.trim(),
+      phone: normalizeBanglaDigits(phone.trim()),
+      previousDue: parsedDue,
       routeArea: resolvedRoute,
       address: address.trim() || `${resolvedRoute} বাজার সংলগ্ন`,
       category: category,
@@ -865,6 +866,13 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4 text-xs sm:text-sm">
+            {formError && (
+              <div className="p-3 bg-rose-50 border border-rose-300 rounded-2xl text-rose-800 font-bold text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{formError}</span>
+              </div>
+            )}
+
             {/* 1. দোকানের নাম */}
             <div>
               <label className="font-bold text-neutral-900 block mb-1.5 text-sm">
@@ -874,7 +882,10 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
                 type="text"
                 required
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  if (formError) setFormError(null);
+                }}
                 placeholder="যেমন: মেসার্স জনতা স্টোর বা নিউ ঢাকা জেনারেল"
                 className="w-full px-3.5 py-3 border border-neutral-300 rounded-2xl focus:ring-2 focus:ring-emerald-600 focus:outline-hidden font-medium text-neutral-900 bg-white text-sm"
               />
@@ -894,19 +905,33 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
               />
             </div>
 
-            {/* 3. মোবাইল নম্বর * (Stacked full-width matching screenshot) */}
-            <div>
-              <label className="font-bold text-neutral-900 block mb-1.5 text-sm">
-                মোবাইল নম্বর <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="tel"
-                required
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="০১৭১xxxxxxx"
-                className="w-full px-3.5 py-3 border border-neutral-300 rounded-2xl focus:ring-2 focus:ring-emerald-600 focus:outline-hidden font-medium text-neutral-900 bg-white text-sm"
-              />
+            {/* 3. মোবাইল নম্বর ও প্রারম্ভিক বকেয়া */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="font-bold text-neutral-900 block mb-1.5 text-sm">
+                  মোবাইল নম্বর (ঐচ্ছিক)
+                </label>
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="০১৭১xxxxxxx"
+                  className="w-full px-3.5 py-3 border border-neutral-300 rounded-2xl focus:ring-2 focus:ring-emerald-600 focus:outline-hidden font-medium text-neutral-900 bg-white text-sm"
+                />
+              </div>
+              <div>
+                <label className="font-bold text-neutral-900 block mb-1.5 text-sm">
+                  পূর্বের বকেয়া (৳)
+                </label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={previousDueInput}
+                  onChange={(e) => setPreviousDueInput(e.target.value)}
+                  placeholder="০"
+                  className="w-full px-3.5 py-3 border border-neutral-300 rounded-2xl focus:ring-2 focus:ring-emerald-600 focus:outline-hidden font-bold text-neutral-900 bg-white text-sm"
+                />
+              </div>
             </div>
 
             {/* 4. রুট নির্বাচন করুন (Select Route) * (Exact screenshot layout) */}

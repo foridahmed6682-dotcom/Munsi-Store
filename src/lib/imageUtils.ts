@@ -9,8 +9,8 @@
 
 export async function processImageFile(
   file: File,
-  maxDimension: number = 640,
-  maxBase64Length: number = 180 * 1024 // ~135KB binary / 180KB Base64 chars
+  maxDimension: number = 480,
+  maxBase64Length: number = 65 * 1024 // ~48KB binary / 65KB Base64 chars so 15+ products fit in a single Firestore doc
 ): Promise<string> {
   if (!file) {
     throw new Error('কোনো ফাইল নির্বাচন করা হয়নি');
@@ -115,8 +115,8 @@ export async function processImageFile(
  */
 export async function compressDataUrlIfNeeded(
   imageUrl: string,
-  maxDimension: number = 640,
-  maxBase64Length: number = 180 * 1024
+  maxDimension: number = 480,
+  maxBase64Length: number = 65 * 1024
 ): Promise<string> {
   if (!imageUrl || !imageUrl.startsWith('data:image/') || imageUrl.length <= maxBase64Length) {
     return imageUrl;

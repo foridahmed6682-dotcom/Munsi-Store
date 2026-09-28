@@ -16,7 +16,7 @@ import {
   Upload
 } from 'lucide-react';
 import { Product, Category } from '../types';
-import { DEMO_PRODUCT_IDS } from '../lib/storage';
+import { DEMO_PRODUCT_IDS, parseBanglaNumber } from '../lib/storage';
 import { processImageFile } from '../lib/imageUtils';
 
 interface InventoryViewProps {
@@ -166,10 +166,16 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       return;
     }
 
-    const unitPriceNum = parseFloat(newUnitPrice) || 0;
-    const costPriceNum = parseFloat(newCostPrice) || 0;
-    const stockNum = parseInt(newStock, 10) || 0;
-    const minAlertNum = parseInt(newMinAlert, 10) || 5;
+    const unitPriceNum = Math.max(0, parseBanglaNumber(newUnitPrice, 0));
+    if (unitPriceNum <= 0) {
+      setUploadStatusMsg({ text: 'বিক্রয় রেট (৳) সঠিকভাবে লিখুন', isError: true });
+      return;
+    }
+    const rawCost = parseBanglaNumber(newCostPrice, -1);
+    const costPriceNum = rawCost >= 0 ? rawCost : Math.max(0, Math.round(unitPriceNum * 0.9));
+    const rawStock = newStock.trim() === '' ? (editingProduct ? editingProduct.stock : 50) : parseBanglaNumber(newStock, 0);
+    const stockNum = Math.max(0, Math.round(rawStock));
+    const minAlertNum = Math.max(1, Math.round(parseBanglaNumber(newMinAlert, 5)));
 
     if (editingProduct && onUpdateProduct) {
       const updated: Product = {
@@ -178,8 +184,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         name: newProdName.trim() || newBanglaName.trim(),
         banglaName: newBanglaName.trim() || newProdName.trim(),
         sku: newSku.trim() || editingProduct.sku,
-        category: newCategory,
-        unit: newUnit,
+        category: newCategory || 'সাবান ও ডিটারজেন্ট',
+        unit: newUnit || 'পিস',
         unitPrice: unitPriceNum,
         costPrice: costPriceNum,
         stock: stockNum,
@@ -194,16 +200,20 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         name: newProdName.trim() || newBanglaName.trim(),
         banglaName: newBanglaName.trim() || newProdName.trim(),
         sku: newSku.trim() || `SKU-${Date.now().toString().slice(-4)}`,
-        category: newCategory,
-        unit: newUnit,
+        category: newCategory || 'সাবান ও ডিটারজেন্ট',
+        unit: newUnit || 'পিস',
         unitPrice: unitPriceNum,
         costPrice: costPriceNum,
         stock: stockNum,
         minStockAlert: minAlertNum,
         tradeOfferDesc: newTradeOffer.trim() || '',
-        imageUrl: newImageUrl.trim() || '',
+        imageUrl:
+          newImageUrl.trim() ||
+          'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500&auto=format&fit=crop&q=80',
       };
       onAddProduct(created);
+      setSearch('');
+      setCategoryFilter('all');
     }
 
     setIsAddProductOpen(false);
@@ -587,6 +597,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                     <option value="কেজি">কেজি</option>
                     <option value="পিস">পিস</option>
                     <option value="প্যাকেট">প্যাকেট</option>
+                    <option value="বক্স">বক্স</option>
+                    <option value="বোতল">বোতল</option>
                     <option value="লিটার">লিটার</option>
                   </select>
                 </div>
@@ -598,29 +610,26 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                     বিক্রয় রেট (৳) <span className="text-rose-500">*</span>
                   </label>
                   <input
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
                     required
-                    min="0"
-                    step="0.01"
                     value={newUnitPrice}
                     onChange={(e) => setNewUnitPrice(e.target.value)}
-                    placeholder="1950"
+                    placeholder="১৯৫০"
                     className="w-full p-2 border border-neutral-300 rounded-xl font-bold font-mono focus:outline-none focus:border-emerald-600"
                   />
                 </div>
 
                 <div>
                   <label className="font-bold text-neutral-700 block mb-1">
-                    ক্রয় রেট (৳) <span className="text-rose-500">*</span>
+                    ক্রয় রেট (৳) (ঐচ্ছিক)
                   </label>
                   <input
-                    type="number"
-                    required
-                    min="0"
-                    step="0.01"
+                    type="text"
+                    inputMode="decimal"
                     value={newCostPrice}
                     onChange={(e) => setNewCostPrice(e.target.value)}
-                    placeholder="1800"
+                    placeholder="১৮০০"
                     className="w-full p-2 border border-neutral-300 rounded-xl font-mono focus:outline-none focus:border-emerald-600"
                   />
                 </div>
@@ -628,11 +637,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 <div>
                   <label className="font-bold text-neutral-700 block mb-1">বর্তমান স্টক</label>
                   <input
-                    type="number"
-                    min="0"
+                    type="text"
+                    inputMode="numeric"
                     value={newStock}
                     onChange={(e) => setNewStock(e.target.value)}
-                    placeholder="50"
+                    placeholder="৫০"
                     className="w-full p-2 border border-neutral-300 rounded-xl font-mono focus:outline-none focus:border-emerald-600"
                   />
                 </div>
@@ -640,11 +649,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 <div>
                   <label className="font-bold text-neutral-700 block mb-1">অ্যালার্ট লেভেল</label>
                   <input
-                    type="number"
-                    min="1"
+                    type="text"
+                    inputMode="numeric"
                     value={newMinAlert}
                     onChange={(e) => setNewMinAlert(e.target.value)}
-                    placeholder="10"
+                    placeholder="১০"
                     className="w-full p-2 border border-neutral-300 rounded-xl font-mono focus:outline-none focus:border-emerald-600"
                   />
                 </div>
