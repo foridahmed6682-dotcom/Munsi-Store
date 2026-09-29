@@ -909,33 +909,18 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
               />
             </div>
 
-            {/* 3. মোবাইল নম্বর ও প্রারম্ভিক বকেয়া */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="font-bold text-neutral-900 block mb-1.5 text-sm">
-                  মোবাইল নম্বর (ঐচ্ছিক)
-                </label>
-                <input
-                  type="tel"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="০১৭১xxxxxxx"
-                  className="w-full px-3.5 py-3 border border-neutral-300 rounded-2xl focus:ring-2 focus:ring-emerald-600 focus:outline-hidden font-medium text-neutral-900 bg-white text-sm"
-                />
-              </div>
-              <div>
-                <label className="font-bold text-neutral-900 block mb-1.5 text-sm">
-                  পূর্বের বকেয়া (৳)
-                </label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={previousDueInput}
-                  onChange={(e) => setPreviousDueInput(e.target.value)}
-                  placeholder="০"
-                  className="w-full px-3.5 py-3 border border-neutral-300 rounded-2xl focus:ring-2 focus:ring-emerald-600 focus:outline-hidden font-bold text-neutral-900 bg-white text-sm"
-                />
-              </div>
+            {/* 3. মোবাইল নম্বর */}
+            <div>
+              <label className="font-bold text-neutral-900 block mb-1.5 text-sm">
+                মোবাইল নম্বর (ঐচ্ছিক)
+              </label>
+              <input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="০১৭১xxxxxxx"
+                className="w-full px-3.5 py-3 border border-neutral-300 rounded-2xl focus:ring-2 focus:ring-emerald-600 focus:outline-hidden font-medium text-neutral-900 bg-white text-sm"
+              />
             </div>
 
             {/* 4. রুট নির্বাচন করুন (Select Route) * (Exact screenshot layout) */}

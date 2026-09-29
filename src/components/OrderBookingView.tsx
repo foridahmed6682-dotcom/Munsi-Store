@@ -557,18 +557,18 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                   </button>
                 )}
 
-                <div
-                  className={`px-3 py-1 rounded-xl font-bold flex items-center gap-1.5 ${
-                    selectedShop.previousDue > 8000
-                      ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                      : selectedShop.previousDue > 0
-                      ? 'bg-amber-50 text-amber-800 border border-amber-200'
-                      : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                  }`}
-                >
-                  {selectedShop.previousDue > 8000 && <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />}
-                  <span>পূর্বের বকেয়া: ৳{selectedShop.previousDue.toLocaleString()}</span>
-                </div>
+                {selectedShop.previousDue > 0 && (
+                  <div
+                    className={`px-3 py-1 rounded-xl font-bold flex items-center gap-1.5 ${
+                      selectedShop.previousDue > 8000
+                        ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                        : 'bg-amber-50 text-amber-800 border border-amber-200'
+                    }`}
+                  >
+                    {selectedShop.previousDue > 8000 && <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />}
+                    <span>পূর্বের বকেয়া: ৳{selectedShop.previousDue.toLocaleString()}</span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1189,7 +1189,6 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
         onSaveShop={(newShop) => {
           onAddShop(newShop);
           setShopSearch('');
-          setShopDateFilter('');
           if (routeFilter !== 'all' && routeFilter !== newShop.routeArea) {
             setRouteFilter('all');
           }

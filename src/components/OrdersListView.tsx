@@ -32,7 +32,7 @@ import {
 } from 'lucide-react';
 import { Order, Shop, PaymentMethod, DueCollectionRecord, DailyExpenseRecord } from '../types';
 import { getBusinessInfo } from '../lib/firebase';
-import { printOrdersBatch } from '../lib/printService';
+import { OrderPrintMode, printOrdersBatch } from '../lib/printService';
 
 interface OrdersListViewProps {
   orders: Order[];
@@ -146,7 +146,7 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
   const [timeFilter, setTimeFilter] = useState<'TODAY' | 'YESTERDAY' | 'WEEK' | 'CUSTOM' | 'ALL'>('ALL');
   const [customDate, setCustomDate] = useState<string>('');
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
-  const [bulkPrintMode, setBulkPrintMode] = useState<'slips' | 'table'>('slips');
+  const [bulkPrintMode, setBulkPrintMode] = useState<OrderPrintMode>('slips');
 
   const toggleSelectOrder = (id: string) => {
     setSelectedOrderIds((prev) => {
@@ -721,8 +721,8 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
-            {/* Format Toggle: Slips vs Summary Table */}
-            <div className="flex items-center bg-white border border-blue-200 rounded-xl p-0.5">
+            {/* Format Toggle: Slips vs Summary Table vs Product Summary */}
+            <div className="flex flex-wrap items-center bg-white border border-blue-200 rounded-xl p-0.5">
               <button
                 type="button"
                 onClick={() => setBulkPrintMode('slips')}
@@ -732,7 +732,7 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                     : 'text-blue-900 hover:bg-blue-50'
                 }`}
               >
-                মেমো স্লিপ
+                📄 মেমো স্লিপ
               </button>
               <button
                 type="button"
@@ -743,7 +743,18 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                     : 'text-blue-900 hover:bg-blue-50'
                 }`}
               >
-                সামারি তালিকা
+                📊 অর্ডার সামারি
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkPrintMode('product_summary')}
+                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
+                  bulkPrintMode === 'product_summary'
+                    ? 'bg-teal-700 text-white'
+                    : 'text-teal-900 hover:bg-teal-50'
+                }`}
+              >
+                📦 পণ্যের সামারি
               </button>
             </div>
 
@@ -1626,11 +1637,20 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                   </a>
                   <button
                     type="button"
-                    onClick={() => window.print()}
-                    className="px-4 py-2.5 bg-neutral-900 hover:bg-neutral-800 text-white rounded-xl font-extrabold text-xs flex items-center gap-1.5 shadow-sm cursor-pointer"
+                    onClick={() =>
+                      printOrdersBatch(
+                        loadSheetData.targetOrders,
+                        'product_summary',
+                        `(${
+                          loadSheetRoute === 'ALL' ? 'সকল রুট' : loadSheetRoute
+                        } • ${loadSheetData.ordersCount}টি মেমো)`
+                      )
+                    }
+                    disabled={loadSheetData.targetOrders.length === 0}
+                    className="px-4 py-2.5 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-40 text-white rounded-xl font-extrabold text-xs flex items-center gap-1.5 shadow-sm cursor-pointer"
                   >
                     <Printer className="w-4 h-4" />
-                    <span>লোডশিট প্রিন্ট / PDF</span>
+                    <span>লোডশিট / পণ্যের সামারি প্রিন্ট / PDF</span>
                   </button>
                 </div>
               </div>

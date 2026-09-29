@@ -81,14 +81,157 @@ export function triggerGlobalPrint(htmlContent: string): void {
   }, 80);
 }
 
-// 1. PRINT ORDERS (Individual Memo Slips OR Summary Table)
+export type OrderPrintMode = 'slips' | 'table' | 'product_summary';
+
+// 1. PRINT ORDERS (Individual Memo Slips OR Summary Table OR Product Summary / Loading Sheet)
 export function printOrdersBatch(
   orders: Order[],
-  mode: 'slips' | 'table' = 'slips',
+  mode: OrderPrintMode = 'slips',
   titleSuffix = ''
 ): void {
   if (!orders || orders.length === 0) return;
   const biz = getBusinessInfo();
+
+  if (mode === 'product_summary') {
+    const itemMap = new Map<
+      string,
+      {
+        productId: string;
+        productName: string;
+        unit: string;
+        unitPrice: number;
+        totalQty: number;
+        totalFreeQty: number;
+        totalLoadQty: number;
+        totalValue: number;
+        shopsSet: Set<string>;
+      }
+    >();
+
+    const uniqueShops = new Set<string>();
+    let grandTotalValue = 0;
+    let totalPaid = 0;
+    let totalDue = 0;
+
+    orders.forEach((ord) => {
+      uniqueShops.add(ord.shopId || ord.shopName);
+      grandTotalValue += Number(ord.netTotal || 0);
+      totalPaid += Number(ord.paidAmount || 0);
+      totalDue += Number(ord.dueAmount || 0);
+
+      ord.items.forEach((it) => {
+        const key = `${it.productId || it.productName}__${it.unit}`;
+        const prev = itemMap.get(key);
+        const qty = Number(it.quantity || 0);
+        const freeQty = Number(it.tradeOfferQty || 0);
+        const lineVal = Number(it.lineTotal || 0);
+        if (prev) {
+          prev.totalQty += qty;
+          prev.totalFreeQty += freeQty;
+          prev.totalLoadQty += qty + freeQty;
+          prev.totalValue += lineVal;
+          prev.shopsSet.add(ord.shopId || ord.shopName);
+        } else {
+          itemMap.set(key, {
+            productId: it.productId,
+            productName: it.productName,
+            unit: it.unit,
+            unitPrice: Number(it.unitPrice || 0),
+            totalQty: qty,
+            totalFreeQty: freeQty,
+            totalLoadQty: qty + freeQty,
+            totalValue: lineVal,
+            shopsSet: new Set([ord.shopId || ord.shopName]),
+          });
+        }
+      });
+    });
+
+    const aggregatedItems = Array.from(itemMap.values()).sort(
+      (a, b) => b.totalLoadQty - a.totalLoadQty
+    );
+
+    const productRowsHtml = aggregatedItems
+      .map(
+        (item, idx) => `
+        <tr style="border-bottom: 1px solid #cbd5e1;">
+          <td style="padding: 6px; text-align: center;">${idx + 1}</td>
+          <td style="padding: 6px; font-weight: 800; color: #0f172a;">${escapeHtml(
+            item.productName
+          )}</td>
+          <td style="padding: 6px; text-align: right;">৳${item.unitPrice.toLocaleString()}</td>
+          <td style="padding: 6px; text-align: center; font-weight: 700;">${
+            item.totalQty
+          } ${escapeHtml(item.unit)}</td>
+          <td style="padding: 6px; text-align: center; color: #047857; font-weight: 700;">${
+            item.totalFreeQty > 0 ? `+${item.totalFreeQty} ${escapeHtml(item.unit)}` : '---'
+          }</td>
+          <td style="padding: 6px; text-align: center; font-weight: 900; background: #f0fdfa; color: #0f766e; font-size: 13px;">${
+            item.totalLoadQty
+          } ${escapeHtml(item.unit)}</td>
+          <td style="padding: 6px; text-align: center;">${item.shopsSet.size} টি দোকান</td>
+          <td style="padding: 6px; text-align: right; font-weight: 800;">৳${item.totalValue.toLocaleString()}</td>
+        </tr>
+      `
+      )
+      .join('');
+
+    const html = `
+      <div style="padding: 16px; font-family: 'Hind Siliguri', sans-serif; color: #0f172a;">
+        ${getHeaderHtml(
+          `অর্ডারকৃত পণ্যের সামারি ও ডেলিভারি লোডিং শীট ${titleSuffix}`,
+          `মোট মেমো: ${orders.length} টি | মোট দোকান: ${uniqueShops.size} টি | মোট পণ্যের আইটেম: ${aggregatedItems.length} টি | সর্বমোট মূল্য: ৳${grandTotalValue.toLocaleString()}`
+        )}
+
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; font-size: 11.5px;">
+          <div style="border: 1px solid #94a3b8; border-radius: 6px; padding: 6px 8px; background: #f8fafc;">
+            <div style="color: #475569;">মোট মেমো / দোকান</div>
+            <div style="font-size: 14px; font-weight: 900;">${orders.length} মেমো (${uniqueShops.size} দোকান)</div>
+          </div>
+          <div style="border: 1px solid #94a3b8; border-radius: 6px; padding: 6px 8px; background: #f8fafc;">
+            <div style="color: #475569;">মোট পণ্যের আইটেম</div>
+            <div style="font-size: 14px; font-weight: 900;">${aggregatedItems.length} টি পণ্য</div>
+          </div>
+          <div style="border: 1px solid #94a3b8; border-radius: 6px; padding: 6px 8px; background: #f8fafc;">
+            <div style="color: #475569;">সর্বমোট বিল</div>
+            <div style="font-size: 14px; font-weight: 900;">৳${grandTotalValue.toLocaleString()}</div>
+          </div>
+          <div style="border: 1px solid #94a3b8; border-radius: 6px; padding: 6px 8px; background: #f8fafc;">
+            <div style="color: #475569;">নগদ জমা / বাকী</div>
+            <div style="font-size: 12px; font-weight: 800;"><span style="color:#047857;">জমা: ৳${totalPaid.toLocaleString()}</span> • <span style="color:#be123c;">বাকী: ৳${totalDue.toLocaleString()}</span></div>
+          </div>
+        </div>
+
+        <table style="width: 100%; border-collapse: collapse; font-size: 12px; border: 1px solid #94a3b8;">
+          <thead>
+            <tr style="background: #f1f5f9; border-bottom: 1.5px solid #64748b; font-weight: 800;">
+              <th style="padding: 7px 6px; width: 34px; text-align: center;">#</th>
+              <th style="padding: 7px 6px; text-align: left;">পণ্যের নাম</th>
+              <th style="padding: 7px 6px; text-align: right;">দর (৳)</th>
+              <th style="padding: 7px 6px; text-align: center;">অর্ডার পরিমাণ</th>
+              <th style="padding: 7px 6px; text-align: center;">ফ্রি / অফার</th>
+              <th style="padding: 7px 6px; text-align: center; background: #ccfbf1; color: #115e59;">মোট লোড পরিমাণ</th>
+              <th style="padding: 7px 6px; text-align: center;">দোকান সংখ্যা</th>
+              <th style="padding: 7px 6px; text-align: right;">মোট মূল্য (৳)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${productRowsHtml}
+          </tbody>
+          <tfoot>
+            <tr style="background: #f8fafc; border-top: 2px solid #334155; font-weight: 900; font-size: 12.5px;">
+              <td colspan="7" style="padding: 8px; text-align: right;">সর্বমোট পণ্যের বাজার মূল্য (${orders.length} টি মেমো):</td>
+              <td style="padding: 8px 6px; text-align: right;">৳${grandTotalValue.toLocaleString()}</td>
+            </tr>
+          </tfoot>
+        </table>
+        ${getSignatureFooterHtml()}
+      </div>
+    `;
+
+    triggerGlobalPrint(html);
+    return;
+  }
 
   if (mode === 'slips') {
     const slipsHtml = orders

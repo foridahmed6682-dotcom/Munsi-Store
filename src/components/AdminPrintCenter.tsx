@@ -13,7 +13,13 @@ import {
   CheckSquare,
   Square,
   ListChecks,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Calendar,
+  Filter,
+  PackageCheck,
+  Clock,
+  CheckCircle2,
+  RotateCcw
 } from 'lucide-react';
 import {
   Product,
@@ -26,6 +32,7 @@ import {
   AuthorizedUserEmail
 } from '../types';
 import {
+  OrderPrintMode,
   printOrdersBatch,
   printProductsBatch,
   printShopsBatch,
@@ -46,6 +53,9 @@ type PrintCategoryKey =
   | 'expenses'
   | 'collections'
   | 'staff';
+
+type PrintTimeFilter = 'ALL' | 'TODAY' | 'YESTERDAY' | 'WEEK' | 'CUSTOM';
+type PrintOrderStatusFilter = 'ALL' | 'PENDING' | 'DELIVERED' | 'CANCELLED';
 
 interface AdminPrintCenterProps {
   products: Product[];
@@ -69,9 +79,22 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
   authorizedEmails,
 }) => {
   const [activeListType, setActiveListType] = useState<PrintCategoryKey>('orders');
-  const [orderPrintMode, setOrderPrintMode] = useState<'slips' | 'table'>('slips');
+  const [orderPrintMode, setOrderPrintMode] = useState<OrderPrintMode>('slips');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // Date & Delivery Status Filters for Printing
+  const [timeFilter, setTimeFilter] = useState<PrintTimeFilter>('ALL');
+  const [customDate, setCustomDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [statusFilter, setStatusFilter] = useState<PrintOrderStatusFilter>('ALL');
+  const [routeFilter, setRouteFilter] = useState<string>('ALL');
+
+  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const yesterdayStr = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().split('T')[0];
+  }, []);
 
   const switchCategory = (key: PrintCategoryKey) => {
     setActiveListType(key);
@@ -79,26 +102,128 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
     setSelectedIds(new Set());
   };
 
+  // Helper to check if an ISO or YYYY-MM-DD date string matches the active timeFilter
+  const matchesDateFilter = (dateStr: string): boolean => {
+    if (!dateStr || timeFilter === 'ALL') return true;
+    const prefix = dateStr.split('T')[0];
+    if (timeFilter === 'TODAY') return prefix === todayStr;
+    if (timeFilter === 'YESTERDAY') return prefix === yesterdayStr;
+    if (timeFilter === 'WEEK') {
+      const itemMs = new Date(dateStr).getTime();
+      const sevenDaysAgo = Date.now() - 7 * 24 * 3600 * 1000;
+      return itemMs >= sevenDaysAgo;
+    }
+    if (timeFilter === 'CUSTOM') {
+      if (!customDate) return true;
+      return prefix === customDate;
+    }
+    return true;
+  };
+
+  // Human-readable filter suffix for printed report headers
+  const activeFilterSummaryLabel = useMemo(() => {
+    const parts: string[] = [];
+    if (timeFilter === 'TODAY') parts.push(`আজ (${todayStr})`);
+    else if (timeFilter === 'YESTERDAY') parts.push(`গতকাল (${yesterdayStr})`);
+    else if (timeFilter === 'WEEK') parts.push('গত ৭ দিন');
+    else if (timeFilter === 'CUSTOM' && customDate) parts.push(`তারিখ: ${customDate}`);
+
+    if (statusFilter === 'PENDING') parts.push('অপেক্ষমান (Pending)');
+    else if (statusFilter === 'DELIVERED') parts.push('ডেলিভার্ড (Delivered)');
+    else if (statusFilter === 'CANCELLED') parts.push('বাতিল');
+
+    if (routeFilter !== 'ALL') parts.push(`রুট: ${routeFilter}`);
+
+    return parts.length > 0 ? `[${parts.join(' • ')}]` : '';
+  }, [timeFilter, customDate, statusFilter, routeFilter, todayStr, yesterdayStr]);
+
+  // Filtered Orders according to Date, Delivery Status, Route & Search
+  const filteredOrders = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return orders.filter((o) => {
+      if (!matchesDateFilter(o.orderDate)) return false;
+      if (statusFilter !== 'ALL' && o.deliveryStatus !== statusFilter) return false;
+      if (routeFilter !== 'ALL' && o.shopRoute !== routeFilter) return false;
+      if (
+        q &&
+        !o.memoNumber.toLowerCase().includes(q) &&
+        !o.shopName.toLowerCase().includes(q) &&
+        !(o.shopPhone || '').toLowerCase().includes(q) &&
+        !(o.shopRoute || '').toLowerCase().includes(q)
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }, [orders, timeFilter, customDate, statusFilter, routeFilter, searchQuery, todayStr, yesterdayStr]);
+
+  // Quick counts by status for the currently selected date & route filter
+  const statusCountsForDate = useMemo(() => {
+    const dateMatched = orders.filter(
+      (o) => matchesDateFilter(o.orderDate) && (routeFilter === 'ALL' || o.shopRoute === routeFilter)
+    );
+    return {
+      all: dateMatched.length,
+      pending: dateMatched.filter((o) => o.deliveryStatus === 'PENDING').length,
+      delivered: dateMatched.filter((o) => o.deliveryStatus === 'DELIVERED').length,
+      cancelled: dateMatched.filter((o) => o.deliveryStatus === 'CANCELLED').length,
+    };
+  }, [orders, timeFilter, customDate, routeFilter, todayStr, yesterdayStr]);
+
+  // Filtered Expenses & Collections by Date
+  const filteredExpenses = useMemo(() => {
+    return dailyExpenses.filter((e) => matchesDateFilter(e.date));
+  }, [dailyExpenses, timeFilter, customDate, todayStr, yesterdayStr]);
+
+  const filteredCollections = useMemo(() => {
+    return dueCollections.filter((c) => matchesDateFilter(c.date));
+  }, [dueCollections, timeFilter, customDate, todayStr, yesterdayStr]);
+
+  // Filtered Shops by Route
+  const filteredShops = useMemo(() => {
+    if (routeFilter === 'ALL') return shops;
+    return shops.filter((s) => s.routeArea === routeFilter);
+  }, [shops, routeFilter]);
+
+  // Distinct Routes across orders & shops
+  const availableRoutes = useMemo(() => {
+    const set = new Set<string>();
+    routes.forEach((r) => {
+      if (r.banglaName) set.add(r.banglaName);
+    });
+    orders.forEach((o) => {
+      if (o.shopRoute) set.add(o.shopRoute);
+    });
+    shops.forEach((s) => {
+      if (s.routeArea) set.add(s.routeArea);
+    });
+    return Array.from(set);
+  }, [routes, orders, shops]);
+
   // Build normalized items list for 1-by-1 & multi-select printing
   const currentListItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     switch (activeListType) {
       case 'orders':
-        return orders
-          .filter(
-            (o) =>
-              !q ||
-              o.memoNumber.toLowerCase().includes(q) ||
-              o.shopName.toLowerCase().includes(q) ||
-              (o.shopPhone || '').toLowerCase().includes(q) ||
-              (o.shopRoute || '').toLowerCase().includes(q)
-          )
-          .map((o) => ({
-            id: o.id,
-            title: `মেমো #${o.memoNumber} — ${o.shopName}`,
-            subtitle: `তারিখ: ${new Date(o.orderDate).toLocaleDateString('en-GB')} • মোট বিল: ৳${o.netTotal.toLocaleString()} • আইটেম: ${o.items.length}টি`,
-            badge: o.deliveryStatus === 'DELIVERED' ? 'ডেলিভার্ড' : 'অপেক্ষমান',
-          }));
+        return filteredOrders.map((o) => ({
+          id: o.id,
+          title: `মেমো #${o.memoNumber} — ${o.shopName}`,
+          subtitle: `তারিখ: ${new Date(o.orderDate).toLocaleDateString('en-GB')} • রুট: ${
+            o.shopRoute || '---'
+          } • মোট বিল: ৳${o.netTotal.toLocaleString()} • আইটেম: ${o.items.length}টি`,
+          badge:
+            o.deliveryStatus === 'DELIVERED'
+              ? '✅ ডেলিভার্ড'
+              : o.deliveryStatus === 'CANCELLED'
+              ? '❌ বাতিল'
+              : '⏳ অপেক্ষমান',
+          badgeTone:
+            o.deliveryStatus === 'DELIVERED'
+              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+              : o.deliveryStatus === 'CANCELLED'
+              ? 'bg-rose-50 text-rose-800 border-rose-200'
+              : 'bg-amber-50 text-amber-900 border-amber-200',
+        }));
       case 'products':
         return products
           .filter(
@@ -114,9 +239,10 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
             title: `${p.banglaName} (${p.name})`,
             subtitle: `ক্যাটাগরি: ${p.category} • দর: ৳${p.unitPrice}/${p.unit} • স্টক: ${p.stock} ${p.unit}`,
             badge: `SKU: ${p.sku}`,
+            badgeTone: 'bg-neutral-100 text-neutral-600 border-neutral-200',
           }));
       case 'shops':
-        return shops
+        return filteredShops
           .filter(
             (s) =>
               !q ||
@@ -130,6 +256,7 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
             title: s.name,
             subtitle: `মালিক: ${s.ownerName} • ফোন: ${s.phone} • বকেয়া: ৳${(s.previousDue || 0).toLocaleString()}`,
             badge: s.routeArea || 'রুট নেই',
+            badgeTone: 'bg-neutral-100 text-neutral-600 border-neutral-200',
           }));
       case 'categories':
         return categories
@@ -144,6 +271,7 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
             title: c.banglaName,
             subtitle: `ইংরেজি নাম: ${c.name} ${c.description ? `• ${c.description}` : ''}`,
             badge: 'ক্যাটাগরি',
+            badgeTone: 'bg-neutral-100 text-neutral-600 border-neutral-200',
           }));
       case 'routes':
         return routes
@@ -158,9 +286,10 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
             title: r.banglaName,
             subtitle: `${r.name} ${r.description ? `• ${r.description}` : ''}`,
             badge: 'রুট/এরিয়া',
+            badgeTone: 'bg-neutral-100 text-neutral-600 border-neutral-200',
           }));
       case 'expenses':
-        return dailyExpenses
+        return filteredExpenses
           .filter(
             (e) =>
               !q ||
@@ -173,9 +302,10 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
             title: `${e.category} — ৳${e.amount.toLocaleString()}`,
             subtitle: `তারিখ: ${e.date} ${e.note ? `• বিবরণ: ${e.note}` : ''} ${e.recordedBy ? `• এন্ট্রি: ${e.recordedBy}` : ''}`,
             badge: `৳${e.amount}`,
+            badgeTone: 'bg-neutral-100 text-neutral-600 border-neutral-200',
           }));
       case 'collections':
-        return dueCollections
+        return filteredCollections
           .filter(
             (c) =>
               !q ||
@@ -187,6 +317,7 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
             title: `${c.shopName} — জমা: ৳${c.amount.toLocaleString()}`,
             subtitle: `তারিখ: ${new Date(c.date).toLocaleDateString('en-GB')} • মাধ্যম: ${c.paymentMethod}`,
             badge: 'বকেয়া আদায়',
+            badgeTone: 'bg-neutral-100 text-neutral-600 border-neutral-200',
           }));
       case 'staff':
         return authorizedEmails
@@ -201,6 +332,7 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
             title: a.fullName ? `${a.fullName} (${a.email})` : a.email,
             subtitle: `রোল: ${a.role.toUpperCase()} • রুট: ${a.assignedRoute || 'সব রুট'}`,
             badge: a.role.toUpperCase(),
+            badgeTone: 'bg-neutral-100 text-neutral-600 border-neutral-200',
           }));
       default:
         return [];
@@ -208,13 +340,13 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
   }, [
     activeListType,
     searchQuery,
-    orders,
+    filteredOrders,
     products,
-    shops,
+    filteredShops,
     categories,
     routes,
-    dailyExpenses,
-    dueCollections,
+    filteredExpenses,
+    filteredCollections,
     authorizedEmails,
   ]);
 
@@ -285,15 +417,15 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
   };
 
   // Print only checkbox-selected items
-  const handleBatchSelectedPrint = () => {
+  const handleBatchSelectedPrint = (overrideMode?: OrderPrintMode) => {
     if (selectedIds.size === 0) return;
-    const suffix = `(নির্বাচিত ${selectedIds.size} টি)`;
+    const suffix = `${activeFilterSummaryLabel} (নির্বাচিত ${selectedIds.size} টি)`.trim();
 
     switch (activeListType) {
       case 'orders':
         printOrdersBatch(
           orders.filter((o) => selectedIds.has(o.id)),
-          orderPrintMode,
+          overrideMode || orderPrintMode,
           suffix
         );
         break;
@@ -344,17 +476,18 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
     }
   };
 
-  // Print all items in the active tab
-  const handleTriggerCurrentBulkAll = () => {
+  // Print all items in the active tab (respecting Date / Status / Route filters)
+  const handleTriggerCurrentBulkAll = (overrideMode?: OrderPrintMode) => {
+    const suffix = activeFilterSummaryLabel || '(সকল ডাটা)';
     switch (activeListType) {
       case 'orders':
-        printOrdersBatch(orders, orderPrintMode, '(সকল মেমো)');
+        printOrdersBatch(filteredOrders, overrideMode || orderPrintMode, suffix);
         break;
       case 'products':
         printProductsBatch(products, '(সকল পণ্য)');
         break;
       case 'shops':
-        printShopsBatch(shops, '(সকল দোকান)');
+        printShopsBatch(filteredShops, suffix);
         break;
       case 'categories':
         printCategoriesBatch(categories, products, '(সকল ক্যাটাগরি)');
@@ -363,10 +496,10 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
         printRoutesBatch(routes, shops, '(সকল রুট)');
         break;
       case 'expenses':
-        printExpensesBatch(dailyExpenses, '(সকল খরচ)');
+        printExpensesBatch(filteredExpenses, suffix);
         break;
       case 'collections':
-        printCollectionsBatch(dueCollections, '(সকল বকেয়া আদায়)');
+        printCollectionsBatch(filteredCollections, suffix);
         break;
       case 'staff':
         printStaffBatch(authorizedEmails, '(সকল স্টাফ)');
@@ -384,17 +517,36 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
     bulkBtnText: string;
     secondaryBtnText?: string;
     onSecondaryPrint?: () => void;
+    tertiaryBtnText?: string;
+    onTertiaryPrint?: () => void;
   }> = [
     {
       key: 'orders',
-      title: 'সকল অর্ডার ও মেমো স্লিপ',
-      count: orders.length,
+      title: 'অর্ডার, মেমো ও পণ্যের সামারি',
+      count: filteredOrders.length,
       unitLabel: 'টি মেমো',
       icon: <FileText className="w-5 h-5 text-blue-600" />,
-      onBulkPrint: () => printOrdersBatch(orders, 'slips', '(সকল মেমো স্লিপ)'),
-      bulkBtnText: '১-ক্লিকে সব মেমো স্লিপ প্রিন্ট',
-      secondaryBtnText: 'মেমো সামারি তালিকা প্রিন্ট',
-      onSecondaryPrint: () => printOrdersBatch(orders, 'table', '(সকল অর্ডার তালিকা)'),
+      onBulkPrint: () =>
+        printOrdersBatch(
+          filteredOrders,
+          'slips',
+          `${activeFilterSummaryLabel || '(সকল মেমো স্লিপ)'}`
+        ),
+      bulkBtnText: `১-ক্লিকে মেমো স্লিপ প্রিন্ট (${filteredOrders.length})`,
+      secondaryBtnText: `📊 অর্ডার সামারি টেবিল প্রিন্ট (${filteredOrders.length})`,
+      onSecondaryPrint: () =>
+        printOrdersBatch(
+          filteredOrders,
+          'table',
+          `${activeFilterSummaryLabel || '(অর্ডার সামারি)'}`
+        ),
+      tertiaryBtnText: `📦 পণ্যের সামারি / লোডিং শীট প্রিন্ট (${filteredOrders.length})`,
+      onTertiaryPrint: () =>
+        printOrdersBatch(
+          filteredOrders,
+          'product_summary',
+          `${activeFilterSummaryLabel || '(পণ্যের সামারি)'}`
+        ),
     },
     {
       key: 'products',
@@ -408,10 +560,11 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
     {
       key: 'shops',
       title: 'সকল দোকান ও বকেয়া খাতা',
-      count: shops.length,
+      count: filteredShops.length,
       unitLabel: 'টি দোকান',
       icon: <Store className="w-5 h-5 text-blue-600" />,
-      onBulkPrint: () => printShopsBatch(shops, '(সকল দোকান ও বকেয়া)'),
+      onBulkPrint: () =>
+        printShopsBatch(filteredShops, activeFilterSummaryLabel || '(সকল দোকান ও বকেয়া)'),
       bulkBtnText: '১-ক্লিকে সব দোকান ও বকেয়া প্রিন্ট',
     },
     {
@@ -435,19 +588,19 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
     {
       key: 'expenses',
       title: 'দৈনিক খরচ হিসাব (Expenses)',
-      count: dailyExpenses.length,
+      count: filteredExpenses.length,
       unitLabel: 'টি খরচ রেকর্ড',
       icon: <Wallet className="w-5 h-5 text-blue-600" />,
-      onBulkPrint: () => printExpensesBatch(dailyExpenses),
+      onBulkPrint: () => printExpensesBatch(filteredExpenses, activeFilterSummaryLabel),
       bulkBtnText: '১-ক্লিকে সব খরচ প্রিন্ট',
     },
     {
       key: 'collections',
       title: 'বকেয়া আদায় রেকর্ড (Collections)',
-      count: dueCollections.length,
+      count: filteredCollections.length,
       unitLabel: 'টি আদায় রেকর্ড',
       icon: <DollarSign className="w-5 h-5 text-blue-600" />,
-      onBulkPrint: () => printCollectionsBatch(dueCollections),
+      onBulkPrint: () => printCollectionsBatch(filteredCollections, activeFilterSummaryLabel),
       bulkBtnText: '১-ক্লিকে সব বকেয়া আদায় প্রিন্ট',
     },
     {
@@ -472,43 +625,223 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
               অ্যাডমিন প্রিন্ট কন্ট্রোল সেন্টার (Bulk & Select Print Hub)
             </span>
             <h2 className="text-xl sm:text-2xl font-black text-white">
-              ১-ক্লিকে বাল্ক প্রিন্ট এবং ১টা ১টা করে সিলেক্ট করে প্রিন্ট সেন্টার
+              ১-ক্লিকে বাল্ক প্রিন্ট, পণ্যের সামারি এবং তারিখ ও স্ট্যাটাস অনুযায়ী প্রিন্ট সেন্টার
             </h2>
             <p className="text-xs text-blue-100/85 max-w-2xl leading-relaxed">
-              ডিলিট সিস্টেমের মতোই এখান থেকে যেকোনো ক্যাটাগরির সব ডাটা (মেমো স্লিপ, প্রোডাক্ট লিস্ট, দোকান ও বকেয়া খাতা, রুট, খরচ) আলাদা আলাদা বাটনে <strong>১-ক্লিকে বাল্ক প্রিন্ট / PDF সেভ</strong> করতে পারবেন অথবা নিচের তালিকা থেকে <strong>১টা ১টা করে (কিংবা টিক চিহ্ন দিয়ে বাছাই করে)</strong> প্রিন্ট করতে পারবেন।
+              এখান থেকে <strong>তারিখ অনুযায়ী (আজ, গতকাল, নির্দিষ্ট তারিখ)</strong> এবং <strong>অপেক্ষমান (Pending) বা ডেলিভার্ড (Delivered)</strong> অনুযায়ী ফিল্টার করে <strong>মেমো স্লিপ, অর্ডার সামারি টেবিল এবং পণ্যের সামারি (লোডিং শীট)</strong> ১-ক্লিকে অথবা টিক চিহ্ন দিয়ে প্রিন্ট করতে পারবেন।
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
             <button
               type="button"
-              onClick={() => printOrdersBatch(orders, 'slips', '(সকল মেমো স্লিপ)')}
-              disabled={orders.length === 0}
+              onClick={() =>
+                printOrdersBatch(
+                  filteredOrders,
+                  'product_summary',
+                  activeFilterSummaryLabel || '(পণ্যের সামারি)'
+                )
+              }
+              disabled={filteredOrders.length === 0}
+              className="px-4 py-2.5 rounded-2xl bg-teal-400 hover:bg-teal-300 disabled:opacity-40 text-neutral-950 font-black text-xs flex items-center gap-1.5 shadow-lg cursor-pointer transition-all active:scale-95"
+            >
+              <PackageCheck className="w-4 h-4" />
+              <span>১-ক্লিকে পণ্যের সামারি প্রিন্ট ({filteredOrders.length} মেমো)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                printOrdersBatch(
+                  filteredOrders,
+                  'slips',
+                  activeFilterSummaryLabel || '(সকল মেমো স্লিপ)'
+                )
+              }
+              disabled={filteredOrders.length === 0}
               className="px-4 py-2.5 rounded-2xl bg-amber-400 hover:bg-amber-300 disabled:opacity-40 text-neutral-950 font-black text-xs flex items-center gap-1.5 shadow-lg cursor-pointer transition-all active:scale-95"
             >
               <Printer className="w-4 h-4" />
-              <span>সব মেমো স্লিপ ১-ক্লিকে প্রিন্ট ({orders.length}টি)</span>
+              <span>সব মেমো স্লিপ প্রিন্ট ({filteredOrders.length}টি)</span>
             </button>
 
             <button
               type="button"
               onClick={() =>
                 printMasterEverythingReport({
-                  orders,
+                  orders: filteredOrders,
                   products,
-                  shops,
+                  shops: filteredShops,
                   categories,
                   routes,
-                  dailyExpenses,
-                  dueCollections,
+                  dailyExpenses: filteredExpenses,
+                  dueCollections: filteredCollections,
                   authorizedEmails,
                 })
               }
               className="px-4 py-2.5 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white border border-blue-400 font-black text-xs flex items-center gap-1.5 shadow-lg cursor-pointer transition-all active:scale-95"
             >
               <FileSpreadsheet className="w-4 h-4" />
-              <span>১-ক্লিকে সম্পূর্ণ মাস্টার রিপোর্ট প্রিন্ট</span>
+              <span>সম্পূর্ণ মাস্টার রিপোর্ট প্রিন্ট</span>
             </button>
+          </div>
+        </div>
+      </div>
+
+      {/* GLOBAL FILTER BAR: DATE FILTER + DELIVERY STATUS FILTER + ROUTE FILTER */}
+      <div className="bg-white rounded-3xl border-2 border-blue-200 p-4 sm:p-5 shadow-xs space-y-3.5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-neutral-100">
+          <div className="flex items-center gap-2">
+            <Filter className="w-4 h-4 text-blue-600" />
+            <h3 className="text-sm font-black text-neutral-900">
+              তারিখ, অপেক্ষমান (Pending) ও ডেলিভার্ড (Delivered) অনুযায়ী ফিল্টার করে প্রিন্ট করুন
+            </h3>
+            {activeFilterSummaryLabel && (
+              <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-900 text-[11px] font-black">
+                সক্রিয় ফিল্টার: {activeFilterSummaryLabel}
+              </span>
+            )}
+          </div>
+
+          {(timeFilter !== 'ALL' || statusFilter !== 'ALL' || routeFilter !== 'ALL') && (
+            <button
+              type="button"
+              onClick={() => {
+                setTimeFilter('ALL');
+                setStatusFilter('ALL');
+                setRouteFilter('ALL');
+                setSelectedIds(new Set());
+              }}
+              className="px-3 py-1 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold flex items-center gap-1 cursor-pointer self-start sm:self-auto"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>ফিল্টার রিসেট করুন</span>
+            </button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-center">
+          {/* 1. Date Filter Pills + Custom Date Picker */}
+          <div className="lg:col-span-6 space-y-1.5">
+            <span className="text-[11px] font-extrabold text-neutral-600 flex items-center gap-1">
+              <Calendar className="w-3.5 h-3.5 text-blue-600" />
+              <span>তারিখ অনুযায়ী ফিল্টার (Date Filter):</span>
+            </span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {[
+                { id: 'ALL' as PrintTimeFilter, label: 'সব তারিখ' },
+                { id: 'TODAY' as PrintTimeFilter, label: 'আজকের অর্ডার' },
+                { id: 'YESTERDAY' as PrintTimeFilter, label: 'গতকালের অর্ডার' },
+                { id: 'WEEK' as PrintTimeFilter, label: 'গত ৭ দিন' },
+                { id: 'CUSTOM' as PrintTimeFilter, label: '📅 নির্দিষ্ট তারিখ' },
+              ].map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => {
+                    setTimeFilter(t.id);
+                    setSelectedIds(new Set());
+                  }}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all ${
+                    timeFilter === t.id
+                      ? 'bg-blue-600 text-white shadow-xs font-black'
+                      : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+
+              {timeFilter === 'CUSTOM' && (
+                <input
+                  type="date"
+                  value={customDate}
+                  onChange={(e) => {
+                    setCustomDate(e.target.value);
+                    setSelectedIds(new Set());
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl border-2 border-blue-500 bg-white text-neutral-900 font-black text-xs focus:outline-none"
+                />
+              )}
+            </div>
+          </div>
+
+          {/* 2. Delivery Status Filter Pills (All / Pending / Delivered) */}
+          <div className="lg:col-span-4 space-y-1.5">
+            <span className="text-[11px] font-extrabold text-neutral-600 flex items-center gap-1">
+              <Clock className="w-3.5 h-3.5 text-amber-600" />
+              <span>ডেলিভারি স্ট্যাটাস (অপেক্ষমান / ডেলিভার্ড):</span>
+            </span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setStatusFilter('ALL');
+                  setSelectedIds(new Set());
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all ${
+                  statusFilter === 'ALL'
+                    ? 'bg-neutral-900 text-white font-black shadow-xs'
+                    : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                }`}
+              >
+                সব ({statusCountsForDate.all})
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setStatusFilter('PENDING');
+                  setSelectedIds(new Set());
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all flex items-center gap-1 ${
+                  statusFilter === 'PENDING'
+                    ? 'bg-amber-500 text-neutral-950 font-black shadow-xs'
+                    : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200'
+                }`}
+              >
+                <Clock className="w-3.5 h-3.5" />
+                <span>অপেক্ষমান ({statusCountsForDate.pending})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setStatusFilter('DELIVERED');
+                  setSelectedIds(new Set());
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all flex items-center gap-1 ${
+                  statusFilter === 'DELIVERED'
+                    ? 'bg-emerald-600 text-white font-black shadow-xs'
+                    : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200'
+                }`}
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>ডেলিভার্ড ({statusCountsForDate.delivered})</span>
+              </button>
+            </div>
+          </div>
+
+          {/* 3. Route Filter Dropdown */}
+          <div className="lg:col-span-2 space-y-1.5">
+            <span className="text-[11px] font-extrabold text-neutral-600 block">
+              রুট ফিল্টার:
+            </span>
+            <select
+              value={routeFilter}
+              onChange={(e) => {
+                setRouteFilter(e.target.value);
+                setSelectedIds(new Set());
+              }}
+              className="w-full px-3 py-1.5 rounded-xl border border-neutral-300 bg-neutral-50 font-bold text-xs text-neutral-800 focus:outline-none focus:border-blue-600"
+            >
+              <option value="ALL">সকল রুট ({availableRoutes.length})</option>
+              {availableRoutes.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       </div>
@@ -522,7 +855,7 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
               <span>১. আলাদা আলাদা বাটনে ১-ক্লিকে সব প্রিন্ট / PDF (1-Click Bulk Print Buttons)</span>
             </h3>
             <p className="text-xs text-neutral-500 mt-0.5">
-              যে অংশটি প্রিন্ট করতে চান তার নিচের নীল বাটনে ১-ক্লিক করলেই সরাসরি প্রিন্ট বা পিডিএফ সেভ পেজ ওপেন হবে
+              উপরের তারিখ বা স্ট্যাটাস ফিল্টার অনুযায়ী ১-ক্লিক করলেই সরাসরি মেমো স্লিপ, অর্ডার সামারি বা পণ্যের সামারি প্রিন্ট হবে
             </p>
           </div>
         </div>
@@ -548,7 +881,7 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
                 </div>
                 <h4 className="font-black text-sm text-neutral-900">{card.title}</h4>
                 <p className="text-[11px] text-neutral-500 mt-0.5">
-                  বর্তমানে জমা আছে: <strong>{card.count} {card.unitLabel}</strong>
+                  ফিল্টারে পাওয়া গেছে: <strong>{card.count} {card.unitLabel}</strong>
                 </p>
               </div>
 
@@ -572,6 +905,18 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
                   >
                     <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
                     <span>{card.secondaryBtnText}</span>
+                  </button>
+                )}
+
+                {card.tertiaryBtnText && card.onTertiaryPrint && (
+                  <button
+                    type="button"
+                    onClick={card.onTertiaryPrint}
+                    disabled={card.count === 0}
+                    className="w-full py-1.5 px-3 rounded-xl bg-teal-50 hover:bg-teal-100 disabled:opacity-40 text-teal-900 border border-teal-300 font-black text-[11px] flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                  >
+                    <PackageCheck className="w-3.5 h-3.5 shrink-0 text-teal-700" />
+                    <span>{card.tertiaryBtnText}</span>
                   </button>
                 )}
 
@@ -609,13 +954,13 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
           {/* Category Switcher Pills */}
           <div className="flex flex-wrap items-center gap-1.5">
             {[
-              { id: 'orders', label: `মেমো (${orders.length})` },
+              { id: 'orders', label: `মেমো (${filteredOrders.length})` },
               { id: 'products', label: `পণ্য (${products.length})` },
-              { id: 'shops', label: `দোকান (${shops.length})` },
+              { id: 'shops', label: `দোকান (${filteredShops.length})` },
               { id: 'categories', label: `ক্যাটাগরি (${categories.length})` },
               { id: 'routes', label: `রুট (${routes.length})` },
-              { id: 'expenses', label: `খরচ (${dailyExpenses.length})` },
-              { id: 'collections', label: `আদায় (${dueCollections.length})` },
+              { id: 'expenses', label: `খরচ (${filteredExpenses.length})` },
+              { id: 'collections', label: `আদায় (${filteredCollections.length})` },
               { id: 'staff', label: `স্টাফ (${authorizedEmails.length})` },
             ].map((tab) => (
               <button
@@ -634,19 +979,26 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
           </div>
         </div>
 
-        {/* If Orders is selected, show Slip vs Summary Table format selector */}
+        {/* If Orders is selected, show Slip vs Order Summary Table vs Product Summary format selector */}
         {activeListType === 'orders' && (
-          <div className="bg-blue-50/70 border border-blue-200 rounded-2xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <span className="text-xs font-extrabold text-blue-950">
-              মেমো প্রিন্ট ফরম্যাট নির্বাচন করুন:
-            </span>
-            <div className="flex items-center gap-2">
+          <div className="bg-blue-50/70 border border-blue-200 rounded-2xl p-3.5 space-y-2.5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <span className="text-xs font-extrabold text-blue-950">
+                মেমো ও পণ্যের প্রিন্ট ফরম্যাট নির্বাচন করুন:
+              </span>
+              {activeFilterSummaryLabel && (
+                <span className="text-[11px] font-bold text-blue-800">
+                  ফিল্টার: {activeFilterSummaryLabel}
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <button
                 type="button"
                 onClick={() => setOrderPrintMode('slips')}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-black cursor-pointer transition-all ${
+                className={`px-3.5 py-2.5 rounded-xl text-xs font-black cursor-pointer transition-all text-center ${
                   orderPrintMode === 'slips'
-                    ? 'bg-blue-600 text-white shadow-xs'
+                    ? 'bg-blue-600 text-white shadow-sm'
                     : 'bg-white text-blue-900 border border-blue-200 hover:bg-blue-100'
                 }`}
               >
@@ -655,13 +1007,24 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
               <button
                 type="button"
                 onClick={() => setOrderPrintMode('table')}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-black cursor-pointer transition-all ${
+                className={`px-3.5 py-2.5 rounded-xl text-xs font-black cursor-pointer transition-all text-center ${
                   orderPrintMode === 'table'
-                    ? 'bg-blue-600 text-white shadow-xs'
+                    ? 'bg-blue-600 text-white shadow-sm'
                     : 'bg-white text-blue-900 border border-blue-200 hover:bg-blue-100'
                 }`}
               >
                 📊 একীভূত অর্ডার সামারি টেবিল
+              </button>
+              <button
+                type="button"
+                onClick={() => setOrderPrintMode('product_summary')}
+                className={`px-3.5 py-2.5 rounded-xl text-xs font-black cursor-pointer transition-all text-center ${
+                  orderPrintMode === 'product_summary'
+                    ? 'bg-teal-700 text-white shadow-sm'
+                    : 'bg-white text-teal-900 border border-teal-300 hover:bg-teal-50'
+                }`}
+              >
+                📦 পণ্যের সামারি / লোডিং শীট (কোন পণ্য কতটি)
               </button>
             </div>
           </div>
@@ -700,32 +1063,57 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
             </button>
 
             {selectedIds.size > 0 && (
-              <button
-                type="button"
-                onClick={handleBatchSelectedPrint}
-                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black flex items-center gap-1.5 shadow-sm cursor-pointer animate-in fade-in"
-              >
-                <Printer className="w-4 h-4" />
-                <span>নির্বাচিত {selectedIds.size} টি বাল্ক প্রিন্ট করুন</span>
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleBatchSelectedPrint()}
+                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black flex items-center gap-1.5 shadow-sm cursor-pointer animate-in fade-in"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>নির্বাচিত {selectedIds.size} টি বাল্ক প্রিন্ট করুন</span>
+                </button>
+
+                {activeListType === 'orders' && orderPrintMode !== 'product_summary' && (
+                  <button
+                    type="button"
+                    onClick={() => handleBatchSelectedPrint('product_summary')}
+                    className="px-3.5 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-black flex items-center gap-1.5 shadow-sm cursor-pointer animate-in fade-in"
+                  >
+                    <PackageCheck className="w-4 h-4" />
+                    <span>নির্বাচিত {selectedIds.size} টির পণ্যের সামারি প্রিন্ট</span>
+                  </button>
+                )}
+              </>
             )}
 
             <button
               type="button"
-              onClick={handleTriggerCurrentBulkAll}
+              onClick={() => handleTriggerCurrentBulkAll()}
               disabled={currentListItems.length === 0}
               className="px-3.5 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-300 text-xs font-black flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
             >
               <Printer className="w-3.5 h-3.5" />
-              <span>এই তালিকার সব প্রিন্ট করুন</span>
+              <span>এই তালিকার সব প্রিন্ট করুন ({currentListItems.length})</span>
             </button>
+
+            {activeListType === 'orders' && (
+              <button
+                type="button"
+                onClick={() => handleTriggerCurrentBulkAll('product_summary')}
+                disabled={currentListItems.length === 0}
+                className="px-3.5 py-2 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-900 border border-teal-300 text-xs font-black flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+              >
+                <PackageCheck className="w-3.5 h-3.5 text-teal-700" />
+                <span>পণ্যের সামারি প্রিন্ট ({currentListItems.length})</span>
+              </button>
+            )}
           </div>
         </div>
 
         {/* Items List for 1-by-1 Selection & Printing */}
         {currentListItems.length === 0 ? (
           <div className="p-8 text-center bg-neutral-50 rounded-2xl border border-dashed border-neutral-200 text-xs text-neutral-500">
-            এই ক্যাটাগরিতে বর্তমানে কোনো ডাটা নেই।
+            নির্বাচিত তারিখ বা স্ট্যাটাস ফিল্টারে কোনো ডাটা পাওয়া যায়নি।
           </div>
         ) : (
           <div className="divide-y divide-neutral-100 border border-neutral-200 rounded-2xl max-h-[460px] overflow-y-auto">
@@ -757,7 +1145,9 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
                         <span className="font-bold text-xs sm:text-sm text-neutral-900 truncate">
                           {item.title}
                         </span>
-                        <span className="px-2 py-0.5 rounded-md bg-neutral-100 border border-neutral-200 text-[10px] font-bold text-neutral-600">
+                        <span
+                          className={`px-2 py-0.5 rounded-md border text-[10px] font-bold ${item.badgeTone}`}
+                        >
                           {item.badge}
                         </span>
                       </div>
