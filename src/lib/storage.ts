@@ -968,6 +968,94 @@ export function deleteDailyExpense(id: string): void {
   saveDailyExpenses(list);
 }
 
+export function deleteDueCollection(id: string): void {
+  const list = getDueCollections().filter((x) => x.id !== id);
+  saveDueCollections(list);
+}
+
+// 1-Click Bulk Delete Local Helpers for Admin Panel
+export function deleteAllProductsLocal(): string[] {
+  const current = getProducts();
+  const ids = current.map((p) => p.id);
+  ids.forEach((id) => addDeletedProductId(id));
+  DEMO_PRODUCT_IDS.forEach((id) => addDeletedProductId(id));
+  localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify([]));
+  return ids;
+}
+
+export function deleteAllShopsLocal(): string[] {
+  const current = getShops();
+  const ids = current.map((s) => s.id);
+  ids.forEach((id) => addDeletedShopId(id));
+  ['shop-1', 'shop-2', 'shop-3', 'shop-4', 'shop-5', 'shop-6'].forEach((id) => addDeletedShopId(id));
+  localStorage.setItem(STORAGE_KEYS.SHOPS, JSON.stringify([]));
+  return ids;
+}
+
+export function deleteAllOrdersLocal(): string[] {
+  const current = getOrders();
+  const ids = current.map((o) => o.id);
+  ids.forEach((id) => addDeletedOrderId(id));
+  ['ord-101', 'ord-102'].forEach((id) => addDeletedOrderId(id));
+  localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify([]));
+  return ids;
+}
+
+export function deleteAllCategoriesLocal(): string[] {
+  const current = getCategories();
+  const ids = current.map((c) => c.id);
+  ids.forEach((id) => addDeletedCategoryId(id));
+  DEMO_CATEGORY_IDS.forEach((id) => addDeletedCategoryId(id));
+  localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify([]));
+  return ids;
+}
+
+export function deleteAllRoutesLocal(): string[] {
+  const current = getRoutes();
+  const ids = current.map((r) => r.id);
+  ids.forEach((id) => addDeletedRouteId(id));
+  DEMO_ROUTE_IDS.forEach((id) => addDeletedRouteId(id));
+  localStorage.setItem(STORAGE_KEYS.ROUTES, JSON.stringify([]));
+  return ids;
+}
+
+export function deleteAllDailyExpensesLocal(): string[] {
+  const current = getDailyExpenses();
+  const ids = current.map((e) => e.id);
+  localStorage.setItem(STORAGE_KEYS.DAILY_EXPENSES, JSON.stringify([]));
+  return ids;
+}
+
+export function deleteAllDueCollectionsLocal(): string[] {
+  const current = getDueCollections();
+  const ids = current.map((c) => c.id);
+  localStorage.setItem(STORAGE_KEYS.COLLECTIONS, JSON.stringify([]));
+  return ids;
+}
+
+export function resetAllShopDuesLocal(): Shop[] {
+  const shops = getShops().map((s) => ({
+    ...s,
+    previousDue: 0,
+  }));
+  saveShops(shops);
+  return shops;
+}
+
+export function deleteAllStaffAuthorizedEmailsLocal(): string[] {
+  const current = getAuthorizedEmails();
+  const superAdmins = new Set(['foridahmed6682@gmail.com', 'ahmedmdforid39@gmail.com']);
+  const removedEmails: string[] = [];
+  const kept = current.filter((item) => {
+    const emailClean = (item.email || '').toLowerCase().trim();
+    if (superAdmins.has(emailClean)) return true;
+    removedEmails.push(emailClean);
+    return false;
+  });
+  saveAuthorizedEmails(kept);
+  return removedEmails;
+}
+
 export function getStaffTargets(): StaffTargetConfig[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.STAFF_TARGETS);

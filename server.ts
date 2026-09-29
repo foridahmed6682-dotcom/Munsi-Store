@@ -76,20 +76,26 @@ function parseFirestoreFields(fields: Record<string, any>): Record<string, any> 
   return out;
 }
 
-// Reads a Firestore document using PATCH + updateMask + currentDocument.exists=true
-// This uses a Firestore Write unit (where 20,000/day are free) and returns the full document even when Read units = 0 (429)!
+// Reads a Firestore document via REST GET, with automatic circuit breaker if daily quota (429) is exhausted
+let serverFirestoreQuotaExhaustedDate = '';
+function isServerFirestoreQuotaExhausted(): boolean {
+  const today = new Date().toISOString().split('T')[0];
+  return serverFirestoreQuotaExhaustedDate === today;
+}
+
 async function readFirestoreDocViaPatch(docPath: string): Promise<Record<string, any> | null> {
   if (!fbConfig.projectId || !fbConfig.firestoreDatabaseId || !fbConfig.apiKey) return null;
+  if (isServerFirestoreQuotaExhausted()) return null;
   const baseUrl = `https://firestore.googleapis.com/v1/projects/${fbConfig.projectId}/databases/${fbConfig.firestoreDatabaseId}/documents`;
   try {
-    const res = await fetch(
-      `${baseUrl}/${docPath}?updateMask.fieldPaths=_syncCheck&currentDocument.exists=true&key=${fbConfig.apiKey}`,
-      {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fields: { _syncCheck: { booleanValue: true } } }),
-      }
-    );
+    const res = await fetch(`${baseUrl}/${docPath}?key=${fbConfig.apiKey}`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (res.status === 429) {
+      serverFirestoreQuotaExhaustedDate = new Date().toISOString().split('T')[0];
+      return null;
+    }
     if (res.status !== 200) return null;
     const data = await res.json();
     if (!data || !data.fields) return null;
@@ -102,9 +108,10 @@ async function readFirestoreDocViaPatch(docPath: string): Promise<Record<string,
 // Saves a JSON catalog array into a single Firestore settings document via PATCH so it can always be recovered in 1 operation
 async function writeFirestoreCatalogViaPatch(catalogKey: string, items: any[]): Promise<void> {
   if (!fbConfig.projectId || !fbConfig.firestoreDatabaseId || !fbConfig.apiKey) return;
+  if (isServerFirestoreQuotaExhausted()) return;
   const baseUrl = `https://firestore.googleapis.com/v1/projects/${fbConfig.projectId}/databases/${fbConfig.firestoreDatabaseId}/documents`;
   try {
-    await fetch(`${baseUrl}/settings/cloud_catalog_${catalogKey}?key=${fbConfig.apiKey}`, {
+    const res = await fetch(`${baseUrl}/settings/cloud_catalog_${catalogKey}?key=${fbConfig.apiKey}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -114,6 +121,9 @@ async function writeFirestoreCatalogViaPatch(catalogKey: string, items: any[]): 
         },
       }),
     });
+    if (res.status === 429) {
+      serverFirestoreQuotaExhaustedDate = new Date().toISOString().split('T')[0];
+    }
   } catch {
     // ignore background cloud sync error
   }
@@ -397,6 +407,29 @@ async function startServer() {
         }
       }
 
+      if (body.clearCollection) {
+        const colsToClear: string[] = Array.isArray(body.clearCollection)
+          ? body.clearCollection
+          : [String(body.clearCollection)];
+        for (const colName of colsToClear) {
+          const col = colName as keyof ServerDatabaseMirror;
+          if (Array.isArray(serverDbMirror[col])) {
+            if (col === 'authorizedEmails') {
+              (serverDbMirror[col] as any[]) = (serverDbMirror[col] as any[]).filter(
+                (x) =>
+                  x &&
+                  (String(x.email || '').toLowerCase() === 'foridahmed6682@gmail.com' ||
+                    String(x.email || '').toLowerCase() === 'ahmedmdforid39@gmail.com')
+              );
+            } else {
+              (serverDbMirror[col] as any[]) = [];
+            }
+            touchedCatalogs.add(String(col));
+            changed = true;
+          }
+        }
+      }
+
       if (Array.isArray(body.products) && body.products.length > 0) {
         serverDbMirror.products = mergeArrayById(serverDbMirror.products, body.products, 'id');
         touchedCatalogs.add('products');
@@ -447,14 +480,23 @@ async function startServer() {
         changed = true;
       }
 
+      const isExplicitMutation = Boolean(
+        body.upsertCollection ||
+          body.deleteCollection ||
+          body.clearCollection ||
+          body.businessInfo
+      );
+
       if (changed) {
         saveServerDbMirror();
-        touchedCatalogs.forEach((catKey) => {
-          const list = (serverDbMirror as any)[catKey];
-          if (Array.isArray(list)) {
-            writeFirestoreCatalogViaPatch(catKey, list);
-          }
-        });
+        if (isExplicitMutation) {
+          touchedCatalogs.forEach((catKey) => {
+            const list = (serverDbMirror as any)[catKey];
+            if (Array.isArray(list)) {
+              writeFirestoreCatalogViaPatch(catKey, list);
+            }
+          });
+        }
       }
       res.json({ success: true, updatedAt: serverDbMirror.updatedAt });
     } catch (err: any) {

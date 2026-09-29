@@ -43,7 +43,17 @@ import {
   getDailyExpenses,
   saveDailyExpenses,
   saveDailyExpense,
-  deleteDailyExpense
+  deleteDailyExpense,
+  deleteDueCollection,
+  deleteAllProductsLocal,
+  deleteAllShopsLocal,
+  deleteAllOrdersLocal,
+  deleteAllCategoriesLocal,
+  deleteAllRoutesLocal,
+  deleteAllDailyExpensesLocal,
+  deleteAllDueCollectionsLocal,
+  resetAllShopDuesLocal,
+  deleteAllStaffAuthorizedEmailsLocal
 } from './lib/storage';
 import {
   subscribeToCloudShops,
@@ -67,8 +77,17 @@ import {
   saveRouteToCloud,
   deleteRouteFromCloud,
   saveDueCollectionToCloud,
+  deleteDueCollectionFromCloud,
   saveDailyExpenseToCloud,
   deleteDailyExpenseFromCloud,
+  deleteAllProductsFromCloud,
+  deleteAllShopsFromCloud,
+  deleteAllOrdersFromCloud,
+  deleteAllCategoriesFromCloud,
+  deleteAllRoutesFromCloud,
+  deleteAllDailyExpensesFromCloud,
+  deleteAllDueCollectionsFromCloud,
+  deleteAllStaffAuthorizedEmailsFromCloud,
   seedInitialCloudDataIfEmpty,
   clearAllCloudMockData,
   subscribeToUserProfileDoc,
@@ -109,6 +128,7 @@ import { InventoryView } from './components/InventoryView';
 import { RouteMapView } from './components/RouteMapView';
 import { AdminDashboardView } from './components/AdminDashboardView';
 import { MemoModal } from './components/MemoModal';
+import { DeleteConfirmModal, DeletePermissionRequest } from './components/DeleteConfirmModal';
 import { Product, Shop, Order, UserProfile, PaymentMethod, UserRole, DueCollectionRecord, DailyExpenseRecord, Category, AuthorizedUserEmail, Route, BusinessInfo } from './types';
 import { CheckCircle2, AlertCircle, ExternalLink, LogIn, Lock } from 'lucide-react';
 import { usePWAInstall } from './hooks/usePWAInstall';
@@ -158,6 +178,16 @@ export default function App() {
   const [selectedMemoOrder, setSelectedMemoOrder] = useState<Order | null>(null);
   const [isMemoOpen, setIsMemoOpen] = useState<boolean>(false);
   const [isMemoEditMode, setIsMemoEditMode] = useState<boolean>(false);
+
+  // Global Delete Permission Modal State
+  const [deletePermissionRequest, setDeletePermissionRequest] = useState<DeletePermissionRequest | null>(null);
+
+  const requestDeletePermission = useCallback((req: Omit<DeletePermissionRequest, 'isOpen'>) => {
+    setDeletePermissionRequest({
+      ...req,
+      isOpen: true,
+    });
+  }, []);
 
   // Cart count for badge
   const [cartCount, setCartCount] = useState<number>(0);
@@ -813,24 +843,55 @@ export default function App() {
     showToast(`দোকান "${shop.name}" সফলভাবে আপডেট হয়েছে!`, 'success');
   };
 
-  // Delete Shop Handler
-  const handleDeleteShop = (shopId: string) => {
+  // Delete Shop Handler (with Permission Prompt)
+  const executeDeleteShop = (shopId: string) => {
     deleteShop(shopId);
     deleteShopFromCloud(shopId).catch(() => {});
     reloadData();
     showToast('দোকানটি সফলভাবে ডিলিট করা হয়েছে!', 'info');
   };
 
-  // Clean All Mock/Demo Data from both Cloud and Local Storage Permanently
-  const handleCleanAllMockData = async () => {
-    try {
-      clearAllMockDataLocal();
-      await clearAllCloudMockData().catch(() => {});
-      reloadData();
-      showToast('সকল ডেমো পণ্য ও টেস্ট ডাটা স্থায়ীভাবে মুছে ফেলা হয়েছে! রিফ্রেশ করলেও আর ডেমো ডাটা ফিরে আসবে না।', 'success');
-    } catch (e) {
-      showToast('মক ডাটা মুছতে ব্যর্থ হয়েছে', 'error');
+  const handleDeleteShop = (shopId: string, skipConfirm = false) => {
+    const target = shops.find((s) => s.id === shopId);
+    if (skipConfirm) {
+      executeDeleteShop(shopId);
+      return;
     }
+    requestDeletePermission({
+      title: 'দোকান ডিলিট করার পারমিশন',
+      itemLabel: target ? `${target.name} (${target.routeArea || 'রুট নেই'})` : `দোকান ID: ${shopId}`,
+      message: `আপনি কি নিশ্চিতভাবে "${target?.name || 'এই দোকান'}" দোকানটি তালিকা ও ক্লাউড থেকে ডিলিট করতে চান?`,
+      confirmButtonText: 'হ্যাঁ, দোকান ডিলিট করুন',
+      onConfirm: () => executeDeleteShop(shopId),
+    });
+  };
+
+  // Clean All Mock/Demo Data from both Cloud and Local Storage Permanently
+  const handleCleanAllMockData = async (skipConfirm = false) => {
+    const doClean = async () => {
+      try {
+        clearAllMockDataLocal();
+        await clearAllCloudMockData().catch(() => {});
+        reloadData();
+        showToast('সকল ডেমো পণ্য ও টেস্ট ডাটা স্থায়ীভাবে মুছে ফেলা হয়েছে! রিফ্রেশ করলেও আর ডেমো ডাটা ফিরে আসবে না।', 'success');
+      } catch (e) {
+        showToast('মক ডাটা মুছতে ব্যর্থ হয়েছে', 'error');
+      }
+    };
+    if (skipConfirm) {
+      await doClean();
+      return;
+    }
+    requestDeletePermission({
+      title: 'সকল ডেমো ডাটা স্থায়ীভাবে মুছে ফেলার পারমিশন',
+      itemLabel: 'ডেমো পণ্য, ডেমো দোকান ও টেস্ট মেমো সমূহ',
+      isBulk: true,
+      message: 'আপনি কি অ্যাপের সকল ডিফল্ট ডেমো/টেস্ট ডাটা স্থায়ীভাবে মুছে ফেলতে চান?',
+      confirmButtonText: 'হ্যাঁ, ডেমো ডাটা ডিলিট করুন',
+      onConfirm: () => {
+        doClean();
+      },
+    });
   };
 
   // Add Product Handler
@@ -883,12 +944,28 @@ export default function App() {
     showToast(`পণ্য "${product.banglaName}" সফলভাবে আপডেট হয়েছে!`, 'success');
   };
 
-  // Delete Product Handler
-  const handleDeleteProduct = (productId: string) => {
+  // Delete Product Handler (with Permission Prompt)
+  const executeDeleteProduct = (productId: string) => {
     setProducts((prev) => prev.filter((p) => p.id !== productId));
     deleteProduct(productId);
     deleteProductFromCloud(productId).catch(() => {});
+    reloadData();
     showToast('পণ্যটি সফলভাবে মুছে ফেলা হয়েছে', 'info');
+  };
+
+  const handleDeleteProduct = (productId: string, skipConfirm = false) => {
+    const target = products.find((p) => p.id === productId);
+    if (skipConfirm) {
+      executeDeleteProduct(productId);
+      return;
+    }
+    requestDeletePermission({
+      title: 'পণ্য ডিলিট করার পারমিশন',
+      itemLabel: target ? `${target.banglaName} (${target.name}) - ৳${target.unitPrice}` : `পণ্য ID: ${productId}`,
+      message: `আপনি কি নিশ্চিতভাবে "${target?.banglaName || 'এই পণ্য'}" পণ্যটি গোডাউন ও ক্যাটালগ থেকে স্থায়ীভাবে ডিলিট করতে চান?`,
+      confirmButtonText: 'হ্যাঁ, পণ্য ডিলিট করুন',
+      onConfirm: () => executeDeleteProduct(productId),
+    });
   };
 
   // Category Handlers
@@ -906,11 +983,26 @@ export default function App() {
     showToast(`ক্যাটাগরি "${saved.banglaName}" আপডেট হয়েছে!`, 'success');
   };
 
-  const handleDeleteCategory = (categoryId: string) => {
+  const executeDeleteCategory = (categoryId: string) => {
     deleteCategory(categoryId);
     deleteCategoryFromCloud(categoryId).catch(() => {});
     reloadData();
     showToast('ক্যাটাগরি মুছে ফেলা হয়েছে', 'info');
+  };
+
+  const handleDeleteCategory = (categoryId: string, skipConfirm = false) => {
+    const target = categories.find((c) => c.id === categoryId);
+    if (skipConfirm) {
+      executeDeleteCategory(categoryId);
+      return;
+    }
+    requestDeletePermission({
+      title: 'ক্যাটাগরি ডিলিট করার পারমিশন',
+      itemLabel: target ? `${target.banglaName} (${target.name})` : `ক্যাটাগরি ID: ${categoryId}`,
+      message: `আপনি কি নিশ্চিতভাবে "${target?.banglaName || 'এই ক্যাটাগরি'}" ক্যাটাগরিটি ডিলিট করতে চান?`,
+      confirmButtonText: 'হ্যাঁ, ক্যাটাগরি ডিলিট করুন',
+      onConfirm: () => executeDeleteCategory(categoryId),
+    });
   };
 
   // Route Handlers
@@ -952,7 +1044,7 @@ export default function App() {
     showToast(`রুট "${saved.banglaName}" আপডেট হয়েছে!`, 'success');
   };
 
-  const handleDeleteRoute = (routeId: string) => {
+  const executeDeleteRoute = (routeId: string) => {
     const isShopDerived = routeId.startsWith('shop-route-');
     const shopDerivedName = isShopDerived ? routeId.replace('shop-route-', '') : '';
     const targetRoute = routes.find((r) => r.id === routeId);
@@ -986,6 +1078,24 @@ export default function App() {
     showToast('রুট সফলভাবে মুছে ফেলা হয়েছে', 'info');
   };
 
+  const handleDeleteRoute = (routeId: string, skipConfirm = false) => {
+    const isShopDerived = routeId.startsWith('shop-route-');
+    const shopDerivedName = isShopDerived ? routeId.replace('shop-route-', '') : '';
+    const targetRoute = routes.find((r) => r.id === routeId);
+    const label = targetRoute?.banglaName || shopDerivedName || routeId;
+    if (skipConfirm) {
+      executeDeleteRoute(routeId);
+      return;
+    }
+    requestDeletePermission({
+      title: 'রুট / এরিয়া ডিলিট করার পারমিশন',
+      itemLabel: `রুট: ${label}`,
+      message: `আপনি কি নিশ্চিতভাবে "${label}" রুটটি ডিলিট করতে চান?`,
+      confirmButtonText: 'হ্যাঁ, রুট ডিলিট করুন',
+      onConfirm: () => executeDeleteRoute(routeId),
+    });
+  };
+
   // Logout Handler
   const handleLogout = async () => {
     try {
@@ -1016,11 +1126,26 @@ export default function App() {
     showToast(`মেইল "${authEmail.email}" এর তথ্য আপডেট হয়েছে!`, 'success');
   };
 
-  const handleDeleteAuthorizedEmail = (email: string) => {
+  const executeDeleteAuthorizedEmail = (email: string) => {
     deleteAuthorizedEmail(email);
     deleteAuthorizedEmailFromCloud(email).catch(() => {});
     reloadData();
     showToast(`"${email}" এর পারমিশন বাতিল করা হয়েছে`, 'info');
+  };
+
+  const handleDeleteAuthorizedEmail = (email: string, skipConfirm = false) => {
+    const target = authorizedEmails.find((a) => a.email.toLowerCase() === email.toLowerCase());
+    if (skipConfirm) {
+      executeDeleteAuthorizedEmail(email);
+      return;
+    }
+    requestDeletePermission({
+      title: 'স্টাফ/ইউজার অ্যাক্সেস ডিলিট পারমিশন',
+      itemLabel: target ? `${target.fullName || target.email} (${target.email})` : email,
+      message: `আপনি কি নিশ্চিতভাবে "${email}" এর স্টাফ/রোলের অ্যাক্সেস ডিলিট করতে চান?`,
+      confirmButtonText: 'হ্যাঁ, অ্যাক্সেস ডিলিট করুন',
+      onConfirm: () => executeDeleteAuthorizedEmail(email),
+    });
   };
 
   // Stock Adjustment Handler
@@ -1048,11 +1173,49 @@ export default function App() {
     showToast(`খরচ "${newExpense.note || newExpense.category}" (৳${newExpense.amount.toLocaleString()}) যুক্ত হয়েছে!`, 'success');
   };
 
-  const handleDeleteDailyExpense = (id: string) => {
+  const executeDeleteDailyExpense = (id: string) => {
     deleteDailyExpense(id);
     deleteDailyExpenseFromCloud(id).catch(() => {});
     reloadData();
     showToast('খরচের এন্ট্রি মুছে ফেলা হয়েছে', 'info');
+  };
+
+  const handleDeleteDailyExpense = (id: string, skipConfirm = false) => {
+    const target = dailyExpenses.find((e) => e.id === id);
+    if (skipConfirm) {
+      executeDeleteDailyExpense(id);
+      return;
+    }
+    requestDeletePermission({
+      title: 'দৈনিক খরচের এন্ট্রি ডিলিট পারমিশন',
+      itemLabel: target ? `${target.note || target.category} - ৳${target.amount}` : `খরচ ID: ${id}`,
+      message: 'আপনি কি নিশ্চিতভাবে এই খরচের হিসাবটি ডিলিট করতে চান?',
+      confirmButtonText: 'হ্যাঁ, খরচ ডিলিট করুন',
+      onConfirm: () => executeDeleteDailyExpense(id),
+    });
+  };
+
+  // Due Collection Record Delete Handler
+  const executeDeleteDueCollection = (id: string) => {
+    deleteDueCollection(id);
+    deleteDueCollectionFromCloud(id).catch(() => {});
+    reloadData();
+    showToast('বকেয়া আদায়ের রেকর্ডটি মুছে ফেলা হয়েছে', 'info');
+  };
+
+  const handleDeleteDueCollection = (id: string, skipConfirm = false) => {
+    const target = dueCollections.find((c) => c.id === id);
+    if (skipConfirm) {
+      executeDeleteDueCollection(id);
+      return;
+    }
+    requestDeletePermission({
+      title: 'বকেয়া আদায় রেকর্ড ডিলিট পারমিশন',
+      itemLabel: target ? `${target.shopName} - ৳${target.amount}` : `কালেকশন ID: ${id}`,
+      message: 'আপনি কি নিশ্চিতভাবে এই বকেয়া জমার রেকর্ডটি মুছে ফেলতে চান?',
+      confirmButtonText: 'হ্যাঁ, রেকর্ড ডিলিট করুন',
+      onConfirm: () => executeDeleteDueCollection(id),
+    });
   };
 
   // Next-Day Delivery & Cash/Due Settlement Handler
@@ -1194,8 +1357,8 @@ export default function App() {
     showToast(`মেমো #${updatedOrder.memoNumber} সফলভাবে আপডেট করা হয়েছে!`, 'success');
   };
 
-  // Delete Order Handler (Admin)
-  const handleDeleteOrder = (orderId: string) => {
+  // Delete Order Handler (Admin, with Permission Prompt)
+  const executeDeleteOrder = (orderId: string) => {
     const target = orders.find((o) => o.id === orderId);
     if (
       target &&
@@ -1223,6 +1386,217 @@ export default function App() {
     }
     reloadData();
     showToast(`মেমো ${target?.memoNumber ? `#${target.memoNumber}` : ''} সফলভাবে ডিলিট করা হয়েছে`, 'info');
+  };
+
+  const handleDeleteOrder = (orderId: string, skipConfirm = false) => {
+    const target = orders.find((o) => o.id === orderId);
+    if (skipConfirm) {
+      executeDeleteOrder(orderId);
+      return;
+    }
+    requestDeletePermission({
+      title: 'অর্ডার / মেমো ডিলিট করার পারমিশন',
+      itemLabel: target
+        ? `মেমো #${target.memoNumber} — ${target.shopName} (৳${target.netTotal.toLocaleString()})`
+        : `অর্ডার ID: ${orderId}`,
+      message: `আপনি কি নিশ্চিতভাবে মেমো ${target?.memoNumber ? `#${target.memoNumber}` : ''} ডিলিট করতে চান? ডিলিট করলে এটি অর্ডার লিস্ট ও ক্লাউড থেকে স্থায়ীভাবে মুছে যাবে।`,
+      confirmButtonText: 'হ্যাঁ, মেমো ডিলিট করুন',
+      onConfirm: () => executeDeleteOrder(orderId),
+    });
+  };
+
+  // ============================================================================
+  // 1-Click Bulk Delete Handlers for Admin Panel (each with Permission Prompt)
+  // ============================================================================
+  const handleDeleteAllProducts = () => {
+    requestDeletePermission({
+      title: '১-ক্লিকে সকল পণ্য (Products) ডিলিট পারমিশন',
+      itemLabel: `মোট ${products.length} টি পণ্য স্থায়ীভাবে ডিলিট হবে`,
+      isBulk: true,
+      message: `আপনি কি নিশ্চিতভাবে ইনভেন্টরি ও গোডাউনের সকল (${products.length}টি) পণ্য ১ ক্লিকে ডিলিট করতে চান?`,
+      confirmButtonText: `হ্যাঁ, সব পণ্য (${products.length}টি) ডিলিট করুন`,
+      onConfirm: async () => {
+        const ids = deleteAllProductsLocal();
+        setProducts([]);
+        await deleteAllProductsFromCloud(ids).catch(() => {});
+        reloadData();
+        showToast('সকল পণ্য সফলভাবে ১-ক্লিকে ডিলিট করা হয়েছে!', 'info');
+      },
+    });
+  };
+
+  const handleDeleteAllShops = () => {
+    requestDeletePermission({
+      title: '১-ক্লিকে সকল দোকান (Shops) ডিলিট পারমিশন',
+      itemLabel: `মোট ${shops.length} টি দোকান স্থায়ীভাবে ডিলিট হবে`,
+      isBulk: true,
+      message: `আপনি কি নিশ্চিতভাবে তালিকার সকল (${shops.length}টি) দোকান ১ ক্লিকে ডিলিট করতে চান?`,
+      confirmButtonText: `হ্যাঁ, সব দোকান (${shops.length}টি) ডিলিট করুন`,
+      onConfirm: async () => {
+        const ids = deleteAllShopsLocal();
+        setShops([]);
+        await deleteAllShopsFromCloud(ids).catch(() => {});
+        reloadData();
+        showToast('সকল দোকান সফলভাবে ১-ক্লিকে ডিলিট করা হয়েছে!', 'info');
+      },
+    });
+  };
+
+  const handleDeleteAllOrders = () => {
+    requestDeletePermission({
+      title: '১-ক্লিকে সকল অর্ডার ও মেমো (Orders) ডিলিট পারমিশন',
+      itemLabel: `মোট ${orders.length} টি অর্ডার/মেমো স্থায়ীভাবে ডিলিট হবে`,
+      isBulk: true,
+      message: `আপনি কি নিশ্চিতভাবে সিস্টেমের সকল (${orders.length}টি) অর্ডার ও মেমো ১ ক্লিকে ডিলিট করতে চান?`,
+      confirmButtonText: `হ্যাঁ, সব মেমো (${orders.length}টি) ডিলিট করুন`,
+      onConfirm: async () => {
+        const ids = deleteAllOrdersLocal();
+        setOrders([]);
+        await deleteAllOrdersFromCloud(ids).catch(() => {});
+        reloadData();
+        showToast('সকল অর্ডার ও মেমো সফলভাবে ১-ক্লিকে ডিলিট করা হয়েছে!', 'info');
+      },
+    });
+  };
+
+  const handleDeleteAllCategories = () => {
+    requestDeletePermission({
+      title: '১-ক্লিকে সকল ক্যাটাগরি (Categories) ডিলিট পারমিশন',
+      itemLabel: `মোট ${categories.length} টি ক্যাটাগরি স্থায়ীভাবে ডিলিট হবে`,
+      isBulk: true,
+      message: `আপনি কি নিশ্চিতভাবে সকল (${categories.length}টি) ক্যাটাগরি ১ ক্লিকে ডিলিট করতে চান?`,
+      confirmButtonText: `হ্যাঁ, সব ক্যাটাগরি (${categories.length}টি) ডিলিট করুন`,
+      onConfirm: async () => {
+        const ids = deleteAllCategoriesLocal();
+        setCategories([]);
+        await deleteAllCategoriesFromCloud(ids).catch(() => {});
+        reloadData();
+        showToast('সকল ক্যাটাগরি সফলভাবে ১-ক্লিকে ডিলিট করা হয়েছে!', 'info');
+      },
+    });
+  };
+
+  const handleDeleteAllRoutes = () => {
+    requestDeletePermission({
+      title: '১-ক্লিকে সকল রুট ও এরিয়া (Routes) ডিলিট পারমিশন',
+      itemLabel: `মোট ${routes.length} টি রুট স্থায়ীভাবে ডিলিট হবে`,
+      isBulk: true,
+      message: `আপনি কি নিশ্চিতভাবে সকল (${routes.length}টি) রুট/এরিয়া ১ ক্লিকে ডিলিট করতে চান?`,
+      confirmButtonText: `হ্যাঁ, সব রুট (${routes.length}টি) ডিলিট করুন`,
+      onConfirm: async () => {
+        const ids = deleteAllRoutesLocal();
+        setRoutes([]);
+        await deleteAllRoutesFromCloud(ids).catch(() => {});
+        reloadData();
+        showToast('সকল রুট সফলভাবে ১-ক্লিকে ডিলিট করা হয়েছে!', 'info');
+      },
+    });
+  };
+
+  const handleDeleteAllDailyExpenses = () => {
+    requestDeletePermission({
+      title: '১-ক্লিকে সকল দৈনিক খরচ (Expenses) ডিলিট পারমিশন',
+      itemLabel: `মোট ${dailyExpenses.length} টি খরচের হিসাব ডিলিট হবে`,
+      isBulk: true,
+      message: `আপনি কি নিশ্চিতভাবে সকল (${dailyExpenses.length}টি) দৈনিক খরচের এন্ট্রি ১ ক্লিকে ডিলিট করতে চান?`,
+      confirmButtonText: `হ্যাঁ, সব খরচ (${dailyExpenses.length}টি) ডিলিট করুন`,
+      onConfirm: async () => {
+        const ids = deleteAllDailyExpensesLocal();
+        setDailyExpenses([]);
+        await deleteAllDailyExpensesFromCloud(ids).catch(() => {});
+        reloadData();
+        showToast('সকল দৈনিক খরচের হিসাব ১-ক্লিকে ডিলিট করা হয়েছে!', 'info');
+      },
+    });
+  };
+
+  const handleDeleteAllDueCollections = () => {
+    requestDeletePermission({
+      title: '১-ক্লিকে সকল বকেয়া আদায় হিস্ট্রি ডিলিট পারমিশন',
+      itemLabel: `মোট ${dueCollections.length} টি বকেয়া আদায় রেকর্ড ডিলিট হবে`,
+      isBulk: true,
+      message: `আপনি কি নিশ্চিতভাবে সকল (${dueCollections.length}টি) বকেয়া আদায়ের হিস্ট্রি ১ ক্লিকে ডিলিট করতে চান?`,
+      confirmButtonText: `হ্যাঁ, সব কালেকশন হিস্ট্রি ডিলিট করুন`,
+      onConfirm: async () => {
+        const ids = deleteAllDueCollectionsLocal();
+        setDueCollections([]);
+        await deleteAllDueCollectionsFromCloud(ids).catch(() => {});
+        reloadData();
+        showToast('সকল বকেয়া আদায় হিস্ট্রি ১-ক্লিকে ডিলিট করা হয়েছে!', 'info');
+      },
+    });
+  };
+
+  const handleResetAllShopDues = () => {
+    const shopsWithDue = shops.filter((s) => (s.previousDue || 0) > 0).length;
+    requestDeletePermission({
+      title: '১-ক্লিকে সকল দোকানের বকেয়া (Due) জিরো/রিসেট পারমিশন',
+      itemLabel: `${shopsWithDue} টি দোকানের বকেয়া ৳০ করা হবে`,
+      isBulk: true,
+      message: 'আপনি কি নিশ্চিতভাবে সকল দোকানের পূর্বের বকেয়া (Previous Due) ১ ক্লিকে মুছে ৳০ (শূন্য) করতে চান?',
+      confirmButtonText: 'হ্যাঁ, সব বকেয়া ৳০ করুন',
+      onConfirm: async () => {
+        const updated = resetAllShopDuesLocal();
+        setShops(updated);
+        for (const s of updated) {
+          saveShopToCloud(s).catch(() => {});
+        }
+        reloadData();
+        showToast('সকল দোকানের বকেয়া সফলভাবে ৳০ (রিসেট) করা হয়েছে!', 'success');
+      },
+    });
+  };
+
+  const handleDeleteAllStaffEmails = () => {
+    const removableCount = authorizedEmails.filter((a) => !isMainSuperAdmin(a.email)).length;
+    requestDeletePermission({
+      title: '১-ক্লিকে সকল স্টাফ ইমেইল (SR/DSR) ডিলিট পারমিশন',
+      itemLabel: `${removableCount} টি স্টাফ ইমেইল ডিলিট হবে (সুপার এডমিন সুরক্ষিত থাকবে)`,
+      isBulk: true,
+      message: `আপনি কি নিশ্চিতভাবে প্রধান সুপার এডমিন ব্যতীত বাকি সকল (${removableCount}টি) স্টাফ ইমেইল ১ ক্লিকে ডিলিট করতে চান?`,
+      confirmButtonText: 'হ্যাঁ, সব স্টাফ ইমেইল ডিলিট করুন',
+      onConfirm: async () => {
+        const removed = deleteAllStaffAuthorizedEmailsLocal();
+        await deleteAllStaffAuthorizedEmailsFromCloud(removed).catch(() => {});
+        reloadData();
+        showToast('সকল স্টাফ ইমেইল সফলভাবে ডিলিট করা হয়েছে!', 'info');
+      },
+    });
+  };
+
+  const handleDeleteEverythingAllAtOnce = () => {
+    requestDeletePermission({
+      title: '১-ক্লিকে সম্পূর্ণ সিস্টেমের সকল ডাটা ক্লিয়ার পারমিশন',
+      itemLabel: `পণ্য (${products.length}), দোকান (${shops.length}), মেমো (${orders.length}), ক্যাটাগরি (${categories.length}), রুট (${routes.length}), খরচ (${dailyExpenses.length})`,
+      isBulk: true,
+      message:
+        'মহা সতর্কতা: আপনি কি নিশ্চিতভাবে ১-ক্লিকে সিস্টেমের সকল পণ্য, সকল দোকান, সকল অর্ডার/মেমো, ক্যাটাগরি, রুট, দৈনিক খরচ এবং বকেয়া হিস্ট্রি একসাথে মুছে ফেলতে চান?',
+      confirmButtonText: 'হ্যাঁ, ১-ক্লিকে সবকিছু ডিলিট করুন',
+      onConfirm: async () => {
+        const pIds = deleteAllProductsLocal();
+        const sIds = deleteAllShopsLocal();
+        const oIds = deleteAllOrdersLocal();
+        const cIds = deleteAllCategoriesLocal();
+        const rIds = deleteAllRoutesLocal();
+        const eIds = deleteAllDailyExpensesLocal();
+        const dIds = deleteAllDueCollectionsLocal();
+        clearAllMockDataLocal();
+
+        await Promise.all([
+          deleteAllProductsFromCloud(pIds).catch(() => {}),
+          deleteAllShopsFromCloud(sIds).catch(() => {}),
+          deleteAllOrdersFromCloud(oIds).catch(() => {}),
+          deleteAllCategoriesFromCloud(cIds).catch(() => {}),
+          deleteAllRoutesFromCloud(rIds).catch(() => {}),
+          deleteAllDailyExpensesFromCloud(eIds).catch(() => {}),
+          deleteAllDueCollectionsFromCloud(dIds).catch(() => {}),
+          clearAllCloudMockData().catch(() => {}),
+        ]);
+
+        reloadData();
+        showToast('সম্পূর্ণ সিস্টেমের সকল ডাটা সফলভাবে ১-ক্লিকে ক্লিয়ার করা হয়েছে!', 'success');
+      },
+    });
   };
 
   // Manual Sync with Google Sheets
@@ -1732,11 +2106,32 @@ export default function App() {
                   setIsMemoOpen(true);
                 }}
                 onDeleteOrder={handleDeleteOrder}
+                dueCollections={dueCollections}
+                dailyExpenses={dailyExpenses}
+                onDeleteDailyExpense={handleDeleteDailyExpense}
+                onDeleteDueCollection={handleDeleteDueCollection}
+                onDeleteAllProducts={handleDeleteAllProducts}
+                onDeleteAllShops={handleDeleteAllShops}
+                onDeleteAllOrders={handleDeleteAllOrders}
+                onDeleteAllCategories={handleDeleteAllCategories}
+                onDeleteAllRoutes={handleDeleteAllRoutes}
+                onDeleteAllDailyExpenses={handleDeleteAllDailyExpenses}
+                onDeleteAllDueCollections={handleDeleteAllDueCollections}
+                onResetAllShopDues={handleResetAllShopDues}
+                onDeleteAllStaffEmails={handleDeleteAllStaffEmails}
+                onDeleteEverythingAllAtOnce={handleDeleteEverythingAllAtOnce}
+                onRequestDeletePermission={requestDeletePermission}
               />
             )}
           </>
         )}
       </main>
+
+      {/* Global Delete Permission Confirmation Modal */}
+      <DeleteConfirmModal
+        request={deletePermissionRequest}
+        onCancel={() => setDeletePermissionRequest(null)}
+      />
 
       {/* Printable Memo Modal */}
       <MemoModal

@@ -270,7 +270,6 @@ export const MemoModal: React.FC<MemoModalProps> = ({
                 type="button"
                 onClick={() => {
                   onDeleteOrder(order.id);
-                  onClose();
                 }}
                 className="p-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs flex items-center gap-1 font-bold shadow-xs shrink-0 cursor-pointer"
                 title="মেমো ডিলিট করুন (এডমিন)"

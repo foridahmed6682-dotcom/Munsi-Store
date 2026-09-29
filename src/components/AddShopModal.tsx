@@ -839,10 +839,10 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
 
   return (
     <>
-      <div className="fixed inset-0 z-50 bg-neutral-900/60 backdrop-blur-xs flex items-center justify-center p-2.5 sm:p-4 overflow-y-auto animate-in fade-in">
-        <div className="bg-white rounded-3xl max-w-md w-full p-4 sm:p-6 shadow-2xl border border-neutral-200 my-auto max-h-[95vh] overflow-y-auto">
-          {/* Top Modal Header */}
-          <div className="flex items-center justify-between pb-3 border-b border-neutral-200 mb-3.5">
+      <div className="fixed inset-0 z-50 bg-neutral-900/60 backdrop-blur-xs flex items-center justify-center p-2.5 sm:p-4 overflow-hidden animate-in fade-in">
+        <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl border border-neutral-200 max-h-[92dvh] sm:max-h-[92vh] flex flex-col overflow-hidden">
+          {/* Top Modal Header (Sticky) */}
+          <div className="flex items-center justify-between px-4 sm:px-6 py-3.5 border-b border-neutral-200 bg-white shrink-0">
             <div className="flex items-center gap-2.5">
               <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0">
                 <Store className="w-5 h-5" />
@@ -865,7 +865,11 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
             </button>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4 text-xs sm:text-sm">
+          <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 overflow-hidden text-xs sm:text-sm">
+            <div
+              className="p-4 sm:p-6 space-y-4 overflow-y-auto flex-1 overscroll-contain touch-pan-y"
+              style={{ WebkitOverflowScrolling: 'touch' }}
+            >
             {formError && (
               <div className="p-3 bg-rose-50 border border-rose-300 rounded-2xl text-rose-800 font-bold text-xs flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
@@ -1279,13 +1283,14 @@ export const AddShopModal: React.FC<AddShopModalProps> = ({
                 </div>
               )}
             </div>
+            </div>
 
-            {/* 7. Bottom Action Buttons Matching Screenshot */}
-            <div className="flex items-center justify-between gap-3 pt-3 border-t border-neutral-100">
+            {/* 7. Bottom Action Buttons (Sticky Footer) */}
+            <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-3 border-t border-neutral-200 bg-neutral-50 shrink-0">
               <button
                 type="button"
                 onClick={onClose}
-                className="px-5 py-3 text-neutral-800 hover:bg-neutral-100 rounded-2xl font-extrabold text-sm transition-colors cursor-pointer"
+                className="px-5 py-3 text-neutral-800 hover:bg-neutral-200/70 rounded-2xl font-extrabold text-sm transition-colors cursor-pointer"
               >
                 বাতিল
               </button>

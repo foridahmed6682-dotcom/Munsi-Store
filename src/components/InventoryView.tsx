@@ -505,11 +505,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
       {/* Add / Edit Product Modal */}
       {isAddProductOpen && (
-        <div className="fixed inset-0 z-50 bg-neutral-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-5 shadow-2xl border border-neutral-200 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-3 border-b border-neutral-100 mb-3">
+        <div className="fixed inset-0 z-50 bg-neutral-900/60 backdrop-blur-xs flex items-center justify-center p-2.5 sm:p-4 animate-in fade-in overflow-hidden">
+          <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-neutral-200 max-h-[92dvh] sm:max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-4 sm:px-5 py-3.5 border-b border-neutral-200 bg-white shrink-0">
               <h3 className="font-bold text-sm sm:text-base text-neutral-900 flex items-center gap-2">
-                <Package className="w-5 h-5 text-emerald-700" />
+                <Package className="w-5 h-5 text-emerald-700 shrink-0" />
                 <span>{editingProduct ? 'পণ্যের তথ্য ও মূল্য সম্পাদনা' : 'নতুন পণ্য ক্যাটালগে যুক্ত করুন'}</span>
               </h3>
               <button
@@ -518,229 +518,241 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   setIsAddProductOpen(false);
                   setEditingProduct(null);
                 }}
-                className="p-1 text-neutral-400 hover:text-neutral-700 rounded-lg"
+                className="p-1.5 text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 rounded-xl"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleProductFormSubmit} className="space-y-3 text-xs">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <div>
-                  <label className="font-bold text-neutral-700 block mb-1">
-                    পণ্যের বাংলা নাম <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={newBanglaName}
-                    onChange={(e) => setNewBanglaName(e.target.value)}
-                    placeholder="যেমন: ফ্রেশ সয়াবিন তেল (১ লিটার)"
-                    className="w-full p-2 border border-neutral-300 rounded-xl focus:outline-none focus:border-emerald-600"
-                  />
-                </div>
+            <form onSubmit={handleProductFormSubmit} className="flex flex-col flex-1 min-h-0 overflow-hidden text-xs">
+              <div
+                className="p-4 sm:p-5 space-y-3 overflow-y-auto flex-1 overscroll-contain touch-pan-y"
+                style={{ WebkitOverflowScrolling: 'touch' }}
+              >
+                {productFormError && (
+                  <div className="p-3 bg-rose-50 border border-rose-300 rounded-xl text-rose-800 font-bold text-xs flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>{productFormError}</span>
+                  </div>
+                )}
 
-                <div>
-                  <label className="font-bold text-neutral-700 block mb-1">ইংরেজি নাম</label>
-                  <input
-                    type="text"
-                    value={newProdName}
-                    onChange={(e) => setNewProdName(e.target.value)}
-                    placeholder="Fresh Soybean Oil 1L"
-                    className="w-full p-2 border border-neutral-300 rounded-xl focus:outline-none focus:border-emerald-600"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                <div>
-                  <label className="font-bold text-neutral-700 block mb-1">SKU কোড</label>
-                  <input
-                    type="text"
-                    value={newSku}
-                    onChange={(e) => setNewSku(e.target.value)}
-                    placeholder="OIL-FRSH-1L"
-                    className="w-full p-2 border border-neutral-300 rounded-xl font-mono focus:outline-none focus:border-emerald-600"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-bold text-neutral-700 block mb-1">ক্যাটাগরি</label>
-                  <select
-                    value={newCategory}
-                    onChange={(e) => setNewCategory(e.target.value)}
-                    className="w-full p-2 border border-neutral-300 rounded-xl bg-white font-medium focus:outline-none focus:border-emerald-600"
-                  >
-                    {categories.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                    {!categories.includes(newCategory) && newCategory && (
-                      <option value={newCategory}>{newCategory}</option>
-                    )}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="font-bold text-neutral-700 block mb-1">
-                    একক (Unit) <span className="text-rose-500">*</span>
-                  </label>
-                  <select
-                    value={newUnit}
-                    onChange={(e) => setNewUnit(e.target.value)}
-                    className="w-full p-2 border border-neutral-300 rounded-xl bg-white font-medium focus:outline-none focus:border-emerald-600"
-                  >
-                    <option value="কার্টুন">কার্টুন</option>
-                    <option value="বস্তা">বস্তা</option>
-                    <option value="ডজন">ডজন</option>
-                    <option value="কেজি">কেজি</option>
-                    <option value="পিস">পিস</option>
-                    <option value="প্যাকেট">প্যাকেট</option>
-                    <option value="বক্স">বক্স</option>
-                    <option value="বোতল">বোতল</option>
-                    <option value="লিটার">লিটার</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                <div>
-                  <label className="font-bold text-neutral-700 block mb-1">
-                    বিক্রয় রেট (৳) <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    required
-                    value={newUnitPrice}
-                    onChange={(e) => setNewUnitPrice(e.target.value)}
-                    placeholder="১৯৫০"
-                    className="w-full p-2 border border-neutral-300 rounded-xl font-bold font-mono focus:outline-none focus:border-emerald-600"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-bold text-neutral-700 block mb-1">
-                    ক্রয় রেট (৳) (ঐচ্ছিক)
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={newCostPrice}
-                    onChange={(e) => setNewCostPrice(e.target.value)}
-                    placeholder="১৮০০"
-                    className="w-full p-2 border border-neutral-300 rounded-xl font-mono focus:outline-none focus:border-emerald-600"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-bold text-neutral-700 block mb-1">বর্তমান স্টক</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={newStock}
-                    onChange={(e) => setNewStock(e.target.value)}
-                    placeholder="৫০"
-                    className="w-full p-2 border border-neutral-300 rounded-xl font-mono focus:outline-none focus:border-emerald-600"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-bold text-neutral-700 block mb-1">অ্যালার্ট লেভেল</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={newMinAlert}
-                    onChange={(e) => setNewMinAlert(e.target.value)}
-                    placeholder="১০"
-                    className="w-full p-2 border border-neutral-300 rounded-xl font-mono focus:outline-none focus:border-emerald-600"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="font-bold text-neutral-700 block mb-1">ট্রেড অফার / স্কিম (ঐচ্ছিক)</label>
-                <input
-                  type="text"
-                  value={newTradeOffer}
-                  onChange={(e) => setNewTradeOffer(e.target.value)}
-                  placeholder="যেমন: ১০ কার্টুনে ১ কার্টুন ফ্রি"
-                  className="w-full p-2 border border-neutral-300 rounded-xl focus:outline-none focus:border-emerald-600"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-neutral-700 block mb-1">
-                  প্রোডাক্ট ছবি লিংক (Image URL) অথবা ডিভাইস থেকে সরাসরি আপলোড
-                </label>
-                <div className="flex gap-2 items-stretch">
-                  <input
-                    type="text"
-                    value={newImageUrl.startsWith('data:') ? '' : newImageUrl}
-                    onChange={(e) => setNewImageUrl(e.target.value)}
-                    placeholder={
-                      newImageUrl.startsWith('data:')
-                        ? '✅ ডিভাইস থেকে ছবি যুক্ত হয়েছে (অথবা নতুন লিংক পেস্ট করুন)'
-                        : 'https://images.unsplash.com/...'
-                    }
-                    className="flex-1 p-2 border border-neutral-300 rounded-xl text-xs font-mono focus:outline-none focus:border-emerald-600"
-                  />
-                  <div className="relative shrink-0">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      id="inventory-image-upload-file"
-                      onChange={handleImageFileChange}
-                      disabled={isUploadingImage}
-                      className="hidden"
-                    />
-                    <label
-                      htmlFor="inventory-image-upload-file"
-                      className={`flex items-center justify-center gap-1 px-3 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors h-full ${
-                        isUploadingImage
-                          ? 'bg-emerald-700 text-white opacity-75 cursor-wait'
-                          : 'bg-neutral-800 hover:bg-neutral-700 text-white'
-                      }`}
-                    >
-                      <Upload className="w-3.5 h-3.5" />
-                      <span>{isUploadingImage ? 'প্রসেস হচ্ছে...' : 'আপলোড'}</span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="font-bold text-neutral-700 block mb-1">
+                      পণ্যের বাংলা নাম <span className="text-rose-500">*</span>
                     </label>
+                    <input
+                      type="text"
+                      required
+                      value={newBanglaName}
+                      onChange={(e) => setNewBanglaName(e.target.value)}
+                      placeholder="যেমন: ফ্রেশ সয়াবিন তেল (১ লিটার)"
+                      className="w-full p-2.5 border border-neutral-300 rounded-xl focus:outline-none focus:border-emerald-600"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-neutral-700 block mb-1">ইংরেজি নাম</label>
+                    <input
+                      type="text"
+                      value={newProdName}
+                      onChange={(e) => setNewProdName(e.target.value)}
+                      placeholder="Fresh Soybean Oil 1L"
+                      className="w-full p-2.5 border border-neutral-300 rounded-xl focus:outline-none focus:border-emerald-600"
+                    />
                   </div>
                 </div>
 
-                {uploadStatusMsg && (
-                  <p className={`mt-1.5 text-[11px] font-bold ${uploadStatusMsg.isError ? 'text-rose-600' : 'text-emerald-700'}`}>
-                    {uploadStatusMsg.text}
-                  </p>
-                )}
-
-                {newImageUrl && (
-                  <div className="mt-2 p-2 bg-emerald-50/60 rounded-xl border border-emerald-200 flex items-center gap-2.5">
-                    <img src={newImageUrl} alt="Preview" className="w-12 h-12 object-cover rounded-lg border border-emerald-300 bg-white shrink-0" />
-                    <div className="min-w-0 flex-1">
-                      <span className="text-[11px] text-emerald-800 font-bold block truncate">✅ ছবি প্রস্তুত রয়েছে</span>
-                      <span className="text-[10px] text-neutral-500 font-mono block truncate">
-                        {newImageUrl.startsWith('data:')
-                          ? `ডিভাইস থেকে আপলোড করা ছবি (${Math.round((newImageUrl.length * 0.75) / 1024)} KB)`
-                          : newImageUrl}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setNewImageUrl('');
-                        setUploadStatusMsg(null);
-                      }}
-                      className="text-[11px] text-rose-600 hover:text-rose-800 font-bold px-2 py-1 rounded-lg hover:bg-rose-50 shrink-0"
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                  <div>
+                    <label className="font-bold text-neutral-700 block mb-1">ক্যাটাগরি</label>
+                    <select
+                      value={newCategory}
+                      onChange={(e) => setNewCategory(e.target.value)}
+                      className="w-full p-2.5 border border-neutral-300 rounded-xl bg-white font-medium focus:outline-none focus:border-emerald-600"
                     >
-                      রিমুভ
-                    </button>
+                      {categories.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                      {!categories.includes(newCategory) && newCategory && (
+                        <option value={newCategory}>{newCategory}</option>
+                      )}
+                    </select>
                   </div>
-                )}
+
+                  <div>
+                    <label className="font-bold text-neutral-700 block mb-1">
+                      একক (Unit) <span className="text-rose-500">*</span>
+                    </label>
+                    <select
+                      value={newUnit}
+                      onChange={(e) => setNewUnit(e.target.value)}
+                      className="w-full p-2.5 border border-neutral-300 rounded-xl bg-white font-medium focus:outline-none focus:border-emerald-600"
+                    >
+                      <option value="কার্টুন">কার্টুন</option>
+                      <option value="বস্তা">বস্তা</option>
+                      <option value="ডজন">ডজন</option>
+                      <option value="কেজি">কেজি</option>
+                      <option value="পিস">পিস</option>
+                      <option value="প্যাকেট">প্যাকেট</option>
+                      <option value="বক্স">বক্স</option>
+                      <option value="বোতল">বোতল</option>
+                      <option value="লিটার">লিটার</option>
+                    </select>
+                  </div>
+
+                  <div className="col-span-2 sm:col-span-1">
+                    <label className="font-bold text-neutral-700 block mb-1">SKU কোড</label>
+                    <input
+                      type="text"
+                      value={newSku}
+                      onChange={(e) => setNewSku(e.target.value)}
+                      placeholder="OIL-FRSH-1L"
+                      className="w-full p-2.5 border border-neutral-300 rounded-xl font-mono focus:outline-none focus:border-emerald-600"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <div>
+                    <label className="font-bold text-neutral-700 block mb-1">
+                      বিক্রয় রেট (৳) <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      required
+                      value={newUnitPrice}
+                      onChange={(e) => setNewUnitPrice(e.target.value)}
+                      placeholder="১৯৫০"
+                      className="w-full p-2.5 border border-neutral-300 rounded-xl font-bold font-mono focus:outline-none focus:border-emerald-600"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-neutral-700 block mb-1">
+                      ক্রয় রেট (৳) (ঐচ্ছিক)
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={newCostPrice}
+                      onChange={(e) => setNewCostPrice(e.target.value)}
+                      placeholder="১৮০০"
+                      className="w-full p-2.5 border border-neutral-300 rounded-xl font-mono focus:outline-none focus:border-emerald-600"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-neutral-700 block mb-1">বর্তমান স্টক</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={newStock}
+                      onChange={(e) => setNewStock(e.target.value)}
+                      placeholder="৫০"
+                      className="w-full p-2.5 border border-neutral-300 rounded-xl font-mono focus:outline-none focus:border-emerald-600"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-neutral-700 block mb-1">অ্যালার্ট লেভেল</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={newMinAlert}
+                      onChange={(e) => setNewMinAlert(e.target.value)}
+                      placeholder="১০"
+                      className="w-full p-2.5 border border-neutral-300 rounded-xl font-mono focus:outline-none focus:border-emerald-600"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="font-bold text-neutral-700 block mb-1">ট্রেড অফার / স্কিম (ঐচ্ছিক)</label>
+                  <input
+                    type="text"
+                    value={newTradeOffer}
+                    onChange={(e) => setNewTradeOffer(e.target.value)}
+                    placeholder="যেমন: ১০ কার্টুনে ১ কার্টুন ফ্রি"
+                    className="w-full p-2.5 border border-neutral-300 rounded-xl focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-neutral-700 block mb-1">
+                    প্রোডাক্ট ছবি লিংক (Image URL) অথবা ডিভাইস থেকে সরাসরি আপলোড
+                  </label>
+                  <div className="flex gap-2 items-stretch">
+                    <input
+                      type="text"
+                      value={newImageUrl.startsWith('data:') ? '' : newImageUrl}
+                      onChange={(e) => setNewImageUrl(e.target.value)}
+                      placeholder={
+                        newImageUrl.startsWith('data:')
+                          ? '✅ ডিভাইস থেকে ছবি যুক্ত হয়েছে (অথবা নতুন লিংক পেস্ট করুন)'
+                          : 'https://images.unsplash.com/...'
+                      }
+                      className="flex-1 p-2.5 border border-neutral-300 rounded-xl text-xs font-mono focus:outline-none focus:border-emerald-600"
+                    />
+                    <div className="relative shrink-0">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        id="inventory-image-upload-file"
+                        onChange={handleImageFileChange}
+                        disabled={isUploadingImage}
+                        className="hidden"
+                      />
+                      <label
+                        htmlFor="inventory-image-upload-file"
+                        className={`flex items-center justify-center gap-1 px-3 py-2.5 rounded-xl text-xs font-bold cursor-pointer transition-colors h-full ${
+                          isUploadingImage
+                            ? 'bg-emerald-700 text-white opacity-75 cursor-wait'
+                            : 'bg-neutral-800 hover:bg-neutral-700 text-white'
+                        }`}
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>{isUploadingImage ? 'প্রসেস হচ্ছে...' : 'আপলোড'}</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {uploadStatusMsg && (
+                    <p className={`mt-1.5 text-[11px] font-bold ${uploadStatusMsg.isError ? 'text-rose-600' : 'text-emerald-700'}`}>
+                      {uploadStatusMsg.text}
+                    </p>
+                  )}
+
+                  {newImageUrl && (
+                    <div className="mt-2 p-2 bg-emerald-50/60 rounded-xl border border-emerald-200 flex items-center gap-2.5">
+                      <img src={newImageUrl} alt="Preview" className="w-12 h-12 object-cover rounded-lg border border-emerald-300 bg-white shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <span className="text-[11px] text-emerald-800 font-bold block truncate">✅ ছবি প্রস্তুত রয়েছে</span>
+                        <span className="text-[10px] text-neutral-500 font-mono block truncate">
+                          {newImageUrl.startsWith('data:')
+                            ? `ডিভাইস থেকে আপলোড করা ছবি (${Math.round((newImageUrl.length * 0.75) / 1024)} KB)`
+                            : newImageUrl}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNewImageUrl('');
+                          setUploadStatusMsg(null);
+                        }}
+                        className="text-[11px] text-rose-600 hover:text-rose-800 font-bold px-2 py-1 rounded-lg hover:bg-rose-50 shrink-0"
+                      >
+                        রিমুভ
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
 
-              <div className="flex items-center justify-between pt-3 border-t border-neutral-100">
+              <div className="flex items-center justify-between px-4 sm:px-5 py-3 border-t border-neutral-200 bg-neutral-50 shrink-0">
                 {editingProduct && onDeleteProduct ? (
                   <button
                     type="button"
@@ -767,14 +779,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                       setIsAddProductOpen(false);
                       setEditingProduct(null);
                     }}
-                    className="px-4 py-2 text-neutral-600 hover:bg-neutral-100 rounded-xl font-semibold"
+                    className="px-4 py-2 text-neutral-600 hover:bg-neutral-200/70 rounded-xl font-semibold"
                   >
                     বাতিল
                   </button>
                   <button
                     type="submit"
                     disabled={isUploadingImage}
-                    className="px-5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl font-bold shadow transition-colors disabled:opacity-50"
+                    className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl font-bold shadow transition-colors disabled:opacity-50"
                   >
                     {isUploadingImage
                       ? 'ছবি প্রসেস হচ্ছে...'

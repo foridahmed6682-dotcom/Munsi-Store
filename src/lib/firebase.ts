@@ -20,7 +20,9 @@ import {
   query,
   orderBy,
   getDocFromServer,
-  addDoc
+  addDoc,
+  setLogLevel,
+  disableNetwork
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { AppUser, UserRole, Shop, Product, Order, DueCollectionRecord, Category, AuthorizedUserEmail, Route, BusinessInfo, CustomerDeliveryAddress, DailyExpenseRecord, StaffTargetConfig } from '../types';
@@ -53,6 +55,72 @@ export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 /* CRITICAL: The app will break without this line */
 export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
 export const auth = getAuth(app);
+
+// Silence internal @firebase/firestore WebChannel backoff & quota console.error spam
+try {
+  setLogLevel('silent');
+} catch {
+  // ignore
+}
+
+// ============================================================================
+// FIRESTORE DAILY QUOTA CIRCUIT BREAKER
+// Automatically disables SDK network retry loops & switches 100% to Server Mirror + LocalStorage
+// when Firestore Free Tier daily read/write quota (resource-exhausted / 429) is reached
+// ============================================================================
+const QUOTA_EXHAUSTED_STORAGE_KEY = 'munsi_fs_quota_exhausted_date_v1';
+let quotaCircuitBreakerTripped = false;
+
+function getTodayDateKey(): string {
+  return new Date().toISOString().split('T')[0];
+}
+
+export function isFirestoreQuotaExhausted(): boolean {
+  if (quotaCircuitBreakerTripped) return true;
+  if (typeof window !== 'undefined') {
+    try {
+      if (localStorage.getItem(QUOTA_EXHAUSTED_STORAGE_KEY) === getTodayDateKey()) {
+        quotaCircuitBreakerTripped = true;
+        return true;
+      }
+    } catch {
+      // ignore storage error
+    }
+  }
+  return false;
+}
+
+export function tripFirestoreQuotaCircuitBreaker(error?: unknown): void {
+  const err = error as { code?: string; message?: string; status?: number };
+  const msg = err?.message || String(error || '');
+  const isQuotaError =
+    !error ||
+    err?.code === 'resource-exhausted' ||
+    err?.status === 429 ||
+    msg.includes('resource-exhausted') ||
+    msg.includes('Quota limit exceeded') ||
+    msg.includes('Quota exceeded') ||
+    msg.includes('429');
+
+  if (!isQuotaError) return;
+
+  if (!quotaCircuitBreakerTripped) {
+    quotaCircuitBreakerTripped = true;
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(QUOTA_EXHAUSTED_STORAGE_KEY, getTodayDateKey());
+      } catch {
+        // ignore
+      }
+    }
+    disableNetwork(db).catch(() => {});
+  }
+}
+
+// Immediately disable Firestore SDK network if quota was already exhausted today
+if (isFirestoreQuotaExhausted()) {
+  disableNetwork(db).catch(() => {});
+}
 
 // ============================================================================
 // DIRECT FIREBASE FIRESTORE CLOUD READ & WRITE ENGINE
@@ -88,17 +156,18 @@ function parseFirestoreRestFields(fields: Record<string, any>): Record<string, a
   return out;
 }
 
-// Reads any document directly from Firebase Firestore
+// Reads any document directly from Firebase Firestore via REST GET (never consumes Write quota)
 export async function readFirestoreDocDirect(docPath: string): Promise<Record<string, any> | null> {
+  if (isFirestoreQuotaExhausted()) return null;
   try {
-    const res = await fetch(
-      `${FIRESTORE_BASE_URL}/${docPath}?updateMask.fieldPaths=_syncCheck&currentDocument.exists=true&key=${FIRESTORE_API_KEY}`,
-      {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fields: { _syncCheck: { booleanValue: true } } }),
-      }
-    );
+    const res = await fetch(`${FIRESTORE_BASE_URL}/${docPath}?key=${FIRESTORE_API_KEY}`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (res.status === 429) {
+      tripFirestoreQuotaCircuitBreaker({ status: 429 });
+      return null;
+    }
     if (res.status !== 200) return null;
     const data = await res.json();
     if (!data || !data.fields) return null;
@@ -146,6 +215,7 @@ function mergeLocalAndCloud<T extends Record<string, any>>(
 
 // Writes a collection catalog directly to Firebase Firestore (safe against 1MB limit and hanging WebChannel)
 export async function writeFirestoreCatalogDirect(catalogKey: string, items: any[]): Promise<void> {
+  if (isFirestoreQuotaExhausted()) return;
   let serialized = JSON.stringify(items);
   // Protect against Firestore 1MB single-document limit when many products have base64 images
   if (serialized.length > 650000 && catalogKey === 'products') {
@@ -160,9 +230,9 @@ export async function writeFirestoreCatalogDirect(catalogKey: string, items: any
 
   const nowIso = new Date().toISOString();
 
-  // 1. Immediate REST PATCH (never hangs even when Firebase WebChannel is offline/throttled)
+  // Single REST PATCH (no duplicate SDK setDoc that queues infinite retries when quota is reached)
   try {
-    await fetch(`${FIRESTORE_BASE_URL}/settings/cloud_catalog_${catalogKey}?key=${FIRESTORE_API_KEY}`, {
+    const res = await fetch(`${FIRESTORE_BASE_URL}/settings/cloud_catalog_${catalogKey}?key=${FIRESTORE_API_KEY}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -172,19 +242,16 @@ export async function writeFirestoreCatalogDirect(catalogKey: string, items: any
         },
       }),
     });
+    if (res.status === 429) {
+      tripFirestoreQuotaCircuitBreaker({ status: 429 });
+    }
   } catch {
     // ignore network error
   }
-
-  // 2. Non-blocking SDK setDoc in background
-  setDoc(doc(db, 'settings', `cloud_catalog_${catalogKey}`), {
-    itemsJson: serialized,
-    updatedAt: nowIso,
-  }).catch(() => {});
 }
 
 export async function upsertItemInFirebaseCatalog(catalogKey: string, item: any, idField = 'id'): Promise<void> {
-  if (!item || !item[idField]) return;
+  if (!item || !item[idField] || isFirestoreQuotaExhausted()) return;
   const current = await readFirestoreCatalogDirect<any>(catalogKey);
   const keyVal = String(item[idField]).toLowerCase();
   const idx = current.findIndex((x) => x && String(x[idField]).toLowerCase() === keyVal);
@@ -197,7 +264,7 @@ export async function upsertItemInFirebaseCatalog(catalogKey: string, item: any,
 }
 
 export async function removeItemFromFirebaseCatalog(catalogKey: string, idValue: string, idField = 'id'): Promise<void> {
-  if (!idValue) return;
+  if (!idValue || isFirestoreQuotaExhausted()) return;
   const current = await readFirestoreCatalogDirect<any>(catalogKey);
   const keyVal = String(idValue).toLowerCase();
   const filtered = current.filter(
@@ -267,9 +334,11 @@ provider.setCustomParameters({ prompt: 'select_account' });
 
 // Verification & Connection test as required by firebase-skill
 export async function testConnection() {
+  if (isFirestoreQuotaExhausted()) return;
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
+    tripFirestoreQuotaCircuitBreaker(error);
     if (error instanceof Error && error.message.includes('the client is offline')) {
       console.warn('Firebase client is in offline mode or waiting for connection.');
     }
@@ -326,11 +395,12 @@ export function handleFirestoreError(error: unknown, operation: OperationType, p
 
   if (
     err?.code === 'resource-exhausted' ||
+    msg.includes('resource-exhausted') ||
     msg.includes('Quota limit exceeded') ||
     msg.includes('Quota exceeded') ||
     msg.includes('offline')
   ) {
-    console.warn(`Firestore [${operation} on ${path}] using Local & Server Mirror fallback (Daily Free Quota / Offline):`, msg);
+    tripFirestoreQuotaCircuitBreaker(error);
     return;
   }
 
@@ -364,7 +434,7 @@ export async function resolveRoleByEmailAndUid(
   }
 
   // 2. Check existing doc in users/{uid} - Admin assigned role directly to user
-  if (uid) {
+  if (uid && !isFirestoreQuotaExhausted()) {
     try {
       const userDocSnap = await getDoc(doc(db, 'users', uid));
       if (userDocSnap.exists()) {
@@ -377,7 +447,8 @@ export async function resolveRoleByEmailAndUid(
           };
         }
       }
-    } catch {
+    } catch (err) {
+      tripFirestoreQuotaCircuitBreaker(err);
       const directUser = (await readFirestoreDocDirect(`users/${uid}`)) as AppUser | null;
       if (directUser?.role) {
         return {
@@ -391,43 +462,46 @@ export async function resolveRoleByEmailAndUid(
 
   // 3. Check authorizedEmails collection in Firestore
   if (userEmail) {
-    try {
-      const authSnap = await getDocs(collection(db, 'authorizedEmails'));
-      let matched: AuthorizedUserEmail | null = null;
-      authSnap.forEach((docSnap) => {
-        const data = docSnap.data() as AuthorizedUserEmail;
-        if (data.email && data.email.toLowerCase().trim() === userEmail) {
-          matched = data;
-        }
-      });
+    if (!isFirestoreQuotaExhausted()) {
+      try {
+        const authSnap = await getDocs(collection(db, 'authorizedEmails'));
+        let matched: AuthorizedUserEmail | null = null;
+        authSnap.forEach((docSnap) => {
+          const data = docSnap.data() as AuthorizedUserEmail;
+          if (data.email && data.email.toLowerCase().trim() === userEmail) {
+            matched = data;
+          }
+        });
 
-      if (matched) {
-        return {
-          role: (matched as any).role || 'customer',
-          assignedRoute: (matched as any).assignedRoute || 'সব রুট (All Routes)',
-          matchedName: (matched as any).fullName || (matched as any).name,
-        };
-      }
-    } catch {
-      const safeDocId = userEmail.replace(/[@.]/g, '_');
-      const directAuth = await readFirestoreDocDirect(`authorizedEmails/${safeDocId}`);
-      if (directAuth && directAuth.email) {
-        return {
-          role: (directAuth.role as UserRole) || 'customer',
-          assignedRoute: directAuth.assignedRoute || 'সব রুট (All Routes)',
-          matchedName: directAuth.fullName || directAuth.name,
-        };
-      }
-      const catalogAuths = await readFirestoreCatalogDirect<AuthorizedUserEmail>('authorizedEmails');
-      const foundInCatalog = catalogAuths.find(
-        (a) => a.email && a.email.toLowerCase().trim() === userEmail
-      );
-      if (foundInCatalog) {
-        return {
-          role: foundInCatalog.role || 'customer',
-          assignedRoute: foundInCatalog.assignedRoute || 'সব রুট (All Routes)',
-          matchedName: foundInCatalog.fullName,
-        };
+        if (matched) {
+          return {
+            role: (matched as any).role || 'customer',
+            assignedRoute: (matched as any).assignedRoute || 'সব রুট (All Routes)',
+            matchedName: (matched as any).fullName || (matched as any).name,
+          };
+        }
+      } catch (err) {
+        tripFirestoreQuotaCircuitBreaker(err);
+        const safeDocId = userEmail.replace(/[@.]/g, '_');
+        const directAuth = await readFirestoreDocDirect(`authorizedEmails/${safeDocId}`);
+        if (directAuth && directAuth.email) {
+          return {
+            role: (directAuth.role as UserRole) || 'customer',
+            assignedRoute: directAuth.assignedRoute || 'সব রুট (All Routes)',
+            matchedName: directAuth.fullName || directAuth.name,
+          };
+        }
+        const catalogAuths = await readFirestoreCatalogDirect<AuthorizedUserEmail>('authorizedEmails');
+        const foundInCatalog = catalogAuths.find(
+          (a) => a.email && a.email.toLowerCase().trim() === userEmail
+        );
+        if (foundInCatalog) {
+          return {
+            role: foundInCatalog.role || 'customer',
+            assignedRoute: foundInCatalog.assignedRoute || 'সব রুট (All Routes)',
+            matchedName: foundInCatalog.fullName,
+          };
+        }
       }
     }
 
@@ -481,14 +555,16 @@ export async function syncUserProfileToCloud(firebaseUser: User): Promise<AppUse
   let existingData: AppUser | null = null;
   let isNew = true;
 
-  try {
-    const existingSnap = await getDoc(userDocRef);
-    if (existingSnap.exists()) {
-      existingData = existingSnap.data() as AppUser;
-      isNew = false;
+  if (!isFirestoreQuotaExhausted()) {
+    try {
+      const existingSnap = await getDoc(userDocRef);
+      if (existingSnap.exists()) {
+        existingData = existingSnap.data() as AppUser;
+        isNew = false;
+      }
+    } catch (err) {
+      tripFirestoreQuotaCircuitBreaker(err);
     }
-  } catch (err) {
-    console.warn('Could not check existing doc:', err);
   }
 
   const nowIso = new Date().toISOString();
@@ -510,24 +586,26 @@ export async function syncUserProfileToCloud(firebaseUser: User): Promise<AppUse
     createdAt: isNew ? nowIso : existingData?.createdAt || nowIso,
   };
 
-  try {
-    const cleanedUser = cleanForFirestore(appUser);
-    await setDoc(userDocRef, cleanedUser, { merge: true });
-    upsertItemInFirebaseCatalog('users', cleanedUser, 'uid');
+  if (!isFirestoreQuotaExhausted()) {
+    try {
+      const cleanedUser = cleanForFirestore(appUser);
+      await setDoc(userDocRef, cleanedUser, { merge: true });
+      upsertItemInFirebaseCatalog('users', cleanedUser, 'uid');
 
-    if (role === 'admin') {
-      await setDoc(
-        doc(db, 'admins', firebaseUser.uid),
-        {
-          uid: firebaseUser.uid,
-          email: firebaseUser.email || '',
-          addedAt: nowIso,
-        },
-        { merge: true }
-      );
+      if (role === 'admin') {
+        await setDoc(
+          doc(db, 'admins', firebaseUser.uid),
+          {
+            uid: firebaseUser.uid,
+            email: firebaseUser.email || '',
+            addedAt: nowIso,
+          },
+          { merge: true }
+        );
+      }
+    } catch (err) {
+      tripFirestoreQuotaCircuitBreaker(err);
     }
-  } catch (err) {
-    console.warn('Notice saving user profile to Firestore (continuing with local session):', err);
   }
 
   return appUser;
@@ -535,7 +613,7 @@ export async function syncUserProfileToCloud(firebaseUser: User): Promise<AppUse
 
 // Save customer delivery address to Firestore user profile
 export async function saveCustomerAddressToCloud(uid: string, address: CustomerDeliveryAddress): Promise<void> {
-  if (!uid) return;
+  if (!uid || isFirestoreQuotaExhausted()) return;
   try {
     const userDocRef = doc(db, 'users', uid);
     const payload = cleanForFirestore({
@@ -548,7 +626,7 @@ export async function saveCustomerAddressToCloud(uid: string, address: CustomerD
     });
     await setDoc(userDocRef, payload, { merge: true });
   } catch (err) {
-    console.warn('Failed to save customer delivery address to Firestore:', err);
+    tripFirestoreQuotaCircuitBreaker(err);
   }
 }
 
@@ -636,23 +714,25 @@ export async function directEmailSignIn(
     createdAt: nowIso,
   };
 
-  try {
-    const cleaned = cleanForFirestore(appUser);
-    await setDoc(doc(db, 'users', safeUid), cleaned, { merge: true });
-    upsertItemInFirebaseCatalog('users', cleaned, 'uid');
-    if (role === 'admin') {
-      await setDoc(
-        doc(db, 'admins', safeUid),
-        {
-          uid: safeUid,
-          email: emailClean,
-          addedAt: nowIso,
-        },
-        { merge: true }
-      );
+  if (!isFirestoreQuotaExhausted()) {
+    try {
+      const cleaned = cleanForFirestore(appUser);
+      await setDoc(doc(db, 'users', safeUid), cleaned, { merge: true });
+      upsertItemInFirebaseCatalog('users', cleaned, 'uid');
+      if (role === 'admin') {
+        await setDoc(
+          doc(db, 'admins', safeUid),
+          {
+            uid: safeUid,
+            email: emailClean,
+            addedAt: nowIso,
+          },
+          { merge: true }
+        );
+      }
+    } catch (err) {
+      tripFirestoreQuotaCircuitBreaker(err);
     }
-  } catch (err) {
-    console.warn('Direct email sign-in saved locally (cloud sync deferred):', err);
   }
 
   return {
@@ -673,13 +753,15 @@ export function onAuthChanged(callback: (user: User | null) => void) {
 
 // 5. Fetch User Profile
 export async function fetchUserProfile(uid: string): Promise<AppUser | null> {
+  if (isFirestoreQuotaExhausted()) return null;
   try {
     const snap = await getDoc(doc(db, 'users', uid));
     if (snap.exists()) {
       return snap.data() as AppUser;
     }
     return null;
-  } catch {
+  } catch (err) {
+    tripFirestoreQuotaCircuitBreaker(err);
     const directUser = await readFirestoreDocDirect(`users/${uid}`);
     return (directUser as AppUser) || null;
   }
@@ -687,6 +769,9 @@ export async function fetchUserProfile(uid: string): Promise<AppUser | null> {
 
 // Real-time listener for current user's profile
 export function subscribeToUserProfileDoc(uid: string, onUpdate: (user: AppUser | null) => void) {
+  if (isFirestoreQuotaExhausted()) {
+    return () => {};
+  }
   return onSnapshot(
     doc(db, 'users', uid),
     (snap) => {
@@ -696,7 +781,8 @@ export function subscribeToUserProfileDoc(uid: string, onUpdate: (user: AppUser 
         onUpdate(null);
       }
     },
-    async () => {
+    async (err) => {
+      tripFirestoreQuotaCircuitBreaker(err);
       const directUser = await readFirestoreDocDirect(`users/${uid}`);
       if (directUser) {
         onUpdate(directUser as AppUser);
@@ -708,16 +794,17 @@ export function subscribeToUserProfileDoc(uid: string, onUpdate: (user: AppUser 
 // 6. Fetch All Registered Users
 export async function fetchAllUsers(): Promise<AppUser[]> {
   const path = 'users';
-  try {
-    const snapshot = await getDocs(collection(db, path));
-    const users: AppUser[] = [];
-    snapshot.forEach((d) => users.push(d.data() as AppUser));
-    if (users.length > 0) {
-      writeFirestoreCatalogDirect('users', users);
-      return users;
+  if (!isFirestoreQuotaExhausted()) {
+    try {
+      const snapshot = await getDocs(collection(db, path));
+      const users: AppUser[] = [];
+      snapshot.forEach((d) => users.push(d.data() as AppUser));
+      if (users.length > 0) {
+        return users;
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.LIST, path);
     }
-  } catch (error) {
-    handleFirestoreError(error, OperationType.LIST, path);
   }
   const directUsers = await readFirestoreCatalogDirect<AppUser>('users');
   return directUsers;
@@ -725,6 +812,7 @@ export async function fetchAllUsers(): Promise<AppUser[]> {
 
 // 7. Update User Role & Route
 export async function updateUserRoleAndRoute(uid: string, role: UserRole, assignedRoute?: string) {
+  if (isFirestoreQuotaExhausted()) return;
   const path = `users/${uid}`;
   try {
     const userDocRef = doc(db, 'users', uid);
@@ -780,7 +868,7 @@ export async function updateUserRoleAndRoute(uid: string, role: UserRole, assign
           });
         }
       } catch (authErr) {
-        console.warn('Could not sync to authorizedEmails collection:', authErr);
+        tripFirestoreQuotaCircuitBreaker(authErr);
       }
     }
   } catch (error) {
@@ -788,57 +876,59 @@ export async function updateUserRoleAndRoute(uid: string, role: UserRole, assign
   }
 }
 
-// Real-time Cloud Sync Listeners (100% Direct Firebase Read + Write + Local Merge Protection)
+// Real-time Cloud Sync Listeners (Server Mirror + Direct Firebase Read + Local Merge Protection, zero redundant writes)
 export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
   const path = 'shops';
   const pollFirebaseDirect = async () => {
-    const [directShops, mirror] = await Promise.all([
-      readFirestoreCatalogDirect<Shop>('shops'),
-      fetchServerDatabaseMirror(),
-    ]);
+    const mirror = await fetchServerDatabaseMirror();
+    const directShops = isFirestoreQuotaExhausted()
+      ? []
+      : await readFirestoreCatalogDirect<Shop>('shops');
     const deletedIds = getDeletedShopIds();
     const mirrorShops: Shop[] = Array.isArray(mirror?.shops) ? mirror.shops : [];
     const combinedRemote = mergeLocalAndCloud(mirrorShops, directShops, deletedIds);
     const merged = mergeLocalAndCloud(getShops(), combinedRemote, deletedIds);
     if (merged.length > 0) {
-      pushBulkDataToServerMirror({ shops: merged });
       onData(merged);
     }
   };
 
-  const unsub = onSnapshot(
-    collection(db, path),
-    (snapshot) => {
-      if (snapshot.empty) {
-        pollFirebaseDirect();
-        return;
-      }
-      const shops: Shop[] = [];
-      const deletedIds = getDeletedShopIds();
-      snapshot.forEach((d) => {
-        const s = d.data() as Shop;
-        if (!deletedIds.has(s.id)) {
-          shops.push(s);
+  let unsub = () => {};
+  if (!isFirestoreQuotaExhausted()) {
+    unsub = onSnapshot(
+      collection(db, path),
+      (snapshot) => {
+        if (snapshot.empty) {
+          pollFirebaseDirect();
+          return;
         }
-      });
-      const merged = mergeLocalAndCloud(getShops(), shops, deletedIds);
-      if (merged.length > 0) {
-        writeFirestoreCatalogDirect('shops', merged);
-        pushBulkDataToServerMirror({ shops: merged });
-        onData(merged);
+        const shops: Shop[] = [];
+        const deletedIds = getDeletedShopIds();
+        snapshot.forEach((d) => {
+          const s = d.data() as Shop;
+          if (!deletedIds.has(s.id)) {
+            shops.push(s);
+          }
+        });
+        const merged = mergeLocalAndCloud(getShops(), shops, deletedIds);
+        if (merged.length > 0) {
+          onData(merged);
+        }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, path);
+        pollFirebaseDirect();
       }
-    },
-    (error) => {
-      handleFirestoreError(error, OperationType.GET, path);
-      pollFirebaseDirect();
-    }
-  );
+    );
+  } else {
+    pollFirebaseDirect();
+  }
 
   const timer = setInterval(() => {
     if (typeof document === 'undefined' || document.visibilityState === 'visible') {
       pollFirebaseDirect();
     }
-  }, 10000);
+  }, 15000);
 
   return () => {
     clearInterval(timer);
@@ -849,13 +939,12 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
 export function subscribeToCloudProducts(onData: (products: Product[]) => void) {
   const path = 'products';
   const pollFirebaseDirect = async () => {
-    const [directProducts, mirror] = await Promise.all([
-      readFirestoreCatalogDirect<Product>('products'),
-      fetchServerDatabaseMirror(),
-    ]);
+    const mirror = await fetchServerDatabaseMirror();
+    const directProducts = isFirestoreQuotaExhausted()
+      ? []
+      : await readFirestoreCatalogDirect<Product>('products');
     const deletedIds = getDeletedProductIds();
     const mirrorProducts: Product[] = Array.isArray(mirror?.products) ? mirror.products : [];
-    // Keep rich images from mirrorProducts/localProducts if catalog had compacted images
     const combinedRemote = mergeLocalAndCloud(mirrorProducts, directProducts, deletedIds).map((item) => {
       const mirrorMatch = mirrorProducts.find((m) => m.id === item.id);
       if (!item.imageUrl && mirrorMatch?.imageUrl) {
@@ -873,44 +962,46 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
       return item;
     });
     if (merged.length > 0) {
-      pushBulkDataToServerMirror({ products: merged });
       onData(merged);
     }
   };
 
-  const unsub = onSnapshot(
-    collection(db, path),
-    (snapshot) => {
-      if (snapshot.empty) {
-        pollFirebaseDirect();
-        return;
-      }
-      const products: Product[] = [];
-      const deletedIds = getDeletedProductIds();
-      snapshot.forEach((d) => {
-        const p = d.data() as Product;
-        if (!deletedIds.has(p.id)) {
-          products.push(p);
+  let unsub = () => {};
+  if (!isFirestoreQuotaExhausted()) {
+    unsub = onSnapshot(
+      collection(db, path),
+      (snapshot) => {
+        if (snapshot.empty) {
+          pollFirebaseDirect();
+          return;
         }
-      });
-      const merged = mergeLocalAndCloud(getProducts(), products, deletedIds);
-      if (merged.length > 0) {
-        writeFirestoreCatalogDirect('products', merged);
-        pushBulkDataToServerMirror({ products: merged });
-        onData(merged);
+        const products: Product[] = [];
+        const deletedIds = getDeletedProductIds();
+        snapshot.forEach((d) => {
+          const p = d.data() as Product;
+          if (!deletedIds.has(p.id)) {
+            products.push(p);
+          }
+        });
+        const merged = mergeLocalAndCloud(getProducts(), products, deletedIds);
+        if (merged.length > 0) {
+          onData(merged);
+        }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, path);
+        pollFirebaseDirect();
       }
-    },
-    (error) => {
-      handleFirestoreError(error, OperationType.GET, path);
-      pollFirebaseDirect();
-    }
-  );
+    );
+  } else {
+    pollFirebaseDirect();
+  }
 
   const timer = setInterval(() => {
     if (typeof document === 'undefined' || document.visibilityState === 'visible') {
       pollFirebaseDirect();
     }
-  }, 10000);
+  }, 15000);
 
   return () => {
     clearInterval(timer);
@@ -922,10 +1013,10 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
   const path = 'orders';
   const q = query(collection(db, path), orderBy('orderDate', 'desc'));
   const pollFirebaseDirect = async () => {
-    const [directOrders, mirror] = await Promise.all([
-      readFirestoreCatalogDirect<Order>('orders'),
-      fetchServerDatabaseMirror(),
-    ]);
+    const mirror = await fetchServerDatabaseMirror();
+    const directOrders = isFirestoreQuotaExhausted()
+      ? []
+      : await readFirestoreCatalogDirect<Order>('orders');
     const deletedIds = getDeletedOrderIds();
     const mirrorOrders: Order[] = Array.isArray(mirror?.orders) ? mirror.orders : [];
     const combinedRemote = mergeLocalAndCloud(mirrorOrders, directOrders, deletedIds);
@@ -933,46 +1024,48 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
       (a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime()
     );
     if (merged.length > 0) {
-      pushBulkDataToServerMirror({ orders: merged });
       onData(merged);
     }
   };
 
-  const unsub = onSnapshot(
-    q,
-    (snapshot) => {
-      if (snapshot.empty) {
-        pollFirebaseDirect();
-        return;
-      }
-      const orders: Order[] = [];
-      const deletedIds = getDeletedOrderIds();
-      snapshot.forEach((d) => {
-        const o = d.data() as Order;
-        if (!deletedIds.has(o.id)) {
-          orders.push(o);
+  let unsub = () => {};
+  if (!isFirestoreQuotaExhausted()) {
+    unsub = onSnapshot(
+      q,
+      (snapshot) => {
+        if (snapshot.empty) {
+          pollFirebaseDirect();
+          return;
         }
-      });
-      const merged = mergeLocalAndCloud(getOrders(), orders, deletedIds).sort(
-        (a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime()
-      );
-      if (merged.length > 0) {
-        writeFirestoreCatalogDirect('orders', merged);
-        pushBulkDataToServerMirror({ orders: merged });
-        onData(merged);
+        const orders: Order[] = [];
+        const deletedIds = getDeletedOrderIds();
+        snapshot.forEach((d) => {
+          const o = d.data() as Order;
+          if (!deletedIds.has(o.id)) {
+            orders.push(o);
+          }
+        });
+        const merged = mergeLocalAndCloud(getOrders(), orders, deletedIds).sort(
+          (a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime()
+        );
+        if (merged.length > 0) {
+          onData(merged);
+        }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, path);
+        pollFirebaseDirect();
       }
-    },
-    (error) => {
-      handleFirestoreError(error, OperationType.GET, path);
-      pollFirebaseDirect();
-    }
-  );
+    );
+  } else {
+    pollFirebaseDirect();
+  }
 
   const timer = setInterval(() => {
     if (typeof document === 'undefined' || document.visibilityState === 'visible') {
       pollFirebaseDirect();
     }
-  }, 8000);
+  }, 12000);
 
   return () => {
     clearInterval(timer);
@@ -980,11 +1073,12 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
   };
 }
 
-// Cloud Mutation Operations (100% Direct Firebase Write + Catalog Update + Server Mirror)
+// Cloud Mutation Operations (Server Mirror + Safe Quota-Aware Firestore Write)
 export async function saveShopToCloud(shop: Shop) {
   const path = `shops/${shop.id}`;
   const cleaned = cleanForFirestore(shop);
   await syncItemToServerMirror('shops', cleaned);
+  if (isFirestoreQuotaExhausted()) return;
   await upsertItemInFirebaseCatalog('shops', cleaned, 'id');
   setDoc(doc(db, 'shops', shop.id), cleaned).catch((error) => {
     handleFirestoreError(error, OperationType.WRITE, path);
@@ -994,6 +1088,7 @@ export async function saveShopToCloud(shop: Shop) {
 export async function deleteShopFromCloud(shopId: string) {
   const path = `shops/${shopId}`;
   await deleteItemFromServerMirror('shops', shopId);
+  if (isFirestoreQuotaExhausted()) return;
   await removeItemFromFirebaseCatalog('shops', shopId, 'id');
   deleteDoc(doc(db, 'shops', shopId)).catch((error) => {
     handleFirestoreError(error, OperationType.DELETE, path);
@@ -1010,6 +1105,7 @@ export async function saveProductToCloud(product: Product) {
     imageUrl: safeImageUrl,
   });
   await syncItemToServerMirror('products', cleaned);
+  if (isFirestoreQuotaExhausted()) return;
   await upsertItemInFirebaseCatalog('products', cleaned, 'id');
   setDoc(doc(db, 'products', product.id), cleaned).catch((error) => {
     handleFirestoreError(error, OperationType.WRITE, path);
@@ -1019,6 +1115,7 @@ export async function saveProductToCloud(product: Product) {
 export async function deleteProductFromCloud(productId: string) {
   const path = `products/${productId}`;
   await deleteItemFromServerMirror('products', productId);
+  if (isFirestoreQuotaExhausted()) return;
   await removeItemFromFirebaseCatalog('products', productId, 'id');
   deleteDoc(doc(db, 'products', productId)).catch((error) => {
     handleFirestoreError(error, OperationType.DELETE, path);
@@ -1029,6 +1126,7 @@ export async function saveOrderToCloud(order: Order) {
   const path = `orders/${order.id}`;
   const cleaned = cleanForFirestore(order);
   await syncItemToServerMirror('orders', cleaned);
+  if (isFirestoreQuotaExhausted()) return;
   await upsertItemInFirebaseCatalog('orders', cleaned, 'id');
   setDoc(doc(db, 'orders', order.id), cleaned).catch((error) => {
     handleFirestoreError(error, OperationType.WRITE, path);
@@ -1038,6 +1136,7 @@ export async function saveOrderToCloud(order: Order) {
 export async function deleteOrderFromCloud(orderId: string) {
   const path = `orders/${orderId}`;
   await deleteItemFromServerMirror('orders', orderId);
+  if (isFirestoreQuotaExhausted()) return;
   await removeItemFromFirebaseCatalog('orders', orderId, 'id');
   deleteDoc(doc(db, 'orders', orderId)).catch((error) => {
     handleFirestoreError(error, OperationType.DELETE, path);
@@ -1048,6 +1147,7 @@ export async function saveDueCollectionToCloud(record: DueCollectionRecord) {
   const path = `dueCollections/${record.id}`;
   const cleaned = cleanForFirestore(record);
   await syncItemToServerMirror('dueCollections', cleaned);
+  if (isFirestoreQuotaExhausted()) return;
   await upsertItemInFirebaseCatalog('dueCollections', cleaned, 'id');
   setDoc(doc(db, 'dueCollections', record.id), cleaned).catch((error) => {
     handleFirestoreError(error, OperationType.WRITE, path);
@@ -1058,14 +1158,23 @@ export async function saveDueCollectionToCloud(record: DueCollectionRecord) {
 export function subscribeToCloudCategories(onData: (categories: Category[]) => void) {
   const path = 'categories';
   const pollFirebaseDirect = async () => {
-    const directCats = await readFirestoreCatalogDirect<Category>('categories');
+    const mirror = await fetchServerDatabaseMirror();
+    const mirrorCats: Category[] = Array.isArray(mirror?.categories) ? mirror.categories : [];
+    const directCats = isFirestoreQuotaExhausted()
+      ? []
+      : await readFirestoreCatalogDirect<Category>('categories');
     const deletedIds = getDeletedCategoryIds();
-    const filtered = directCats.filter((c) => c && !deletedIds.has(c.id));
+    const combined = mergeLocalAndCloud(mirrorCats, directCats, deletedIds);
+    const filtered = combined.filter((c) => c && !deletedIds.has(c.id));
     if (filtered.length > 0) {
-      pushBulkDataToServerMirror({ categories: filtered });
       onData(filtered);
     }
   };
+
+  if (isFirestoreQuotaExhausted()) {
+    pollFirebaseDirect();
+    return () => {};
+  }
 
   const unsub = onSnapshot(
     collection(db, path),
@@ -1083,8 +1192,6 @@ export function subscribeToCloudCategories(onData: (categories: Category[]) => v
         }
       });
       if (list.length > 0) {
-        writeFirestoreCatalogDirect('categories', list);
-        pushBulkDataToServerMirror({ categories: list });
         onData(list);
       }
     },
@@ -1103,6 +1210,7 @@ export async function saveCategoryToCloud(category: Category) {
   const path = `categories/${category.id}`;
   const cleaned = cleanForFirestore(category);
   syncItemToServerMirror('categories', cleaned);
+  if (isFirestoreQuotaExhausted()) return;
   try {
     await setDoc(doc(db, 'categories', category.id), cleaned);
     await upsertItemInFirebaseCatalog('categories', cleaned, 'id');
@@ -1114,6 +1222,7 @@ export async function saveCategoryToCloud(category: Category) {
 export async function deleteCategoryFromCloud(categoryId: string) {
   const path = `categories/${categoryId}`;
   deleteItemFromServerMirror('categories', categoryId);
+  if (isFirestoreQuotaExhausted()) return;
   try {
     await deleteDoc(doc(db, 'categories', categoryId));
     await removeItemFromFirebaseCatalog('categories', categoryId, 'id');
@@ -1126,14 +1235,23 @@ export async function deleteCategoryFromCloud(categoryId: string) {
 export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
   const path = 'routes';
   const pollFirebaseDirect = async () => {
-    const directRoutes = await readFirestoreCatalogDirect<Route>('routes');
+    const mirror = await fetchServerDatabaseMirror();
+    const mirrorRoutes: Route[] = Array.isArray(mirror?.routes) ? mirror.routes : [];
+    const directRoutes = isFirestoreQuotaExhausted()
+      ? []
+      : await readFirestoreCatalogDirect<Route>('routes');
     const deletedIds = getDeletedRouteIds();
-    const filtered = directRoutes.filter((r) => r && !deletedIds.has(r.id));
+    const combined = mergeLocalAndCloud(mirrorRoutes, directRoutes, deletedIds);
+    const filtered = combined.filter((r) => r && !deletedIds.has(r.id));
     if (filtered.length > 0) {
-      pushBulkDataToServerMirror({ routes: filtered });
       onData(filtered);
     }
   };
+
+  if (isFirestoreQuotaExhausted()) {
+    pollFirebaseDirect();
+    return () => {};
+  }
 
   const unsub = onSnapshot(
     collection(db, path),
@@ -1151,8 +1269,6 @@ export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
         }
       });
       if (list.length > 0) {
-        writeFirestoreCatalogDirect('routes', list);
-        pushBulkDataToServerMirror({ routes: list });
         onData(list);
       }
     },
@@ -1171,6 +1287,7 @@ export async function saveRouteToCloud(route: Route) {
   const path = `routes/${route.id}`;
   const cleaned = cleanForFirestore(route);
   syncItemToServerMirror('routes', cleaned);
+  if (isFirestoreQuotaExhausted()) return;
   try {
     await setDoc(doc(db, 'routes', route.id), cleaned);
     await upsertItemInFirebaseCatalog('routes', cleaned, 'id');
@@ -1182,6 +1299,7 @@ export async function saveRouteToCloud(route: Route) {
 export async function deleteRouteFromCloud(routeId: string) {
   const path = `routes/${routeId}`;
   deleteItemFromServerMirror('routes', routeId);
+  if (isFirestoreQuotaExhausted()) return;
   try {
     await deleteDoc(doc(db, 'routes', routeId));
     await removeItemFromFirebaseCatalog('routes', routeId, 'id');
@@ -1195,18 +1313,28 @@ export function subscribeToAuthorizedEmails(onData: (emails: AuthorizedUserEmail
   const path = 'authorizedEmails';
   const mockEmails = new Set(['sr.karim@munsistore.com', 'dsr.habib@munsistore.com']);
   const pollFirebaseDirect = async () => {
-    const directAuths = await readFirestoreCatalogDirect<AuthorizedUserEmail>('authorizedEmails');
-    const mainAdmin = await readFirestoreDocDirect('authorizedEmails/foridahmed6682_gmail_com');
-    const combined = [...directAuths];
+    const mirror = await fetchServerDatabaseMirror();
+    const mirrorAuths: AuthorizedUserEmail[] = Array.isArray(mirror?.authorizedEmails) ? mirror.authorizedEmails : [];
+    const directAuths = isFirestoreQuotaExhausted()
+      ? []
+      : await readFirestoreCatalogDirect<AuthorizedUserEmail>('authorizedEmails');
+    const mainAdmin = isFirestoreQuotaExhausted()
+      ? null
+      : await readFirestoreDocDirect('authorizedEmails/foridahmed6682_gmail_com');
+    const combined = mergeLocalAndCloud(mirrorAuths, directAuths, new Set(), 'email');
     if (mainAdmin && mainAdmin.email && !combined.some((x) => x.email?.toLowerCase() === String(mainAdmin.email).toLowerCase())) {
       combined.push(mainAdmin as AuthorizedUserEmail);
     }
     const filtered = combined.filter((item) => item && item.email && !mockEmails.has(item.email.toLowerCase()));
     if (filtered.length > 0) {
-      pushBulkDataToServerMirror({ authorizedEmails: filtered });
       onData(filtered);
     }
   };
+
+  if (isFirestoreQuotaExhausted()) {
+    pollFirebaseDirect();
+    return () => {};
+  }
 
   const unsub = onSnapshot(
     collection(db, path),
@@ -1223,8 +1351,6 @@ export function subscribeToAuthorizedEmails(onData: (emails: AuthorizedUserEmail
         }
       });
       if (list.length > 0) {
-        writeFirestoreCatalogDirect('authorizedEmails', list);
-        pushBulkDataToServerMirror({ authorizedEmails: list });
         onData(list);
       }
     },
@@ -1249,6 +1375,7 @@ export async function saveAuthorizedEmailToCloud(authEmail: AuthorizedUserEmail)
     id: safeDocId,
   });
   syncItemToServerMirror('authorizedEmails', cleaned);
+  if (isFirestoreQuotaExhausted()) return;
   try {
     await setDoc(doc(db, 'authorizedEmails', safeDocId), cleaned);
     await upsertItemInFirebaseCatalog('authorizedEmails', cleaned, 'email');
@@ -1284,7 +1411,7 @@ export async function saveAuthorizedEmailToCloud(authEmail: AuthorizedUserEmail)
         }
       });
     } catch (userSyncErr) {
-      console.warn('Could not sync user role to /users collection:', userSyncErr);
+      tripFirestoreQuotaCircuitBreaker(userSyncErr);
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
@@ -1300,6 +1427,7 @@ export async function deleteAuthorizedEmailFromCloud(email: string) {
   const safeDocId = emailClean.replace(/[@.]/g, '_');
   const path = `authorizedEmails/${safeDocId}`;
   deleteItemFromServerMirror('authorizedEmails', emailClean);
+  if (isFirestoreQuotaExhausted()) return;
   try {
     await deleteDoc(doc(db, 'authorizedEmails', safeDocId));
     await removeItemFromFirebaseCatalog('authorizedEmails', emailClean, 'email');
@@ -1322,7 +1450,7 @@ export async function deleteAuthorizedEmailFromCloud(email: string) {
         }
       });
     } catch (userSyncErr) {
-      console.warn('Could not downgrade deleted user in /users collection:', userSyncErr);
+      tripFirestoreQuotaCircuitBreaker(userSyncErr);
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
@@ -1352,9 +1480,15 @@ export function subscribeToBusinessInfo(onData: (info: BusinessInfo) => void) {
         ? data.coupons.filter((c: any) => !demoCoupons.has(c.id))
         : [],
     } as BusinessInfo;
-    pushBulkDataToServerMirror({ businessInfo: merged });
     onData(merged);
   };
+
+  if (isFirestoreQuotaExhausted()) {
+    fetchServerDatabaseMirror().then((mirror) => {
+      if (mirror?.businessInfo) applyBizData(mirror.businessInfo);
+    });
+    return () => {};
+  }
 
   return onSnapshot(
     doc(db, 'settings', 'businessInfo'),
@@ -1382,6 +1516,7 @@ export async function saveBusinessInfoToCloud(info: BusinessInfo) {
   const path = 'settings/businessInfo';
   const cleaned = cleanForFirestore(info);
   pushBulkDataToServerMirror({ businessInfo: cleaned });
+  if (isFirestoreQuotaExhausted()) return;
   try {
     await setDoc(doc(db, 'settings', 'businessInfo'), cleaned);
   } catch (error) {
@@ -1393,12 +1528,22 @@ export async function saveBusinessInfoToCloud(info: BusinessInfo) {
 export function subscribeToCloudDueCollections(onData: (collections: DueCollectionRecord[]) => void) {
   const path = 'dueCollections';
   const pollFirebaseDirect = async () => {
-    const directCols = await readFirestoreCatalogDirect<DueCollectionRecord>('dueCollections');
-    if (directCols.length > 0) {
-      const sorted = [...directCols].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const mirror = await fetchServerDatabaseMirror();
+    const mirrorCols: DueCollectionRecord[] = Array.isArray(mirror?.dueCollections) ? mirror.dueCollections : [];
+    const directCols = isFirestoreQuotaExhausted()
+      ? []
+      : await readFirestoreCatalogDirect<DueCollectionRecord>('dueCollections');
+    const combined = mergeLocalAndCloud(mirrorCols, directCols, new Set());
+    if (combined.length > 0) {
+      const sorted = [...combined].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       onData(sorted);
     }
   };
+
+  if (isFirestoreQuotaExhausted()) {
+    pollFirebaseDirect();
+    return () => {};
+  }
 
   const unsub = onSnapshot(
     collection(db, path),
@@ -1413,7 +1558,6 @@ export function subscribeToCloudDueCollections(onData: (collections: DueCollecti
       });
       if (list.length > 0) {
         list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        writeFirestoreCatalogDirect('dueCollections', list);
         onData(list);
       }
     },
@@ -1432,12 +1576,22 @@ export function subscribeToCloudDueCollections(onData: (collections: DueCollecti
 export function subscribeToCloudDailyExpenses(onData: (expenses: DailyExpenseRecord[]) => void) {
   const path = 'dailyExpenses';
   const pollFirebaseDirect = async () => {
-    const directExps = await readFirestoreCatalogDirect<DailyExpenseRecord>('dailyExpenses');
-    if (directExps.length > 0) {
-      const sorted = [...directExps].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const mirror = await fetchServerDatabaseMirror();
+    const mirrorExps: DailyExpenseRecord[] = Array.isArray(mirror?.dailyExpenses) ? mirror.dailyExpenses : [];
+    const directExps = isFirestoreQuotaExhausted()
+      ? []
+      : await readFirestoreCatalogDirect<DailyExpenseRecord>('dailyExpenses');
+    const combined = mergeLocalAndCloud(mirrorExps, directExps, new Set());
+    if (combined.length > 0) {
+      const sorted = [...combined].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       onData(sorted);
     }
   };
+
+  if (isFirestoreQuotaExhausted()) {
+    pollFirebaseDirect();
+    return () => {};
+  }
 
   const unsub = onSnapshot(
     collection(db, path),
@@ -1452,7 +1606,6 @@ export function subscribeToCloudDailyExpenses(onData: (expenses: DailyExpenseRec
       });
       if (list.length > 0) {
         list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        writeFirestoreCatalogDirect('dailyExpenses', list);
         onData(list);
       }
     },
@@ -1470,6 +1623,8 @@ export function subscribeToCloudDailyExpenses(onData: (expenses: DailyExpenseRec
 export async function saveDailyExpenseToCloud(expense: DailyExpenseRecord) {
   const path = `dailyExpenses/${expense.id}`;
   const cleaned = cleanForFirestore(expense);
+  await syncItemToServerMirror('dailyExpenses', cleaned);
+  if (isFirestoreQuotaExhausted()) return;
   try {
     await setDoc(doc(db, 'dailyExpenses', expense.id), cleaned);
     await upsertItemInFirebaseCatalog('dailyExpenses', cleaned, 'id');
@@ -1480,6 +1635,8 @@ export async function saveDailyExpenseToCloud(expense: DailyExpenseRecord) {
 
 export async function deleteDailyExpenseFromCloud(expenseId: string) {
   const path = `dailyExpenses/${expenseId}`;
+  await deleteItemFromServerMirror('dailyExpenses', expenseId);
+  if (isFirestoreQuotaExhausted()) return;
   try {
     await deleteDoc(doc(db, 'dailyExpenses', expenseId));
     await removeItemFromFirebaseCatalog('dailyExpenses', expenseId, 'id');
@@ -1492,11 +1649,21 @@ export async function deleteDailyExpenseFromCloud(expenseId: string) {
 export function subscribeToCloudStaffTargets(onData: (targets: StaffTargetConfig[]) => void) {
   const path = 'staffTargets';
   const pollFirebaseDirect = async () => {
-    const directTargets = await readFirestoreCatalogDirect<StaffTargetConfig>('staffTargets');
-    if (directTargets.length > 0) {
-      onData(directTargets);
+    const mirror = await fetchServerDatabaseMirror();
+    const mirrorTargets: StaffTargetConfig[] = Array.isArray(mirror?.staffTargets) ? mirror.staffTargets : [];
+    const directTargets = isFirestoreQuotaExhausted()
+      ? []
+      : await readFirestoreCatalogDirect<StaffTargetConfig>('staffTargets');
+    const combined = mergeLocalAndCloud(mirrorTargets, directTargets, new Set());
+    if (combined.length > 0) {
+      onData(combined);
     }
   };
+
+  if (isFirestoreQuotaExhausted()) {
+    pollFirebaseDirect();
+    return () => {};
+  }
 
   const unsub = onSnapshot(
     collection(db, path),
@@ -1510,7 +1677,6 @@ export function subscribeToCloudStaffTargets(onData: (targets: StaffTargetConfig
         list.push(d.data() as StaffTargetConfig);
       });
       if (list.length > 0) {
-        writeFirestoreCatalogDirect('staffTargets', list);
         onData(list);
       }
     },
@@ -1529,6 +1695,8 @@ export async function saveStaffTargetToCloud(target: StaffTargetConfig) {
   const safeId = target.id || target.email.toLowerCase().trim().replace(/[@.]/g, '_');
   const path = `staffTargets/${safeId}`;
   const cleaned = cleanForFirestore({ ...target, id: safeId });
+  await syncItemToServerMirror('staffTargets', cleaned);
+  if (isFirestoreQuotaExhausted()) return;
   try {
     await setDoc(doc(db, 'staffTargets', safeId), cleaned);
     await upsertItemInFirebaseCatalog('staffTargets', cleaned, 'id');
@@ -1542,38 +1710,45 @@ export async function seedInitialCloudDataIfEmpty() {
   if (typeof window !== 'undefined' && localStorage.getItem('dsr_cloud_init_v3') === 'true') {
     return;
   }
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('dsr_cloud_init_v3', 'true');
+  }
+  if (isFirestoreQuotaExhausted()) return;
   try {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('dsr_cloud_init_v3', 'true');
-    }
     const initSnap = await getDoc(doc(db, 'settings', 'system_init'));
     if (!initSnap.exists() || !initSnap.data()?.demoPurgedV2) {
       await clearAllCloudMockData();
     }
   } catch (err) {
-    console.warn('Initial cloud check skipped:', err);
+    tripFirestoreQuotaCircuitBreaker(err);
   }
 }
 
 // Permanently delete all mock products, categories, routes, shops, and orders from Cloud Firestore
 export async function clearAllCloudMockData() {
+  if (isFirestoreQuotaExhausted()) return;
   const mockShopIds = ['shop-1', 'shop-2', 'shop-3', 'shop-4', 'shop-5', 'shop-6'];
   const mockOrderIds = ['ord-101', 'ord-102'];
 
   for (const pid of DEMO_PRODUCT_IDS) {
-    await deleteDoc(doc(db, 'products', pid)).catch(() => {});
+    await deleteDoc(doc(db, 'products', pid)).catch((e) => tripFirestoreQuotaCircuitBreaker(e));
+    if (isFirestoreQuotaExhausted()) return;
   }
   for (const cid of DEMO_CATEGORY_IDS) {
-    await deleteDoc(doc(db, 'categories', cid)).catch(() => {});
+    await deleteDoc(doc(db, 'categories', cid)).catch((e) => tripFirestoreQuotaCircuitBreaker(e));
+    if (isFirestoreQuotaExhausted()) return;
   }
   for (const rid of DEMO_ROUTE_IDS) {
-    await deleteDoc(doc(db, 'routes', rid)).catch(() => {});
+    await deleteDoc(doc(db, 'routes', rid)).catch((e) => tripFirestoreQuotaCircuitBreaker(e));
+    if (isFirestoreQuotaExhausted()) return;
   }
   for (const sid of mockShopIds) {
-    await deleteDoc(doc(db, 'shops', sid)).catch(() => {});
+    await deleteDoc(doc(db, 'shops', sid)).catch((e) => tripFirestoreQuotaCircuitBreaker(e));
+    if (isFirestoreQuotaExhausted()) return;
   }
   for (const oid of mockOrderIds) {
-    await deleteDoc(doc(db, 'orders', oid)).catch(() => {});
+    await deleteDoc(doc(db, 'orders', oid)).catch((e) => tripFirestoreQuotaCircuitBreaker(e));
+    if (isFirestoreQuotaExhausted()) return;
   }
 
   await setDoc(doc(db, 'settings', 'system_init'), {
@@ -1581,5 +1756,107 @@ export async function clearAllCloudMockData() {
     mockDataCleared: true,
     demoPurgedV2: true,
     clearedAt: new Date().toISOString(),
-  }).catch(() => {});
+  }).catch((e) => tripFirestoreQuotaCircuitBreaker(e));
 }
+
+export async function clearCollectionFromServerMirror(clearCollection: string | string[]) {
+  try {
+    await fetch('/api/db/mirror', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clearCollection }),
+    });
+  } catch {
+    // ignore mirror error
+  }
+}
+
+export async function deleteDueCollectionFromCloud(recordId: string) {
+  const path = `dueCollections/${recordId}`;
+  await deleteItemFromServerMirror('dueCollections', recordId);
+  if (isFirestoreQuotaExhausted()) return;
+  await removeItemFromFirebaseCatalog('dueCollections', recordId, 'id');
+  deleteDoc(doc(db, 'dueCollections', recordId)).catch((error) => {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  });
+}
+
+export async function deleteAllProductsFromCloud(ids: string[]) {
+  await clearCollectionFromServerMirror('products');
+  if (isFirestoreQuotaExhausted()) return;
+  await writeFirestoreCatalogDirect('products', []);
+  for (const id of ids) {
+    if (isFirestoreQuotaExhausted()) break;
+    deleteDoc(doc(db, 'products', id)).catch((e) => tripFirestoreQuotaCircuitBreaker(e));
+  }
+}
+
+export async function deleteAllShopsFromCloud(ids: string[]) {
+  await clearCollectionFromServerMirror('shops');
+  if (isFirestoreQuotaExhausted()) return;
+  await writeFirestoreCatalogDirect('shops', []);
+  for (const id of ids) {
+    if (isFirestoreQuotaExhausted()) break;
+    deleteDoc(doc(db, 'shops', id)).catch((e) => tripFirestoreQuotaCircuitBreaker(e));
+  }
+}
+
+export async function deleteAllOrdersFromCloud(ids: string[]) {
+  await clearCollectionFromServerMirror('orders');
+  if (isFirestoreQuotaExhausted()) return;
+  await writeFirestoreCatalogDirect('orders', []);
+  for (const id of ids) {
+    if (isFirestoreQuotaExhausted()) break;
+    deleteDoc(doc(db, 'orders', id)).catch((e) => tripFirestoreQuotaCircuitBreaker(e));
+  }
+}
+
+export async function deleteAllCategoriesFromCloud(ids: string[]) {
+  await clearCollectionFromServerMirror('categories');
+  if (isFirestoreQuotaExhausted()) return;
+  await writeFirestoreCatalogDirect('categories', []);
+  for (const id of ids) {
+    if (isFirestoreQuotaExhausted()) break;
+    deleteDoc(doc(db, 'categories', id)).catch((e) => tripFirestoreQuotaCircuitBreaker(e));
+  }
+}
+
+export async function deleteAllRoutesFromCloud(ids: string[]) {
+  await clearCollectionFromServerMirror('routes');
+  if (isFirestoreQuotaExhausted()) return;
+  await writeFirestoreCatalogDirect('routes', []);
+  for (const id of ids) {
+    if (isFirestoreQuotaExhausted()) break;
+    deleteDoc(doc(db, 'routes', id)).catch((e) => tripFirestoreQuotaCircuitBreaker(e));
+  }
+}
+
+export async function deleteAllDailyExpensesFromCloud(ids: string[]) {
+  await clearCollectionFromServerMirror('dailyExpenses');
+  if (isFirestoreQuotaExhausted()) return;
+  await writeFirestoreCatalogDirect('dailyExpenses', []);
+  for (const id of ids) {
+    if (isFirestoreQuotaExhausted()) break;
+    deleteDoc(doc(db, 'dailyExpenses', id)).catch((e) => tripFirestoreQuotaCircuitBreaker(e));
+  }
+}
+
+export async function deleteAllDueCollectionsFromCloud(ids: string[]) {
+  await clearCollectionFromServerMirror('dueCollections');
+  if (isFirestoreQuotaExhausted()) return;
+  await writeFirestoreCatalogDirect('dueCollections', []);
+  for (const id of ids) {
+    if (isFirestoreQuotaExhausted()) break;
+    deleteDoc(doc(db, 'dueCollections', id)).catch((e) => tripFirestoreQuotaCircuitBreaker(e));
+  }
+}
+
+export async function deleteAllStaffAuthorizedEmailsFromCloud(emails: string[]) {
+  await clearCollectionFromServerMirror('authorizedEmails');
+  if (isFirestoreQuotaExhausted()) return;
+  for (const email of emails) {
+    if (isFirestoreQuotaExhausted()) break;
+    await deleteAuthorizedEmailFromCloud(email).catch((e) => tripFirestoreQuotaCircuitBreaker(e));
+  }
+}
+

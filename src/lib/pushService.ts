@@ -1,6 +1,6 @@
 // Web Push & Real-Time Notification Service for Munsi Store (Admin, SR, DSR, Customer)
 import { doc, setDoc, deleteDoc, collection, getDocs } from 'firebase/firestore';
-import { db } from './firebase';
+import { db, isFirestoreQuotaExhausted, tripFirestoreQuotaCircuitBreaker } from './firebase';
 
 export const VAPID_PUBLIC_KEY = 'BIyxRt1UASyhSfEmRx8J7Yivfy-o_EiystQWv96lYqerntJizLMQNCHGi4guiKBkeHMDvbex0RVRDKHGiHg6nUA';
 
@@ -200,6 +200,9 @@ export async function fetchAllFirestorePushSubscriptions(): Promise<{
     updatedAt?: string;
   }>;
 }> {
+  if (isFirestoreQuotaExhausted()) {
+    return { totalCount: 0, webPushList: [] };
+  }
   try {
     const snap = await getDocs(collection(db, 'push_subscriptions'));
     const webPushList: Array<any> = [];
@@ -228,7 +231,8 @@ export async function fetchAllFirestorePushSubscriptions(): Promise<{
     });
 
     return { totalCount, webPushList };
-  } catch {
+  } catch (err) {
+    tripFirestoreQuotaCircuitBreaker(err);
     return { totalCount: 0, webPushList: [] };
   }
 }
@@ -289,28 +293,30 @@ export async function subscribeToPush(meta?: {
       }
     }
 
-    // 4. Always store in Firestore `push_subscriptions` so SR, DSR, Admin & Customer devices are persisted
-    try {
-      const docKey = subscription?.endpoint
-        ? btoa(subscription.endpoint).slice(-40).replace(/[^a-zA-Z0-9_-]/g, '_')
-        : deviceId;
+    // 4. Store in Firestore `push_subscriptions` if quota is available
+    if (!isFirestoreQuotaExhausted()) {
+      try {
+        const docKey = subscription?.endpoint
+          ? btoa(subscription.endpoint).slice(-40).replace(/[^a-zA-Z0-9_-]/g, '_')
+          : deviceId;
 
-      await setDoc(
-        doc(db, 'push_subscriptions', docKey),
-        {
-          deviceId,
-          endpoint: subscription?.endpoint || `realtime://${deviceId}`,
-          subscriptionJson: subscription ? JSON.stringify(subscription) : '',
-          role: effectiveRole,
-          userEmail: meta?.userEmail || '',
-          userName: meta?.userName || '',
-          userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
-          updatedAt: new Date().toISOString(),
-        },
-        { merge: true }
-      );
-    } catch (fsErr) {
-      console.warn('Could not save push subscription to Firestore:', fsErr);
+        await setDoc(
+          doc(db, 'push_subscriptions', docKey),
+          {
+            deviceId,
+            endpoint: subscription?.endpoint || `realtime://${deviceId}`,
+            subscriptionJson: subscription ? JSON.stringify(subscription) : '',
+            role: effectiveRole,
+            userEmail: meta?.userEmail || '',
+            userName: meta?.userName || '',
+            userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      } catch (fsErr) {
+        tripFirestoreQuotaCircuitBreaker(fsErr);
+      }
     }
 
     // 5. Persist active state in localStorage so permission stays ON reliably for SR/DSR/Admin/Customer
@@ -373,26 +379,28 @@ export async function syncRoleToPushSubscription(
       }).catch(() => {});
     }
 
-    const deviceId = getOrCreatePushDeviceId();
-    const docKey = subscription?.endpoint
-      ? btoa(subscription.endpoint).slice(-40).replace(/[^a-zA-Z0-9_-]/g, '_')
-      : deviceId;
+    if (!isFirestoreQuotaExhausted()) {
+      const deviceId = getOrCreatePushDeviceId();
+      const docKey = subscription?.endpoint
+        ? btoa(subscription.endpoint).slice(-40).replace(/[^a-zA-Z0-9_-]/g, '_')
+        : deviceId;
 
-    await setDoc(
-      doc(db, 'push_subscriptions', docKey),
-      {
-        deviceId,
-        endpoint: subscription?.endpoint || `realtime://${deviceId}`,
-        subscriptionJson: subscription ? JSON.stringify(subscription) : '',
-        role,
-        userEmail: userEmail || '',
-        userName: userName || '',
-        updatedAt: new Date().toISOString(),
-      },
-      { merge: true }
-    );
-  } catch {
-    // ignore sync errors
+      await setDoc(
+        doc(db, 'push_subscriptions', docKey),
+        {
+          deviceId,
+          endpoint: subscription?.endpoint || `realtime://${deviceId}`,
+          subscriptionJson: subscription ? JSON.stringify(subscription) : '',
+          role,
+          userEmail: userEmail || '',
+          userName: userName || '',
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+    }
+  } catch (err) {
+    tripFirestoreQuotaCircuitBreaker(err);
   }
 }
 
@@ -413,22 +421,26 @@ export async function unsubscribeFromPush(): Promise<{ success: boolean; error?:
           }),
         }).catch(() => {});
 
-        try {
-          const endpointHash = btoa(subscription.endpoint).slice(-40).replace(/[^a-zA-Z0-9_-]/g, '_');
-          await deleteDoc(doc(db, 'push_subscriptions', endpointHash));
-        } catch {
-          // ignore
+        if (!isFirestoreQuotaExhausted()) {
+          try {
+            const endpointHash = btoa(subscription.endpoint).slice(-40).replace(/[^a-zA-Z0-9_-]/g, '_');
+            await deleteDoc(doc(db, 'push_subscriptions', endpointHash));
+          } catch (err) {
+            tripFirestoreQuotaCircuitBreaker(err);
+          }
         }
 
         await subscription.unsubscribe().catch(() => {});
       }
     }
 
-    try {
-      const deviceId = getOrCreatePushDeviceId();
-      await deleteDoc(doc(db, 'push_subscriptions', deviceId));
-    } catch {
-      // ignore
+    if (!isFirestoreQuotaExhausted()) {
+      try {
+        const deviceId = getOrCreatePushDeviceId();
+        await deleteDoc(doc(db, 'push_subscriptions', deviceId));
+      } catch (err) {
+        tripFirestoreQuotaCircuitBreaker(err);
+      }
     }
 
     localStorage.setItem('munsi_push_subscribed', 'false');
@@ -504,21 +516,24 @@ export async function broadcastPushNotification(payload: {
     // 1. Trigger local notification on sender device if permitted
     await triggerDeviceNotification(title, body, image || null, url || '/');
 
-    // 2. Persist broadcast alert in Firestore so all connected SR, DSR, Admin & Customer devices receive real-time push & popup immediately
+    // 2. Persist broadcast alert in Firestore if quota is available
     const alertId = 'alert-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6);
-    try {
-      await setDoc(doc(db, 'broadcast_alerts', alertId), {
-        id: alertId,
-        title,
-        body,
-        targetRole: targetRole || 'all',
-        url: url || '/',
-        image: image || null,
-        senderDeviceId: getOrCreatePushDeviceId(),
-        createdAt: new Date().toISOString(),
-      });
-    } catch (fsErr) {
-      console.warn('Could not save broadcast alert to Firestore:', fsErr);
+    const senderDeviceId = getOrCreatePushDeviceId();
+    if (!isFirestoreQuotaExhausted()) {
+      try {
+        await setDoc(doc(db, 'broadcast_alerts', alertId), {
+          id: alertId,
+          title,
+          body,
+          targetRole: targetRole || 'all',
+          url: url || '/',
+          image: image || null,
+          senderDeviceId,
+          createdAt: new Date().toISOString(),
+        });
+      } catch (fsErr) {
+        tripFirestoreQuotaCircuitBreaker(fsErr);
+      }
     }
 
     // 3. Load all saved subscriptions from Firestore and pass to Server WebPush API
@@ -531,6 +546,7 @@ export async function broadcastPushNotification(payload: {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...payload,
+          senderDeviceId,
           firestoreSubscriptions: webPushList,
         }),
       });

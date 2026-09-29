@@ -26,6 +26,7 @@ import {
 import { DEFAULT_BUSINESS_INFO, saveBusinessInfoLocal, saveOrder } from '../lib/storage';
 import { saveBusinessInfoToCloud, saveOrderToCloud } from '../lib/firebase';
 import { processImageFile } from '../lib/imageUtils';
+import { DeletePermissionRequest } from './DeleteConfirmModal';
 
 interface AdminSodaiStorefrontManagerProps {
   bizInfo: BusinessInfo;
@@ -34,6 +35,7 @@ interface AdminSodaiStorefrontManagerProps {
   orders: Order[];
   onUpdateProduct: (product: Product) => void;
   onShowToast: (text: string, type?: 'success' | 'info' | 'error') => void;
+  onRequestDeletePermission?: (req: Omit<DeletePermissionRequest, 'isOpen'>) => void;
 }
 
 export const AdminSodaiStorefrontManager: React.FC<AdminSodaiStorefrontManagerProps> = ({
@@ -43,6 +45,7 @@ export const AdminSodaiStorefrontManager: React.FC<AdminSodaiStorefrontManagerPr
   orders,
   onUpdateProduct,
   onShowToast,
+  onRequestDeletePermission,
 }) => {
   const [isSaving, setIsSaving] = useState(false);
 
@@ -405,11 +408,41 @@ export const AdminSodaiStorefrontManager: React.FC<AdminSodaiStorefrontManagerPr
 
         {/* Promo Coupons Manager */}
         <div className="bg-white rounded-2xl border border-neutral-200 p-5 shadow-xs space-y-4">
-          <div className="flex items-center gap-2 border-b border-neutral-100 pb-3">
-            <Tag className="w-5 h-5 text-[#E21E26]" />
-            <h3 className="font-black text-sm text-neutral-900">
-              ৩. প্রোমো কুপন কোড ম্যানেজার (Promo Codes)
-            </h3>
+          <div className="flex items-center justify-between gap-2 border-b border-neutral-100 pb-3">
+            <div className="flex items-center gap-2">
+              <Tag className="w-5 h-5 text-[#E21E26]" />
+              <h3 className="font-black text-sm text-neutral-900">
+                ৩. প্রোমো কুপন কোড ম্যানেজার ({coupons.length})
+              </h3>
+            </div>
+            {coupons.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const doClear = () =>
+                    persistBizInfo(
+                      { ...bizInfo, coupons: [] },
+                      'সকল প্রোমো কুপন ১-ক্লিকে মুছে ফেলা হয়েছে!'
+                    );
+                  if (onRequestDeletePermission) {
+                    onRequestDeletePermission({
+                      title: '১-ক্লিকে সব কুপন ডিলিট পারমিশন',
+                      itemLabel: `মোট ${coupons.length} টি প্রোমো কুপন`,
+                      isBulk: true,
+                      message: `আপনি কি নিশ্চিতভাবে সকল (${coupons.length}টি) প্রোমো কুপন কোড ১ ক্লিকে ডিলিট করতে চান?`,
+                      confirmButtonText: 'হ্যাঁ, সব কুপন ডিলিট করুন',
+                      onConfirm: doClear,
+                    });
+                  } else {
+                    doClear();
+                  }
+                }}
+                className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 text-[11px] font-black flex items-center gap-1 transition-colors cursor-pointer"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>সব ডিলিট</span>
+              </button>
+            )}
           </div>
 
           <form onSubmit={handleAddCoupon} className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -458,13 +491,28 @@ export const AdminSodaiStorefrontManager: React.FC<AdminSodaiStorefrontManagerPr
                 </div>
                 <button
                   type="button"
-                  onClick={() =>
-                    persistBizInfo({
-                      ...bizInfo,
-                      coupons: coupons.filter((c) => c.id !== cp.id),
-                    })
-                  }
-                  className="text-rose-600 hover:text-rose-800 p-1"
+                  onClick={() => {
+                    const doDelete = () =>
+                      persistBizInfo(
+                        {
+                          ...bizInfo,
+                          coupons: coupons.filter((c) => c.id !== cp.id),
+                        },
+                        `কুপন "${cp.code}" ডিলিট করা হয়েছে`
+                      );
+                    if (onRequestDeletePermission) {
+                      onRequestDeletePermission({
+                        title: 'প্রোমো কুপন ডিলিট পারমিশন',
+                        itemLabel: `কুপন কোড: ${cp.code}`,
+                        message: `আপনি কি নিশ্চিতভাবে "${cp.code}" কুপনটি ডিলিট করতে চান?`,
+                        confirmButtonText: 'হ্যাঁ, কুপন ডিলিট করুন',
+                        onConfirm: doDelete,
+                      });
+                    } else {
+                      doDelete();
+                    }
+                  }}
+                  className="text-rose-600 hover:text-rose-800 p-1 cursor-pointer"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
@@ -478,11 +526,41 @@ export const AdminSodaiStorefrontManager: React.FC<AdminSodaiStorefrontManagerPr
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Delivery Zones */}
         <div className="bg-white rounded-2xl border border-neutral-200 p-5 shadow-xs space-y-4">
-          <div className="flex items-center gap-2 border-b border-neutral-100 pb-3">
-            <MapPin className="w-5 h-5 text-[#E21E26]" />
-            <h3 className="font-black text-sm text-neutral-900">
-              ৪. ডেলিভারি এরিয়া ও ফি (Zones)
-            </h3>
+          <div className="flex items-center justify-between gap-2 border-b border-neutral-100 pb-3">
+            <div className="flex items-center gap-2">
+              <MapPin className="w-5 h-5 text-[#E21E26]" />
+              <h3 className="font-black text-sm text-neutral-900">
+                ৪. ডেলিভারি এরিয়া ও ফি ({zones.length})
+              </h3>
+            </div>
+            {zones.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const doClear = () =>
+                    persistBizInfo(
+                      { ...bizInfo, deliveryZones: [] },
+                      'সকল ডেলিভারি জোন ১-ক্লিকে মুছে ফেলা হয়েছে!'
+                    );
+                  if (onRequestDeletePermission) {
+                    onRequestDeletePermission({
+                      title: '১-ক্লিকে সব ডেলিভারি জোন ডিলিট পারমিশন',
+                      itemLabel: `মোট ${zones.length} টি ডেলিভারি জোন`,
+                      isBulk: true,
+                      message: `আপনি কি নিশ্চিতভাবে সকল (${zones.length}টি) ডেলিভারি এরিয়া ১ ক্লিকে ডিলিট করতে চান?`,
+                      confirmButtonText: 'হ্যাঁ, সব জোন ডিলিট করুন',
+                      onConfirm: doClear,
+                    });
+                  } else {
+                    doClear();
+                  }
+                }}
+                className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 text-[11px] font-black flex items-center gap-1 transition-colors cursor-pointer"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>সব ডিলিট</span>
+              </button>
+            )}
           </div>
 
           <form onSubmit={handleAddZone} className="flex gap-2">
@@ -519,13 +597,28 @@ export const AdminSodaiStorefrontManager: React.FC<AdminSodaiStorefrontManagerPr
                   <span className="font-black text-[#E21E26]">৳{z.fee}</span>
                   <button
                     type="button"
-                    onClick={() =>
-                      persistBizInfo({
-                        ...bizInfo,
-                        deliveryZones: zones.filter((item) => item.id !== z.id),
-                      })
-                    }
-                    className="text-rose-600 p-1"
+                    onClick={() => {
+                      const doDelete = () =>
+                        persistBizInfo(
+                          {
+                            ...bizInfo,
+                            deliveryZones: zones.filter((item) => item.id !== z.id),
+                          },
+                          `জোন "${z.name}" ডিলিট করা হয়েছে`
+                        );
+                      if (onRequestDeletePermission) {
+                        onRequestDeletePermission({
+                          title: 'ডেলিভারি জোন ডিলিট পারমিশন',
+                          itemLabel: `${z.name} (ফি: ৳${z.fee})`,
+                          message: `আপনি কি নিশ্চিতভাবে "${z.name}" ডেলিভারি জোনটি ডিলিট করতে চান?`,
+                          confirmButtonText: 'হ্যাঁ, জোন ডিলিট করুন',
+                          onConfirm: doDelete,
+                        });
+                      } else {
+                        doDelete();
+                      }
+                    }}
+                    className="text-rose-600 hover:text-rose-800 p-1 cursor-pointer"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -537,11 +630,41 @@ export const AdminSodaiStorefrontManager: React.FC<AdminSodaiStorefrontManagerPr
 
         {/* Hero Banners */}
         <div className="bg-white rounded-2xl border border-neutral-200 p-5 shadow-xs space-y-4">
-          <div className="flex items-center gap-2 border-b border-neutral-100 pb-3">
-            <ImageIcon className="w-5 h-5 text-[#E21E26]" />
-            <h3 className="font-black text-sm text-neutral-900">
-              ৫. হিরো ব্যানার স্লাইডার ({banners.length})
-            </h3>
+          <div className="flex items-center justify-between gap-2 border-b border-neutral-100 pb-3">
+            <div className="flex items-center gap-2">
+              <ImageIcon className="w-5 h-5 text-[#E21E26]" />
+              <h3 className="font-black text-sm text-neutral-900">
+                ৫. হিরো ব্যানার স্লাইডার ({banners.length})
+              </h3>
+            </div>
+            {banners.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const doClear = () =>
+                    persistBizInfo(
+                      { ...bizInfo, storeBanners: [] },
+                      'সকল হিরো ব্যানার ১-ক্লিকে মুছে ফেলা হয়েছে!'
+                    );
+                  if (onRequestDeletePermission) {
+                    onRequestDeletePermission({
+                      title: '১-ক্লিকে সব ব্যানার ডিলিট পারমিশন',
+                      itemLabel: `মোট ${banners.length} টি ব্যানার`,
+                      isBulk: true,
+                      message: `আপনি কি নিশ্চিতভাবে স্টোরের সকল (${banners.length}টি) ব্যানার ১ ক্লিকে ডিলিট করতে চান?`,
+                      confirmButtonText: 'হ্যাঁ, সব ব্যানার ডিলিট করুন',
+                      onConfirm: doClear,
+                    });
+                  } else {
+                    doClear();
+                  }
+                }}
+                className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 text-[11px] font-black flex items-center gap-1 transition-colors cursor-pointer"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>সব ডিলিট</span>
+              </button>
+            )}
           </div>
 
           <form onSubmit={handleAddBanner} className="space-y-2">
@@ -599,13 +722,28 @@ export const AdminSodaiStorefrontManager: React.FC<AdminSodaiStorefrontManagerPr
                 <span className="font-bold text-neutral-800 truncate flex-1">{b.title}</span>
                 <button
                   type="button"
-                  onClick={() =>
-                    persistBizInfo({
-                      ...bizInfo,
-                      storeBanners: banners.filter((item) => item.id !== b.id),
-                    })
-                  }
-                  className="text-rose-600 p-1 shrink-0"
+                  onClick={() => {
+                    const doDelete = () =>
+                      persistBizInfo(
+                        {
+                          ...bizInfo,
+                          storeBanners: banners.filter((item) => item.id !== b.id),
+                        },
+                        `ব্যানার "${b.title}" ডিলিট করা হয়েছে`
+                      );
+                    if (onRequestDeletePermission) {
+                      onRequestDeletePermission({
+                        title: 'ব্যানার ডিলিট পারমিশন',
+                        itemLabel: b.title,
+                        message: `আপনি কি নিশ্চিতভাবে "${b.title}" ব্যানারটি ডিলিট করতে চান?`,
+                        confirmButtonText: 'হ্যাঁ, ব্যানার ডিলিট করুন',
+                        onConfirm: doDelete,
+                      });
+                    } else {
+                      doDelete();
+                    }
+                  }}
+                  className="text-rose-600 hover:text-rose-800 p-1 shrink-0 cursor-pointer"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
@@ -616,11 +754,41 @@ export const AdminSodaiStorefrontManager: React.FC<AdminSodaiStorefrontManagerPr
 
         {/* Supermarket Stories */}
         <div className="bg-white rounded-2xl border border-neutral-200 p-5 shadow-xs space-y-4">
-          <div className="flex items-center gap-2 border-b border-neutral-100 pb-3">
-            <Sparkles className="w-5 h-5 text-[#E21E26]" />
-            <h3 className="font-black text-sm text-neutral-900">
-              ৬. সুপারমার্কেট স্টোরি ({stories.length})
-            </h3>
+          <div className="flex items-center justify-between gap-2 border-b border-neutral-100 pb-3">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-[#E21E26]" />
+              <h3 className="font-black text-sm text-neutral-900">
+                ৬. সুপারমার্কেট স্টোরি ({stories.length})
+              </h3>
+            </div>
+            {stories.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const doClear = () =>
+                    persistBizInfo(
+                      { ...bizInfo, storeStories: [] },
+                      'সকল স্টোরি ১-ক্লিকে মুছে ফেলা হয়েছে!'
+                    );
+                  if (onRequestDeletePermission) {
+                    onRequestDeletePermission({
+                      title: '১-ক্লিকে সব স্টোরি ডিলিট পারমিশন',
+                      itemLabel: `মোট ${stories.length} টি স্টোরি`,
+                      isBulk: true,
+                      message: `আপনি কি নিশ্চিতভাবে সকল (${stories.length}টি) সুপারমার্কেট স্টোরি ১ ক্লিকে ডিলিট করতে চান?`,
+                      confirmButtonText: 'হ্যাঁ, সব স্টোরি ডিলিট করুন',
+                      onConfirm: doClear,
+                    });
+                  } else {
+                    doClear();
+                  }
+                }}
+                className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 text-[11px] font-black flex items-center gap-1 transition-colors cursor-pointer"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>সব ডিলিট</span>
+              </button>
+            )}
           </div>
 
           <form onSubmit={handleAddStory} className="space-y-2">
@@ -690,13 +858,28 @@ export const AdminSodaiStorefrontManager: React.FC<AdminSodaiStorefrontManagerPr
                 </div>
                 <button
                   type="button"
-                  onClick={() =>
-                    persistBizInfo({
-                      ...bizInfo,
-                      storeStories: stories.filter((item) => item.id !== st.id),
-                    })
-                  }
-                  className="text-rose-600 p-1 shrink-0"
+                  onClick={() => {
+                    const doDelete = () =>
+                      persistBizInfo(
+                        {
+                          ...bizInfo,
+                          storeStories: stories.filter((item) => item.id !== st.id),
+                        },
+                        `স্টোরি "${st.title}" ডিলিট করা হয়েছে`
+                      );
+                    if (onRequestDeletePermission) {
+                      onRequestDeletePermission({
+                        title: 'স্টোরি ডিলিট পারমিশন',
+                        itemLabel: `${st.title} (${st.discountTag})`,
+                        message: `আপনি কি নিশ্চিতভাবে "${st.title}" স্টোরিটি ডিলিট করতে চান?`,
+                        confirmButtonText: 'হ্যাঁ, স্টোরি ডিলিট করুন',
+                        onConfirm: doDelete,
+                      });
+                    } else {
+                      doDelete();
+                    }
+                  }}
+                  className="text-rose-600 hover:text-rose-800 p-1 shrink-0 cursor-pointer"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>

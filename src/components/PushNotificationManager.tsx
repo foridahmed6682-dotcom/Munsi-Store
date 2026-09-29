@@ -19,7 +19,7 @@ import {
   Power
 } from 'lucide-react';
 import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, isFirestoreQuotaExhausted, tripFirestoreQuotaCircuitBreaker } from '../lib/firebase';
 import {
   getPushStatus,
   subscribeToPush,
@@ -168,72 +168,97 @@ export const PushNotificationManager: React.FC<PushNotificationManagerProps> = (
     }
   }, [isEmbeddedInAdminTab]);
 
-  // Listen to real-time broadcast_alerts from Firestore so SR, DSR, Admin & Customers receive instant notifications + sound + popup
+  // Listen to real-time broadcast_alerts from Firestore (or Server Mirror fallback) so SR, DSR, Admin & Customers receive instant notifications + sound + popup
   useEffect(() => {
     if (isEmbeddedInAdminTab) return;
     const mountTime = Date.now();
     const myDeviceId = getOrCreatePushDeviceId();
-    const q = query(collection(db, 'broadcast_alerts'), orderBy('createdAt', 'desc'), limit(1));
 
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        snap.docChanges().forEach((change) => {
-          if (change.type === 'added') {
-            const docId = change.doc.id;
-            if (lastSeenAlertIdRef.current === docId) return;
+    const handleAlertData = (docId: string, data: any) => {
+      if (!docId || !data || lastSeenAlertIdRef.current === docId) return;
+      const createdMs = data.createdAt ? new Date(data.createdAt).getTime() : 0;
 
-            const data = change.doc.data();
-            const createdMs = data.createdAt ? new Date(data.createdAt).getTime() : 0;
+      // Only show newly broadcasted alerts created after component mounted
+      if (createdMs > mountTime - 8000) {
+        lastSeenAlertIdRef.current = docId;
 
-            // Only show newly broadcasted alerts created after component mounted
-            if (createdMs > mountTime - 8000) {
-              lastSeenAlertIdRef.current = docId;
+        // Respect user's explicit OFF toggle
+        if (localStorage.getItem('munsi_push_subscribed') === 'false') {
+          return;
+        }
 
-              // Respect user's explicit OFF toggle
-              if (localStorage.getItem('munsi_push_subscribed') === 'false') {
-                return;
-              }
+        const target = (data.targetRole || 'all').toLowerCase();
 
-              const target = (data.targetRole || 'all').toLowerCase();
+        const isRoleMatch =
+          target === 'all' ||
+          target === currentRole ||
+          (target === 'field_team' && (currentRole === 'sr' || currentRole === 'dsr' || currentRole === 'admin')) ||
+          (target === 'dsr' && currentRole === 'sr');
 
-              const isRoleMatch =
-                target === 'all' ||
-                target === currentRole ||
-                (target === 'field_team' && (currentRole === 'sr' || currentRole === 'dsr' || currentRole === 'admin')) ||
-                (target === 'dsr' && currentRole === 'sr');
+        if (isRoleMatch) {
+          setIncomingAlert({
+            id: docId,
+            title: data.title,
+            body: data.body,
+            image: data.image || null,
+            url: data.url || '/',
+            targetRole: target,
+            createdAt: data.createdAt,
+          });
 
-              if (isRoleMatch) {
-                setIncomingAlert({
-                  id: docId,
-                  title: data.title,
-                  body: data.body,
-                  image: data.image || null,
-                  url: data.url || '/',
-                  targetRole: target,
-                  createdAt: data.createdAt,
-                });
-
-                // Trigger native browser/OS notification + sound on the receiving device
-                if (data.senderDeviceId !== myDeviceId) {
-                  triggerDeviceNotification(
-                    data.title,
-                    data.body,
-                    data.image || null,
-                    data.url || '/'
-                  );
-                }
-              }
-            }
+          // Trigger native browser/OS notification + sound on the receiving device
+          if (data.senderDeviceId !== myDeviceId) {
+            triggerDeviceNotification(
+              data.title,
+              data.body,
+              data.image || null,
+              data.url || '/'
+            );
           }
-        });
-      },
-      () => {
-        // Ignore offline listener errors
+        }
       }
-    );
+    };
 
-    return () => unsub();
+    let unsub: (() => void) | null = null;
+    if (!isFirestoreQuotaExhausted()) {
+      try {
+        const q = query(collection(db, 'broadcast_alerts'), orderBy('createdAt', 'desc'), limit(1));
+        unsub = onSnapshot(
+          q,
+          (snap) => {
+            snap.docChanges().forEach((change) => {
+              if (change.type === 'added') {
+                handleAlertData(change.doc.id, change.doc.data());
+              }
+            });
+          },
+          (err) => {
+            tripFirestoreQuotaCircuitBreaker(err);
+          }
+        );
+      } catch (err) {
+        tripFirestoreQuotaCircuitBreaker(err);
+      }
+    }
+
+    const pollTimer = setInterval(async () => {
+      try {
+        const res = await fetch('/api/push/latest-alert').catch(() => null);
+        if (res && res.ok) {
+          const json = await res.json().catch(() => null);
+          if (json?.alert?.id) {
+            handleAlertData(json.alert.id, json.alert);
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }, 8000);
+
+    return () => {
+      unsub?.();
+      clearInterval(pollTimer);
+    };
   }, [currentRole, isEmbeddedInAdminTab]);
 
   const handleDismissPermissionPopup = () => {

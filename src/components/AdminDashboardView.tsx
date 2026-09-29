@@ -59,6 +59,7 @@ import {
   Route,
   BusinessInfo,
   DailyExpenseRecord,
+  DueCollectionRecord,
   StaffTargetConfig
 } from '../types';
 import { processImageFile } from '../lib/imageUtils';
@@ -79,6 +80,8 @@ import {
 } from '../lib/backupService';
 import { PushNotificationManager } from './PushNotificationManager';
 import { AdminSodaiStorefrontManager } from './AdminSodaiStorefrontManager';
+import { AdminDeleteCenter } from './AdminDeleteCenter';
+import { DeletePermissionRequest } from './DeleteConfirmModal';
 
 interface AdminDashboardViewProps {
   products: Product[];
@@ -87,6 +90,7 @@ interface AdminDashboardViewProps {
   categories: Category[];
   authorizedEmails: AuthorizedUserEmail[];
   routes: Route[];
+  dueCollections?: DueCollectionRecord[];
   dailyExpenses?: DailyExpenseRecord[];
   staffTargets?: StaffTargetConfig[];
   onSaveStaffTarget?: (target: StaffTargetConfig) => void;
@@ -94,20 +98,20 @@ interface AdminDashboardViewProps {
   activeSimulatedRole: UserRole;
   onAddProduct: (product: Product) => void;
   onUpdateProduct: (product: Product) => void;
-  onDeleteProduct: (productId: string) => void;
+  onDeleteProduct: (productId: string, skipConfirm?: boolean) => void;
   onAdjustStock: (productId: string, delta: number) => void;
   onAddShop?: (shop: Shop) => void;
   onUpdateShop?: (shop: Shop) => void;
-  onDeleteShop?: (shopId: string) => void;
+  onDeleteShop?: (shopId: string, skipConfirm?: boolean) => void;
   onAddCategory: (category: Category) => void;
   onUpdateCategory: (category: Category) => void;
-  onDeleteCategory: (categoryId: string) => void;
+  onDeleteCategory: (categoryId: string, skipConfirm?: boolean) => void;
   onAddAuthorizedEmail: (authEmail: AuthorizedUserEmail) => void;
   onUpdateAuthorizedEmail: (authEmail: AuthorizedUserEmail) => void;
-  onDeleteAuthorizedEmail: (email: string) => void;
+  onDeleteAuthorizedEmail: (email: string, skipConfirm?: boolean) => void;
   onAddRoute: (route: Route) => void;
   onUpdateRoute: (route: Route) => void;
-  onDeleteRoute: (routeId: string) => void;
+  onDeleteRoute: (routeId: string, skipConfirm?: boolean) => void;
   onSimulatedRoleChange: (role: UserRole) => void;
   onSyncWithSheets: () => void;
   onBackupToDrive: () => void;
@@ -123,10 +127,23 @@ interface AdminDashboardViewProps {
   onDownloadShopsCSV?: () => void;
   onRestoreFromBackupJSON?: (data: FullBackupData) => Promise<void>;
   onViewMemo?: (order: Order, editMode?: boolean) => void;
-  onDeleteOrder?: (orderId: string) => void;
+  onDeleteOrder?: (orderId: string, skipConfirm?: boolean) => void;
+  onDeleteDailyExpense?: (expenseId: string, skipConfirm?: boolean) => void;
+  onDeleteDueCollection?: (collectionId: string, skipConfirm?: boolean) => void;
+  onDeleteAllProducts?: () => void;
+  onDeleteAllShops?: () => void;
+  onDeleteAllOrders?: () => void;
+  onDeleteAllCategories?: () => void;
+  onDeleteAllRoutes?: () => void;
+  onDeleteAllDailyExpenses?: () => void;
+  onDeleteAllDueCollections?: () => void;
+  onResetAllShopDues?: () => void;
+  onDeleteAllStaffEmails?: () => void;
+  onDeleteEverythingAllAtOnce?: () => void;
+  onRequestDeletePermission?: (req: Omit<DeletePermissionRequest, 'isOpen'>) => void;
 }
 
-type AdminSubTab = 'overview' | 'storefront' | 'categories' | 'products' | 'routes' | 'access' | 'analytics' | 'push' | 'settings' | 'backup';
+type AdminSubTab = 'overview' | 'storefront' | 'categories' | 'products' | 'routes' | 'access' | 'analytics' | 'push' | 'settings' | 'backup' | 'delete_center';
 
 const AVAILABLE_ROUTES = [
   'সব রুট (All Routes)',
@@ -158,6 +175,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   categories,
   authorizedEmails,
   routes,
+  dueCollections = [],
   dailyExpenses = [],
   staffTargets = [],
   onSaveStaffTarget,
@@ -195,6 +213,19 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   onRestoreFromBackupJSON,
   onViewMemo,
   onDeleteOrder,
+  onDeleteDailyExpense,
+  onDeleteDueCollection,
+  onDeleteAllProducts,
+  onDeleteAllShops,
+  onDeleteAllOrders,
+  onDeleteAllCategories,
+  onDeleteAllRoutes,
+  onDeleteAllDailyExpenses,
+  onDeleteAllDueCollections,
+  onResetAllShopDues,
+  onDeleteAllStaffEmails,
+  onDeleteEverythingAllAtOnce,
+  onRequestDeletePermission,
 }) => {
   const [subTab, setSubTab] = useState<AdminSubTab>('overview');
 
@@ -1006,6 +1037,13 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               <Users className="w-3.5 h-3.5" />
               <span>স্টাফ অনুমতি</span>
             </button>
+            <button
+              onClick={() => setSubTab('delete_center')}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs border border-rose-400/50 shadow-md transition-all active:scale-95 cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>ডিলিট সেন্টার</span>
+            </button>
           </div>
         </div>
       </div>
@@ -1130,6 +1168,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         >
           <Database className="w-4 h-4" />
           <span>ব্যাকআপ ও রিস্টোর হাব</span>
+        </button>
+
+        <button
+          onClick={() => setSubTab('delete_center')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+            subTab === 'delete_center'
+              ? 'bg-rose-600 text-white font-black shadow-md'
+              : 'text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200'
+          }`}
+        >
+          <Trash2 className="w-4 h-4" />
+          <span>সবকিছু ডিলিট সেন্টার (১-ক্লিক ও আলাদা)</span>
         </button>
       </div>
 
@@ -1286,6 +1336,19 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                     <span className="text-[11px] text-neutral-500">ইনভেন্টরি পরিবর্তন</span>
                   </div>
                 </button>
+
+                <button
+                  onClick={() => setSubTab('delete_center')}
+                  className="p-3 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-left transition-colors flex flex-col justify-between cursor-pointer"
+                >
+                  <div className="w-8 h-8 rounded-lg bg-rose-600 text-white flex items-center justify-center font-bold mb-2">
+                    <Trash2 className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="font-bold text-xs text-rose-900 block">ডিলিট সেন্টার (১-ক্লিক ও ১-টা ১-টা)</span>
+                    <span className="text-[11px] text-rose-700">পণ্য, দোকান, মেমো, রুট ডিলিট</span>
+                  </div>
+                </button>
               </div>
 
               {/* Cloud Sync & Backup Status */}
@@ -1366,13 +1429,25 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   এডমিন প্যানেল থেকে সরাসরি যেকোনো মেমো দেখুন, এডিট করুন, হোয়াটসঅ্যাপে পাঠান অথবা ডিলিট করুন
                 </p>
               </div>
-              <button
-                onClick={() => onNavigateTab('orders')}
-                className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold text-xs flex items-center gap-1 self-start sm:self-auto"
-              >
-                <span>সকল মেমো তালিকা ({orders.length})</span>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
+              <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
+                {orders.length > 0 && onDeleteAllOrders && (
+                  <button
+                    type="button"
+                    onClick={() => onDeleteAllOrders()}
+                    className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs flex items-center gap-1 shadow-xs cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>সব মেমো ১-ক্লিকে ডিলিট ({orders.length})</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => onNavigateTab('orders')}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold text-xs flex items-center gap-1 cursor-pointer"
+                >
+                  <span>সকল মেমো তালিকা ({orders.length})</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
 
             {orders.length === 0 ? (
@@ -1809,13 +1884,25 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 পণ্য সাজানোর জন্য নতুন ক্যাটাগরি যোগ করুন, নাম ও কালার কোড এডিট করুন
               </p>
             </div>
-            <button
-              onClick={openCreateCategoryModal}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-sm transition-all"
-            >
-              <Plus className="w-4 h-4" />
-              <span>নতুন ক্যাটাগরি যোগ করুন</span>
-            </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              {categories.length > 0 && onDeleteAllCategories && (
+                <button
+                  type="button"
+                  onClick={() => onDeleteAllCategories()}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs shadow-xs transition-all cursor-pointer"
+                >
+                  <Trash2 className="w-4 h-4 text-rose-600" />
+                  <span>সব ক্যাটাগরি ১-ক্লিকে ডিলিট ({categories.length})</span>
+                </button>
+              )}
+              <button
+                onClick={openCreateCategoryModal}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-sm transition-all cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>নতুন ক্যাটাগরি যোগ করুন</span>
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -1868,7 +1955,6 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                       type="button"
                       onClick={() => {
                         onDeleteCategory(cat.id);
-                        showToast(`'${cat.banglaName}' মুছে ফেলা হয়েছে`, 'info');
                       }}
                       className="p-1.5 rounded-lg hover:bg-rose-50 text-neutral-400 hover:text-rose-600 cursor-pointer"
                       title="ক্যাটাগরি মুছুন"
@@ -1900,6 +1986,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               </div>
 
               <div className="flex items-center gap-2 flex-wrap">
+                {products.length > 0 && onDeleteAllProducts && (
+                  <button
+                    type="button"
+                    onClick={() => onDeleteAllProducts()}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs transition-all shadow-xs cursor-pointer"
+                    title="সকল পণ্য ১-ক্লিকে মুছে ফেলুন"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>সব পণ্য ১-ক্লিকে ডিলিট ({products.length})</span>
+                  </button>
+                )}
+
                 {onCleanAllMockData && (
                   <button
                     type="button"
@@ -1916,7 +2014,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
                 <button
                   onClick={openCreateProductModal}
-                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm transition-all"
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm transition-all cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
                   <span>নতুন পণ্য আপলোড</span>
@@ -2045,7 +2143,6 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                               type="button"
                               onClick={() => {
                                 onDeleteProduct(p.id);
-                                showToast(`'${p.banglaName}' মুছে ফেলা হয়েছে`, 'info');
                               }}
                               className="p-1.5 rounded-lg hover:bg-rose-100 text-neutral-400 hover:text-rose-600 cursor-pointer"
                               title="পণ্য মুছুন"
@@ -2138,13 +2235,25 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   রোল পরিবর্তন বা ডিলিট করলে সঙ্গে সঙ্গে ডাটাবেজে ও ইউজারের স্ক্রিনে কার্যকর হবে
                 </p>
               </div>
-              <button
-                onClick={openCreateAuthModal}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-bold text-xs shadow-xs transition-all active:scale-95 cursor-pointer shrink-0"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>নতুন রোল যুক্ত করুন</span>
-              </button>
+              <div className="flex items-center gap-2 flex-wrap">
+                {onDeleteAllStaffEmails && authorizedEmails.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => onDeleteAllStaffEmails()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs shadow-xs transition-all cursor-pointer shrink-0"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                    <span>সব স্টাফ রোল ১-ক্লিকে ডিলিট</span>
+                  </button>
+                )}
+                <button
+                  onClick={openCreateAuthModal}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-bold text-xs shadow-xs transition-all active:scale-95 cursor-pointer shrink-0"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>নতুন রোল যুক্ত করুন</span>
+                </button>
+              </div>
             </div>
 
             <div className="overflow-x-auto">
@@ -2241,7 +2350,6 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                                 type="button"
                                 onClick={() => {
                                   onDeleteAuthorizedEmail(auth.email);
-                                  showToast(`'${auth.email}' এর রোল সফলভাবে ডিলিট করা হয়েছে`, 'info');
                                 }}
                                 className="p-1.5 rounded-lg hover:bg-rose-50 text-neutral-400 hover:text-rose-600 transition-colors cursor-pointer"
                                 title="রোল মুছে ফেলুন"
@@ -2335,9 +2443,22 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                               <button
                                 type="button"
                                 onClick={() => {
-                                  handleRoleQuickChange(u.uid, 'customer');
-                                  if (u.email) {
-                                    onDeleteAuthorizedEmail(u.email);
+                                  const doRevoke = () => {
+                                    handleRoleQuickChange(u.uid, 'customer');
+                                    if (u.email) {
+                                      onDeleteAuthorizedEmail(u.email, true);
+                                    }
+                                  };
+                                  if (onRequestDeletePermission) {
+                                    onRequestDeletePermission({
+                                      title: 'ইউজার রোল প্রত্যাহার ও ডিলিট পারমিশন',
+                                      itemLabel: `${u.displayName || 'ইউজার'} (${u.email || u.uid})`,
+                                      message: `আপনি কি নিশ্চিতভাবে '${u.displayName || u.email}' এর স্টাফ রোল প্রত্যাহার ও ডিলিট করতে চান?`,
+                                      confirmButtonText: 'হ্যাঁ, রোল প্রত্যাহার করুন',
+                                      onConfirm: doRevoke,
+                                    });
+                                  } else {
+                                    doRevoke();
                                   }
                                 }}
                                 className="p-1.5 rounded-lg hover:bg-rose-50 text-neutral-400 hover:text-rose-600 transition-colors cursor-pointer"
@@ -2371,13 +2492,25 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 SR ও DSR দের জন্য নির্দিষ্ট বিক্রয় এলাকা বা রুট তৈরি করুন
               </p>
             </div>
-            <button
-              onClick={openCreateRouteModal}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-sm transition-all"
-            >
-              <Plus className="w-4 h-4" />
-              <span>নতুন রুট যোগ করুন</span>
-            </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              {routes.length > 0 && onDeleteAllRoutes && (
+                <button
+                  type="button"
+                  onClick={() => onDeleteAllRoutes()}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs shadow-xs transition-all cursor-pointer"
+                >
+                  <Trash2 className="w-4 h-4 text-rose-600" />
+                  <span>সব রুট ১-ক্লিকে ডিলিট ({routes.length})</span>
+                </button>
+              )}
+              <button
+                onClick={openCreateRouteModal}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-sm transition-all cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>নতুন রুট যোগ করুন</span>
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -2434,7 +2567,6 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                         type="button"
                         onClick={() => {
                           onDeleteRoute(route.id);
-                          showToast(`'${route.banglaName}' মুছে ফেলা হয়েছে`, 'info');
                         }}
                         className="p-1.5 rounded-lg hover:bg-rose-50 text-neutral-400 hover:text-rose-600 cursor-pointer"
                         title="রুট মুছুন"
@@ -3275,6 +3407,41 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           orders={orders}
           onUpdateProduct={onUpdateProduct}
           onShowToast={showToast}
+          onRequestDeletePermission={onRequestDeletePermission}
+        />
+      )}
+
+      {/* SUB-TAB DELETE CENTER: 1-CLICK & INDIVIDUAL DELETE CONTROL */}
+      {subTab === 'delete_center' && (
+        <AdminDeleteCenter
+          products={products}
+          shops={shops}
+          orders={orders}
+          categories={categories}
+          routes={routes}
+          dailyExpenses={dailyExpenses}
+          dueCollections={dueCollections}
+          authorizedEmails={authorizedEmails}
+          onDeleteProduct={onDeleteProduct}
+          onDeleteShop={(id, skip) => onDeleteShop && onDeleteShop(id, skip)}
+          onDeleteOrder={(id, skip) => onDeleteOrder && onDeleteOrder(id, skip)}
+          onDeleteCategory={onDeleteCategory}
+          onDeleteRoute={onDeleteRoute}
+          onDeleteDailyExpense={(id, skip) => onDeleteDailyExpense && onDeleteDailyExpense(id, skip)}
+          onDeleteDueCollection={(id, skip) => onDeleteDueCollection && onDeleteDueCollection(id, skip)}
+          onDeleteAuthorizedEmail={onDeleteAuthorizedEmail}
+          onDeleteAllProducts={() => onDeleteAllProducts && onDeleteAllProducts()}
+          onDeleteAllShops={() => onDeleteAllShops && onDeleteAllShops()}
+          onDeleteAllOrders={() => onDeleteAllOrders && onDeleteAllOrders()}
+          onDeleteAllCategories={() => onDeleteAllCategories && onDeleteAllCategories()}
+          onDeleteAllRoutes={() => onDeleteAllRoutes && onDeleteAllRoutes()}
+          onDeleteAllDailyExpenses={() => onDeleteAllDailyExpenses && onDeleteAllDailyExpenses()}
+          onDeleteAllDueCollections={() => onDeleteAllDueCollections && onDeleteAllDueCollections()}
+          onResetAllShopDues={() => onResetAllShopDues && onResetAllShopDues()}
+          onDeleteAllStaffEmails={() => onDeleteAllStaffEmails && onDeleteAllStaffEmails()}
+          onCleanAllMockData={() => onCleanAllMockData && onCleanAllMockData()}
+          onDeleteEverythingAllAtOnce={() => onDeleteEverythingAllAtOnce && onDeleteEverythingAllAtOnce()}
+          onRequestDeletePermission={(req) => onRequestDeletePermission && onRequestDeletePermission(req)}
         />
       )}
 
@@ -3809,78 +3976,81 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
       {/* MODAL 1: ADD / EDIT CATEGORY */}
       {isCategoryModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 animate-in fade-in">
-          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl text-neutral-900 border border-neutral-200">
-            <div className="flex items-center justify-between pb-3 border-b border-neutral-100">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-4 animate-in fade-in overflow-y-auto">
+          <div className="w-full max-w-md max-h-[90dvh] flex flex-col rounded-2xl bg-white shadow-2xl text-neutral-900 border border-neutral-200 overflow-hidden my-auto">
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-neutral-100 shrink-0 bg-white">
               <h3 className="font-bold text-sm text-neutral-900 flex items-center gap-2">
                 <Tags className="w-4 h-4 text-emerald-600" />
                 <span>{editingCategory ? 'ক্যাটাগরি সম্পাদনা' : 'নতুন ক্যাটাগরি তৈরি'}</span>
               </h3>
               <button
+                type="button"
                 onClick={() => setIsCategoryModalOpen(false)}
-                className="p-1 text-neutral-400 hover:text-neutral-700"
+                className="p-1 text-neutral-400 hover:text-neutral-700 rounded-lg"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleCategorySubmit} className="mt-4 space-y-3.5">
-              <div>
-                <label className="block text-xs font-bold text-neutral-700 mb-1">
-                  ক্যাটাগরির বাংলা নাম <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="যেমন: তেল ও ঘি, চাল ও ডাল"
-                  value={catBanglaName}
-                  onChange={(e) => setCatBanglaName(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-neutral-700 mb-1">
-                  ইংরেজি নাম (English Name)
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. Edible Oil, Rice & Pulses"
-                  value={catName}
-                  onChange={(e) => setCatName(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-neutral-700 mb-1">
-                  সংক্ষিপ্ত বিবরণ (ঐচ্ছিক)
-                </label>
-                <input
-                  type="text"
-                  placeholder="যেমন: সয়াবিন তেল, সরিষার তেল ও ঘি"
-                  value={catDescription}
-                  onChange={(e) => setCatDescription(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-neutral-700 mb-1">
-                  থিম কালার ট্যাগ
-                </label>
-                <div className="flex items-center gap-2">
+            <form onSubmit={handleCategorySubmit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <div className="p-5 space-y-3.5 overflow-y-auto flex-1 overscroll-contain touch-pan-y">
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    ক্যাটাগরির বাংলা নাম <span className="text-rose-500">*</span>
+                  </label>
                   <input
-                    type="color"
-                    value={catColor}
-                    onChange={(e) => setCatColor(e.target.value)}
-                    className="w-9 h-9 rounded-lg border border-neutral-300 p-0.5 cursor-pointer"
+                    type="text"
+                    required
+                    placeholder="যেমন: তেল ও ঘি, চাল ও ডাল"
+                    value={catBanglaName}
+                    onChange={(e) => setCatBanglaName(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600"
                   />
-                  <span className="text-xs text-neutral-600 font-mono">{catColor}</span>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    ইংরেজি নাম (English Name)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Edible Oil, Rice & Pulses"
+                    value={catName}
+                    onChange={(e) => setCatName(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    সংক্ষিপ্ত বিবরণ (ঐচ্ছিক)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="যেমন: সয়াবিন তেল, সরিষার তেল ও ঘি"
+                    value={catDescription}
+                    onChange={(e) => setCatDescription(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    থিম কালার ট্যাগ
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={catColor}
+                      onChange={(e) => setCatColor(e.target.value)}
+                      className="w-9 h-9 rounded-lg border border-neutral-300 p-0.5 cursor-pointer"
+                    />
+                    <span className="text-xs text-neutral-600 font-mono">{catColor}</span>
+                  </div>
                 </div>
               </div>
 
-              <div className="pt-2 flex items-center justify-end gap-2">
+              <div className="px-5 py-3 border-t border-neutral-100 bg-neutral-50 flex items-center justify-end gap-2 shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsCategoryModalOpen(false)}
@@ -3902,324 +4072,333 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
       {/* MODAL 2: ADD / EDIT PRODUCT */}
       {isProductModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 animate-in fade-in overflow-y-auto">
-          <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl text-neutral-900 border border-neutral-200 my-8">
-            <div className="flex items-center justify-between pb-3 border-b border-neutral-100">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2.5 sm:p-4 animate-in fade-in overflow-hidden">
+          <div className="w-full max-w-lg max-h-[92dvh] sm:max-h-[90vh] flex flex-col rounded-2xl bg-white shadow-2xl text-neutral-900 border border-neutral-200 overflow-hidden">
+            {/* Sticky Header */}
+            <div className="flex items-center justify-between px-4 sm:px-5 py-3.5 border-b border-neutral-200 bg-white shrink-0">
               <h3 className="font-bold text-sm text-neutral-900 flex items-center gap-2">
-                <Package className="w-4 h-4 text-emerald-600" />
+                <Package className="w-4 h-4 text-emerald-600 shrink-0" />
                 <span>{editingProduct ? 'প্রোডাক্ট তথ্য সম্পাদনা' : 'নতুন প্রোডাক্ট আপলোড ও যুক্তকরণ'}</span>
               </h3>
               <button
+                type="button"
                 onClick={() => setIsProductModalOpen(false)}
-                className="p-1 text-neutral-400 hover:text-neutral-700"
+                className="p-1.5 rounded-xl text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleProductSubmit} className="mt-4 space-y-3">
-              {productFormError && (
-                <div className="p-3 bg-rose-50 border border-rose-300 rounded-xl text-rose-800 font-bold text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-                  <span>{productFormError}</span>
-                </div>
-              )}
+            {/* Scrollable Form Body + Sticky Footer */}
+            <form onSubmit={handleProductSubmit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <div
+                className="p-4 sm:p-5 space-y-3.5 overflow-y-auto flex-1 overscroll-contain touch-pan-y"
+                style={{ WebkitOverflowScrolling: 'touch' }}
+              >
+                {productFormError && (
+                  <div className="p-3 bg-rose-50 border border-rose-300 rounded-xl text-rose-800 font-bold text-xs flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>{productFormError}</span>
+                  </div>
+                )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-neutral-700 mb-1">
-                    পণ্যের বাংলা নাম <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="যেমন: রূপচাঁদা সয়াবিন তেল (৫ লিটার)"
-                    value={prodBanglaName}
-                    onChange={(e) => setProdBanglaName(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-neutral-700 mb-1">
-                    ইংরেজি নাম (English Name)
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Rupchanda Soybean Oil (5L)"
-                    value={prodName}
-                    onChange={(e) => setProdName(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-neutral-700 mb-1">
-                    ক্যাটাগরি <span className="text-rose-500">*</span>
-                  </label>
-                  <select
-                    value={prodCategory}
-                    onChange={(e) => setProdCategory(e.target.value)}
-                    className="w-full px-2.5 py-2 rounded-xl border border-neutral-300 text-xs bg-white focus:outline-none focus:border-emerald-600 font-medium"
-                  >
-                    {categories.map((c) => (
-                      <option key={c.id} value={c.banglaName}>
-                        {c.banglaName}
-                      </option>
-                    ))}
-                    {!categories.some((c) => c.banglaName === prodCategory) && prodCategory && (
-                      <option value={prodCategory}>{prodCategory}</option>
-                    )}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-neutral-700 mb-1">
-                    একক (Unit) <span className="text-rose-500">*</span>
-                  </label>
-                  <select
-                    value={prodUnit}
-                    onChange={(e) => setProdUnit(e.target.value)}
-                    className="w-full px-2.5 py-2 rounded-xl border border-neutral-300 text-xs bg-white focus:outline-none focus:border-emerald-600 font-medium"
-                  >
-                    <option value="কার্টুন">কার্টুন</option>
-                    <option value="পিস">পিস</option>
-                    <option value="ডজন">ডজন</option>
-                    <option value="বস্তা">বস্তা</option>
-                    <option value="প্যাকেট">প্যাকেট</option>
-                    <option value="বক্স">বক্স</option>
-                    <option value="বোতল">বোতল</option>
-                    <option value="কেজি">কেজি</option>
-                    <option value="লিটার">লিটার</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-neutral-700 mb-1">SKU কোড</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. OIL-RUP-5L"
-                    value={prodSku}
-                    onChange={(e) => setProdSku(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600 font-mono"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-neutral-700 mb-1">
-                    বিক্রয় মূল্য (৳) <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    required
-                    placeholder="৩৮৫০"
-                    value={prodUnitPrice}
-                    onChange={(e) => {
-                      setProdUnitPrice(e.target.value);
-                      if (productFormError) setProductFormError(null);
-                    }}
-                    className="w-full px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600 font-mono font-bold"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-neutral-700 mb-1">
-                    ক্রয় মূল্য (৳) (ঐচ্ছিক)
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="৩৬৮০"
-                    value={prodCostPrice}
-                    onChange={(e) => setProdCostPrice(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600 font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-neutral-700 mb-1">বর্তমান স্টক</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    placeholder="৫০"
-                    value={prodStock}
-                    onChange={(e) => setProdStock(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600 font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-neutral-700 mb-1">মিনিমাম অ্যালার্ট</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    placeholder="১০"
-                    value={prodMinAlert}
-                    onChange={(e) => setProdMinAlert(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600 font-mono"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-neutral-700 mb-1">
-                    কাস্টমার ডিসকাউন্ট মূল্য (৳) (ঐচ্ছিক)
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="যেমন: ১৬৫ (ছাড়ের পর দাম)"
-                    value={prodDiscountPrice}
-                    onChange={(e) => setProdDiscountPrice(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-red-200 bg-red-50/30 text-xs focus:outline-none focus:border-[#E21E26] font-mono font-bold text-[#E21E26]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-neutral-700 mb-1">
-                    ওজন / প্যাক অপশন (কমা দিয়ে)
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="যেমন: 500g, 1KG, 2KG"
-                    value={prodAllowedWeights}
-                    onChange={(e) => setProdAllowedWeights(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600"
-                  />
-                </div>
-
-                <div className="flex items-end pb-1.5">
-                  <label className="flex items-center gap-2 text-xs font-bold text-neutral-800 cursor-pointer bg-amber-50 border border-amber-200 px-3 py-2 rounded-xl w-full">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">
+                      পণ্যের বাংলা নাম <span className="text-rose-500">*</span>
+                    </label>
                     <input
-                      type="checkbox"
-                      checked={prodIsFlashSale}
-                      onChange={(e) => setProdIsFlashSale(e.target.checked)}
-                      className="w-4 h-4 accent-[#E21E26]"
+                      type="text"
+                      required
+                      placeholder="যেমন: রূপচাঁদা সয়াবিন তেল (৫ লিটার)"
+                      value={prodBanglaName}
+                      onChange={(e) => setProdBanglaName(e.target.value)}
+                      className="w-full px-3 py-2.5 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600"
                     />
-                    <span>⚡ ফ্ল্যাশ ডিল সেকশনে দেখান</span>
-                  </label>
-                </div>
-              </div>
+                  </div>
 
-              <div>
-                <label className="block text-xs font-bold text-neutral-700 mb-1">
-                  ট্রেড অফার বা স্কিম বিবরণ (ঐচ্ছিক)
-                </label>
-                <input
-                  type="text"
-                  placeholder="যেমন: ১০ কার্টুনে ১ টি ফ্রি অথবা ১০০৳ ছাড়"
-                  value={prodTradeOffer}
-                  onChange={(e) => setProdTradeOffer(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-neutral-700 mb-1">
-                  প্রোডাক্ট ছবি লিংক (Image URL) অথবা ডিভাইস থেকে সরাসরি আপলোড
-                </label>
-                <div className="flex flex-col sm:flex-row gap-2 items-stretch">
-                  <input
-                    type="text"
-                    placeholder={
-                      prodImageUrl.startsWith('data:')
-                        ? '✅ ডিভাইস থেকে ছবি যুক্ত হয়েছে (অথবা নতুন লিংক পেস্ট করুন)'
-                        : 'https://images.unsplash.com/...'
-                    }
-                    value={prodImageUrl.startsWith('data:') ? '' : prodImageUrl}
-                    onChange={(e) => setProdImageUrl(e.target.value)}
-                    className="flex-1 px-3 py-2 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600 font-mono"
-                  />
-                  
-                  {/* File Upload Button */}
-                  <div className="relative shrink-0 flex items-stretch">
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">
+                      ইংরেজি নাম (English Name)
+                    </label>
                     <input
-                      type="file"
-                      accept="image/*"
-                      id="product-image-upload-file"
-                      onChange={handleImageFileChange}
-                      disabled={isUploadingImage}
-                      className="hidden"
+                      type="text"
+                      placeholder="e.g. Rupchanda Soybean Oil (5L)"
+                      value={prodName}
+                      onChange={(e) => setProdName(e.target.value)}
+                      className="w-full px-3 py-2.5 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600"
                     />
-                    <label
-                      htmlFor="product-image-upload-file"
-                      className={`flex items-center justify-center gap-1 px-3 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors ${
-                        isUploadingImage
-                          ? 'bg-emerald-700 text-white opacity-75 cursor-wait'
-                          : 'bg-neutral-800 hover:bg-neutral-700 text-white'
-                      }`}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">
+                      ক্যাটাগরি <span className="text-rose-500">*</span>
+                    </label>
+                    <select
+                      value={prodCategory}
+                      onChange={(e) => setProdCategory(e.target.value)}
+                      className="w-full px-2.5 py-2.5 rounded-xl border border-neutral-300 text-xs bg-white focus:outline-none focus:border-emerald-600 font-medium"
                     >
-                      <span>{isUploadingImage ? '⏳ প্রসেস হচ্ছে...' : '📸 ছবি আপলোড'}</span>
+                      {categories.map((c) => (
+                        <option key={c.id} value={c.banglaName}>
+                          {c.banglaName}
+                        </option>
+                      ))}
+                      {!categories.some((c) => c.banglaName === prodCategory) && prodCategory && (
+                        <option value={prodCategory}>{prodCategory}</option>
+                      )}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">
+                      একক (Unit) <span className="text-rose-500">*</span>
+                    </label>
+                    <select
+                      value={prodUnit}
+                      onChange={(e) => setProdUnit(e.target.value)}
+                      className="w-full px-2.5 py-2.5 rounded-xl border border-neutral-300 text-xs bg-white focus:outline-none focus:border-emerald-600 font-medium"
+                    >
+                      <option value="কার্টুন">কার্টুন</option>
+                      <option value="পিস">পিস</option>
+                      <option value="ডজন">ডজন</option>
+                      <option value="বস্তা">বস্তা</option>
+                      <option value="প্যাকেট">প্যাকেট</option>
+                      <option value="বক্স">বক্স</option>
+                      <option value="বোতল">বোতল</option>
+                      <option value="কেজি">কেজি</option>
+                      <option value="লিটার">লিটার</option>
+                    </select>
+                  </div>
+
+                  <div className="col-span-2 sm:col-span-1">
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">SKU কোড</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. OIL-RUP-5L"
+                      value={prodSku}
+                      onChange={(e) => setProdSku(e.target.value)}
+                      className="w-full px-3 py-2.5 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600 font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">
+                      বিক্রয় মূল্য (৳) <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      required
+                      placeholder="৩৮৫০"
+                      value={prodUnitPrice}
+                      onChange={(e) => {
+                        setProdUnitPrice(e.target.value);
+                        if (productFormError) setProductFormError(null);
+                      }}
+                      className="w-full px-3 py-2.5 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600 font-mono font-bold"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">
+                      ক্রয় মূল্য (৳) (ঐচ্ছিক)
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="৩৬৮০"
+                      value={prodCostPrice}
+                      onChange={(e) => setProdCostPrice(e.target.value)}
+                      className="w-full px-3 py-2.5 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600 font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">বর্তমান স্টক</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="৫০"
+                      value={prodStock}
+                      onChange={(e) => setProdStock(e.target.value)}
+                      className="w-full px-3 py-2.5 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600 font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">মিনিমাম অ্যালার্ট</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="১০"
+                      value={prodMinAlert}
+                      onChange={(e) => setProdMinAlert(e.target.value)}
+                      className="w-full px-3 py-2.5 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600 font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">
+                      কাস্টমার ডিসকাউন্ট মূল্য (৳) (ঐচ্ছিক)
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="যেমন: ১৬৫ (ছাড়ের পর দাম)"
+                      value={prodDiscountPrice}
+                      onChange={(e) => setProdDiscountPrice(e.target.value)}
+                      className="w-full px-3 py-2.5 rounded-xl border border-red-200 bg-red-50/30 text-xs focus:outline-none focus:border-[#E21E26] font-mono font-bold text-[#E21E26]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 mb-1">
+                      ওজন / প্যাক অপশন (কমা দিয়ে)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="যেমন: 500g, 1KG, 2KG"
+                      value={prodAllowedWeights}
+                      onChange={(e) => setProdAllowedWeights(e.target.value)}
+                      className="w-full px-3 py-2.5 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600"
+                    />
+                  </div>
+
+                  <div className="flex items-end">
+                    <label className="flex items-center gap-2 text-xs font-bold text-neutral-800 cursor-pointer bg-amber-50 border border-amber-200 px-3 py-2.5 rounded-xl w-full">
+                      <input
+                        type="checkbox"
+                        checked={prodIsFlashSale}
+                        onChange={(e) => setProdIsFlashSale(e.target.checked)}
+                        className="w-4 h-4 accent-[#E21E26]"
+                      />
+                      <span>⚡ ফ্ল্যাশ ডিল সেকশনে দেখান</span>
                     </label>
                   </div>
                 </div>
 
-                {/* Live Base64 Preview */}
-                {prodImageUrl && (
-                  <div className="mt-2 p-2 bg-emerald-50/60 rounded-xl border border-emerald-200 flex items-center gap-2.5">
-                    <img src={prodImageUrl} alt="Preview" className="w-12 h-12 object-cover rounded-lg border border-emerald-300 bg-white shrink-0" />
-                    <div className="min-w-0 flex-1">
-                      <span className="text-[11px] text-emerald-800 font-bold block truncate">
-                        ✅ ছবি প্রস্তুত রয়েছে
-                      </span>
-                      <span className="text-[10px] text-neutral-500 font-mono block truncate">
-                        {prodImageUrl.startsWith('data:')
-                          ? `ডিভাইস থেকে আপলোড করা ছবি (${Math.round((prodImageUrl.length * 0.75) / 1024)} KB)`
-                          : prodImageUrl}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setProdImageUrl('')}
-                      className="text-[11px] text-rose-600 hover:text-rose-800 font-bold px-2 py-1 rounded-lg hover:bg-rose-50 shrink-0"
-                    >
-                      রিমুভ
-                    </button>
-                  </div>
-                )}
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    ট্রেড অফার বা স্কিম বিবরণ (ঐচ্ছিক)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="যেমন: ১০ কার্টুনে ১ টি ফ্রি অথবা ১০০৳ ছাড়"
+                    value={prodTradeOffer}
+                    onChange={(e) => setProdTradeOffer(e.target.value)}
+                    className="w-full px-3 py-2.5 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
 
-                {/* Quick Presets */}
-                <div className="mt-2">
-                  <span className="text-[10px] text-neutral-500 font-medium block mb-1">
-                    অথবা কুইক ছবি প্রিসেট নির্বাচন করুন:
-                  </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {PRESET_PRODUCT_IMAGES.map((preset) => (
-                      <button
-                        key={preset.label}
-                        type="button"
-                        onClick={() => setProdImageUrl(preset.url)}
-                        className={`text-[10px] px-2 py-0.5 rounded-full border transition-all ${
-                          prodImageUrl === preset.url
-                            ? 'bg-emerald-600 text-white border-emerald-600'
-                            : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700 border-neutral-200'
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    প্রোডাক্ট ছবি লিংক (Image URL) অথবা ডিভাইস থেকে সরাসরি আপলোড
+                  </label>
+                  <div className="flex flex-col sm:flex-row gap-2 items-stretch">
+                    <input
+                      type="text"
+                      placeholder={
+                        prodImageUrl.startsWith('data:')
+                          ? '✅ ডিভাইস থেকে ছবি যুক্ত হয়েছে (অথবা নতুন লিংক পেস্ট করুন)'
+                          : 'https://images.unsplash.com/...'
+                      }
+                      value={prodImageUrl.startsWith('data:') ? '' : prodImageUrl}
+                      onChange={(e) => setProdImageUrl(e.target.value)}
+                      className="flex-1 px-3 py-2.5 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-emerald-600 font-mono"
+                    />
+
+                    {/* File Upload Button */}
+                    <div className="relative shrink-0 flex items-stretch">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        id="product-image-upload-file"
+                        onChange={handleImageFileChange}
+                        disabled={isUploadingImage}
+                        className="hidden"
+                      />
+                      <label
+                        htmlFor="product-image-upload-file"
+                        className={`w-full sm:w-auto flex items-center justify-center gap-1 px-3 py-2.5 rounded-xl text-xs font-bold cursor-pointer transition-colors ${
+                          isUploadingImage
+                            ? 'bg-emerald-700 text-white opacity-75 cursor-wait'
+                            : 'bg-neutral-800 hover:bg-neutral-700 text-white'
                         }`}
                       >
-                        {preset.label}
+                        <span>{isUploadingImage ? '⏳ প্রসেস হচ্ছে...' : '📸 ছবি আপলোড'}</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Live Base64 Preview */}
+                  {prodImageUrl && (
+                    <div className="mt-2 p-2 bg-emerald-50/60 rounded-xl border border-emerald-200 flex items-center gap-2.5">
+                      <img src={prodImageUrl} alt="Preview" className="w-12 h-12 object-cover rounded-lg border border-emerald-300 bg-white shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <span className="text-[11px] text-emerald-800 font-bold block truncate">
+                          ✅ ছবি প্রস্তুত রয়েছে
+                        </span>
+                        <span className="text-[10px] text-neutral-500 font-mono block truncate">
+                          {prodImageUrl.startsWith('data:')
+                            ? `ডিভাইস থেকে আপলোড করা ছবি (${Math.round((prodImageUrl.length * 0.75) / 1024)} KB)`
+                            : prodImageUrl}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setProdImageUrl('')}
+                        className="text-[11px] text-rose-600 hover:text-rose-800 font-bold px-2 py-1 rounded-lg hover:bg-rose-50 shrink-0"
+                      >
+                        রিমুভ
                       </button>
-                    ))}
+                    </div>
+                  )}
+
+                  {/* Quick Presets */}
+                  <div className="mt-2">
+                    <span className="text-[10px] text-neutral-500 font-medium block mb-1">
+                      অথবা কুইক ছবি প্রিসেট নির্বাচন করুন:
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {PRESET_PRODUCT_IMAGES.map((preset) => (
+                        <button
+                          key={preset.label}
+                          type="button"
+                          onClick={() => setProdImageUrl(preset.url)}
+                          className={`text-[10px] px-2 py-1 rounded-full border transition-all ${
+                            prodImageUrl === preset.url
+                              ? 'bg-emerald-600 text-white border-emerald-600'
+                              : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700 border-neutral-200'
+                          }`}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div className="pt-2 flex items-center justify-end gap-2">
+              {/* Sticky Footer */}
+              <div className="px-4 sm:px-5 py-3 border-t border-neutral-200 bg-neutral-50 flex items-center justify-end gap-2 shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsProductModalOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-bold text-neutral-600 hover:bg-neutral-100"
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold text-neutral-600 hover:bg-neutral-200/70"
                 >
                   বাতিল
                 </button>
                 <button
                   type="submit"
                   disabled={isUploadingImage}
-                  className="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-700 hover:bg-emerald-800 text-white shadow-sm disabled:opacity-50"
+                  className="px-5 py-2.5 rounded-xl text-xs font-bold bg-emerald-700 hover:bg-emerald-800 text-white shadow-sm disabled:opacity-50"
                 >
                   {isUploadingImage
                     ? 'ছবি প্রসেস হচ্ছে...'
