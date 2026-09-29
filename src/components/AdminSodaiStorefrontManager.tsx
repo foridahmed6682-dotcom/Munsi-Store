@@ -12,7 +12,10 @@ import {
   Save,
   Check,
   ShieldCheck,
-  ShoppingBag
+  ShoppingBag,
+  Printer,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 import {
   BusinessInfo,
@@ -27,6 +30,7 @@ import { DEFAULT_BUSINESS_INFO, saveBusinessInfoLocal, saveOrder } from '../lib/
 import { saveBusinessInfoToCloud, saveOrderToCloud } from '../lib/firebase';
 import { processImageFile } from '../lib/imageUtils';
 import { DeletePermissionRequest } from './DeleteConfirmModal';
+import { printOrdersBatch } from '../lib/printService';
 
 interface AdminSodaiStorefrontManagerProps {
   bizInfo: BusinessInfo;
@@ -48,6 +52,19 @@ export const AdminSodaiStorefrontManager: React.FC<AdminSodaiStorefrontManagerPr
   onRequestDeletePermission,
 }) => {
   const [isSaving, setIsSaving] = useState(false);
+  const [selectedCustOrderIds, setSelectedCustOrderIds] = useState<Set<string>>(new Set());
+
+  const toggleSelectCustOrder = (id: string) => {
+    setSelectedCustOrderIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
 
   // New Banner State
   const [banTitle, setBanTitle] = useState('');
@@ -245,9 +262,66 @@ export const AdminSodaiStorefrontManager: React.FC<AdminSodaiStorefrontManagerPr
               </p>
             </div>
           </div>
-          <span className="text-xs font-black bg-red-50 text-[#E21E26] px-3 py-1 rounded-full border border-red-200">
-            {customerOrders.length} টি কাস্টমার অর্ডার
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            {customerOrders.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const allSelected =
+                      customerOrders.length > 0 &&
+                      customerOrders.every((o) => selectedCustOrderIds.has(o.id));
+                    if (allSelected) {
+                      setSelectedCustOrderIds(new Set());
+                    } else {
+                      setSelectedCustOrderIds(new Set(customerOrders.map((o) => o.id)));
+                    }
+                  }}
+                  className="px-2.5 py-1 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                >
+                  {customerOrders.length > 0 &&
+                  customerOrders.every((o) => selectedCustOrderIds.has(o.id)) ? (
+                    <CheckSquare className="w-3.5 h-3.5 text-blue-600" />
+                  ) : (
+                    <Square className="w-3.5 h-3.5 text-neutral-500" />
+                  )}
+                  <span>সব সিলেক্ট</span>
+                </button>
+
+                {selectedCustOrderIds.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const chosen = customerOrders.filter((o) => selectedCustOrderIds.has(o.id));
+                      printOrdersBatch(chosen, 'slips', `(নির্বাচিত ${chosen.length} টি কাস্টমার অর্ডার)`);
+                    }}
+                    className="px-3 py-1 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black flex items-center gap-1 cursor-pointer"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>নির্বাচিত ({selectedCustOrderIds.size}) প্রিন্ট</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    printOrdersBatch(
+                      customerOrders,
+                      'slips',
+                      `(${customerOrders.length} টি কাস্টমার অর্ডার)`
+                    )
+                  }
+                  className="px-3 py-1 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black flex items-center gap-1 cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>১-ক্লিকে সব প্রিন্ট ({customerOrders.length})</span>
+                </button>
+              </>
+            )}
+            <span className="text-xs font-black bg-red-50 text-[#E21E26] px-3 py-1 rounded-full border border-red-200">
+              {customerOrders.length} টি কাস্টমার অর্ডার
+            </span>
+          </div>
         </div>
 
         {customerOrders.length === 0 ? (
@@ -256,57 +330,89 @@ export const AdminSodaiStorefrontManager: React.FC<AdminSodaiStorefrontManagerPr
           </p>
         ) : (
           <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
-            {customerOrders.slice(0, 20).map((ord) => (
-              <div
-                key={ord.id}
-                className="p-3.5 rounded-2xl bg-neutral-50 border border-neutral-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-              >
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-mono font-black text-xs text-neutral-900">
-                      #{ord.memoNumber}
-                    </span>
-                    <span className="font-bold text-xs text-neutral-800">
-                      {ord.customerName || ord.shopName} ({ord.customerPhone || ord.shopPhone})
-                    </span>
-                    <span className="text-[10px] font-black px-2 py-0.5 rounded bg-neutral-200 text-neutral-800">
-                      {ord.paymentMethod}
-                    </span>
-                    {ord.trxId && (
-                      <span className="text-[10px] font-mono font-black px-2 py-0.5 rounded bg-pink-100 text-pink-800">
-                        TrxID: {ord.trxId} ({ord.paymentSenderNumber})
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-neutral-500">
-                    ঠিকানা: {ord.customerAddress || ord.shopAddress} • মোট বিল:{' '}
-                    <strong className="text-[#E21E26]">৳{ord.netTotal}</strong>
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => handleToggleVerifyOrder(ord)}
-                  className={`px-4 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 shrink-0 transition-all ${
-                    ord.paymentVerified
-                      ? 'bg-emerald-600 text-white'
-                      : 'bg-[#121212] hover:bg-[#E21E26] text-white'
+            {customerOrders.slice(0, 50).map((ord) => {
+              const isSelected = selectedCustOrderIds.has(ord.id);
+              return (
+                <div
+                  key={ord.id}
+                  className={`p-3.5 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                    isSelected
+                      ? 'bg-blue-50/50 border-blue-400'
+                      : 'bg-neutral-50 border-neutral-200'
                   }`}
                 >
-                  {ord.paymentVerified ? (
-                    <>
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>পেমেন্ট ভেরিফাইড ✓</span>
-                    </>
-                  ) : (
-                    <>
-                      <Clock className="w-4 h-4" />
-                      <span>পেমেন্ট ভেরিফাই করুন</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            ))}
+                  <div className="flex items-start gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => toggleSelectCustOrder(ord.id)}
+                      className="mt-0.5 text-neutral-400 hover:text-blue-600 shrink-0 cursor-pointer"
+                    >
+                      {isSelected ? (
+                        <CheckSquare className="w-4 h-4 text-blue-600" />
+                      ) : (
+                        <Square className="w-4 h-4" />
+                      )}
+                    </button>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono font-black text-xs text-neutral-900">
+                          #{ord.memoNumber}
+                        </span>
+                        <span className="font-bold text-xs text-neutral-800">
+                          {ord.customerName || ord.shopName} ({ord.customerPhone || ord.shopPhone})
+                        </span>
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded bg-neutral-200 text-neutral-800">
+                          {ord.paymentMethod}
+                        </span>
+                        {ord.trxId && (
+                          <span className="text-[10px] font-mono font-black px-2 py-0.5 rounded bg-pink-100 text-pink-800">
+                            TrxID: {ord.trxId} ({ord.paymentSenderNumber})
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-neutral-500">
+                        ঠিকানা: {ord.customerAddress || ord.shopAddress} • মোট বিল:{' '}
+                        <strong className="text-[#E21E26]">৳{ord.netTotal}</strong>
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => printOrdersBatch([ord], 'slips', '(কাস্টমার মেমো)')}
+                      className="px-3 py-2 rounded-xl bg-blue-50 hover:bg-blue-600 text-blue-700 hover:text-white border border-blue-200 text-xs font-black flex items-center gap-1 cursor-pointer transition-colors"
+                      title="১-ক্লিকে মেমো প্রিন্ট করুন"
+                    >
+                      <Printer className="w-3.5 h-3.5" />
+                      <span>প্রিন্ট</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleToggleVerifyOrder(ord)}
+                      className={`px-4 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 shrink-0 transition-all cursor-pointer ${
+                        ord.paymentVerified
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-[#121212] hover:bg-[#E21E26] text-white'
+                      }`}
+                    >
+                      {ord.paymentVerified ? (
+                        <>
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>পেমেন্ট ভেরিফাইড ✓</span>
+                        </>
+                      ) : (
+                        <>
+                          <Clock className="w-4 h-4" />
+                          <span>পেমেন্ট ভেরিফাই করুন</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

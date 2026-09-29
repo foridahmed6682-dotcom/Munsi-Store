@@ -13,11 +13,15 @@ import {
   Trash2,
   Edit3,
   X,
-  Upload
+  Upload,
+  Printer,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 import { Product, Category } from '../types';
 import { DEMO_PRODUCT_IDS, parseBanglaNumber } from '../lib/storage';
 import { processImageFile } from '../lib/imageUtils';
+import { printProductsBatch } from '../lib/printService';
 
 interface InventoryViewProps {
   products: Product[];
@@ -41,6 +45,19 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [onlyLowStock, setOnlyLowStock] = useState(false);
+  const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set());
+
+  const toggleSelectProduct = (id: string) => {
+    setSelectedProductIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
 
   // Stock In Modal
   const [stockInProduct, setStockInProduct] = useState<Product | null>(null);
@@ -330,6 +347,74 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         </div>
       </div>
 
+      {/* Bulk & Select Print Bar for Products */}
+      {filteredProducts.length > 0 && (
+        <div className="bg-blue-50 border border-blue-200 rounded-2xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-xs">
+          <div>
+            <p className="text-xs font-extrabold text-blue-950 flex items-center gap-1.5">
+              <Printer className="w-4 h-4 text-blue-600" />
+              <span>১-ক্লিকে অথবা সিলেক্ট করে প্রোডাক্ট মূল্য ও স্টক তালিকা প্রিন্ট ({filteredProducts.length}টি পণ্য)</span>
+            </p>
+            <p className="text-[11px] text-blue-700">
+              টেবিল থেকে পণ্যে টিক চিহ্ন দিয়ে বাছাই করে প্রিন্ট করুন অথবা ১-ক্লিকে সম্পূর্ণ প্রাইস ও স্টক লিস্ট প্রিন্ট করুন।
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                const allSelected =
+                  filteredProducts.length > 0 &&
+                  filteredProducts.every((p) => selectedProductIds.has(p.id));
+                if (allSelected) {
+                  setSelectedProductIds(new Set());
+                } else {
+                  setSelectedProductIds(new Set(filteredProducts.map((p) => p.id)));
+                }
+              }}
+              className="px-3 py-1.5 bg-white hover:bg-blue-100 text-blue-900 border border-blue-300 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+            >
+              {filteredProducts.length > 0 &&
+              filteredProducts.every((p) => selectedProductIds.has(p.id)) ? (
+                <CheckSquare className="w-4 h-4 text-blue-600" />
+              ) : (
+                <Square className="w-4 h-4 text-blue-400" />
+              )}
+              <span>
+                {filteredProducts.length > 0 &&
+                filteredProducts.every((p) => selectedProductIds.has(p.id))
+                  ? 'সব আন-সিলেক্ট'
+                  : `সব সিলেক্ট (${filteredProducts.length})`}
+              </span>
+            </button>
+
+            {selectedProductIds.size > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const chosen = products.filter((p) => selectedProductIds.has(p.id));
+                  printProductsBatch(chosen, `(নির্বাচিত ${chosen.length} টি পণ্য)`);
+                }}
+                className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow-sm cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>নির্বাচিত ({selectedProductIds.size}টি) প্রিন্ট</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => printProductsBatch(filteredProducts, `(${filteredProducts.length} টি পণ্য)`)}
+              className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow-sm cursor-pointer"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>১-ক্লিকে সব প্রিন্ট ({filteredProducts.length}টি)</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Inventory Table / Cards */}
       <div className="bg-white rounded-2xl border border-neutral-200 shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
@@ -350,11 +435,29 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 const isLow = prod.stock <= prod.minStockAlert;
                 const margin = prod.unitPrice - prod.costPrice;
                 const marginPct = prod.costPrice > 0 ? Math.round((margin / prod.costPrice) * 100) : 0;
+                const isSelected = selectedProductIds.has(prod.id);
 
                 return (
-                  <tr key={prod.id} className="hover:bg-neutral-50/80 transition-colors">
+                  <tr
+                    key={prod.id}
+                    className={`transition-colors ${
+                      isSelected ? 'bg-blue-50/50' : 'hover:bg-neutral-50/80'
+                    }`}
+                  >
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => toggleSelectProduct(prod.id)}
+                          className="text-neutral-400 hover:text-blue-600 shrink-0 cursor-pointer"
+                          title="প্রিন্টের জন্য সিলেক্ট করুন"
+                        >
+                          {isSelected ? (
+                            <CheckSquare className="w-4 h-4 text-blue-600" />
+                          ) : (
+                            <Square className="w-4 h-4" />
+                          )}
+                        </button>
                         <div className="w-12 h-12 rounded-xl bg-neutral-100 border border-neutral-200 overflow-hidden shrink-0 flex items-center justify-center">
                           {prod.imageUrl ? (
                             <img
@@ -417,6 +520,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
                     <td className="py-3 px-4 text-right">
                       <div className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => printProductsBatch([prod], `(${prod.banglaName})`)}
+                          className="p-1.5 bg-blue-50 hover:bg-blue-600 text-blue-700 hover:text-white rounded-lg border border-blue-200 transition-colors cursor-pointer"
+                          title="এই পণ্যটি ১-ক্লিকে প্রিন্ট করুন"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                        </button>
                         <button
                           type="button"
                           onClick={() => openEditProductModal(prod)}

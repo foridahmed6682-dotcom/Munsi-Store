@@ -26,16 +26,41 @@
   border-radius: 9999px;
 }
 
-/* Print styling for customer memos / order slips */
+#global-print-container {
+  display: none;
+}
+
+/* Print styling for customer memos / order slips & bulk printing */
 @media print {
-  body * {
+  body.is-printing-global > *:not(#global-print-container) {
+    display: none !important;
+  }
+  body.is-printing-global #global-print-container {
+    display: block !important;
+    visibility: visible !important;
+    position: static !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+    color: black !important;
+  }
+  body.is-printing-global #global-print-container * {
+    visibility: visible !important;
+  }
+
+  body:not(.is-printing-global) * {
     visibility: hidden;
   }
-  #printable-memo, #printable-memo *,
-  #bulk-printable-memos, #bulk-printable-memos * {
+  body:not(.is-printing-global) #printable-memo,
+  body:not(.is-printing-global) #printable-memo *,
+  body:not(.is-printing-global) #bulk-printable-memos,
+  body:not(.is-printing-global) #bulk-printable-memos * {
     visibility: visible;
   }
-  #printable-memo, #bulk-printable-memos {
+  body:not(.is-printing-global) #printable-memo,
+  body:not(.is-printing-global) #bulk-printable-memos {
+    display: block !important;
     position: absolute;
     left: 0;
     top: 0;

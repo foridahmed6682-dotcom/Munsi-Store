@@ -45,7 +45,8 @@ import {
   BellRing,
   Smartphone,
   CreditCard,
-  Banknote
+  Banknote,
+  Printer
 } from 'lucide-react';
 import {
   Product,
@@ -81,7 +82,14 @@ import {
 import { PushNotificationManager } from './PushNotificationManager';
 import { AdminSodaiStorefrontManager } from './AdminSodaiStorefrontManager';
 import { AdminDeleteCenter } from './AdminDeleteCenter';
+import { AdminPrintCenter } from './AdminPrintCenter';
 import { DeletePermissionRequest } from './DeleteConfirmModal';
+import {
+  printProductsBatch,
+  printCategoriesBatch,
+  printRoutesBatch,
+  printStaffBatch
+} from '../lib/printService';
 
 interface AdminDashboardViewProps {
   products: Product[];
@@ -143,7 +151,7 @@ interface AdminDashboardViewProps {
   onRequestDeletePermission?: (req: Omit<DeletePermissionRequest, 'isOpen'>) => void;
 }
 
-type AdminSubTab = 'overview' | 'storefront' | 'categories' | 'products' | 'routes' | 'access' | 'analytics' | 'push' | 'settings' | 'backup' | 'delete_center';
+type AdminSubTab = 'overview' | 'storefront' | 'categories' | 'products' | 'routes' | 'access' | 'analytics' | 'push' | 'settings' | 'backup' | 'print_center' | 'delete_center';
 
 const AVAILABLE_ROUTES = [
   'সব রুট (All Routes)',
@@ -1171,6 +1179,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         </button>
 
         <button
+          onClick={() => setSubTab('print_center')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+            subTab === 'print_center'
+              ? 'bg-blue-600 text-white font-black shadow-md'
+              : 'text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200'
+          }`}
+        >
+          <Printer className="w-4 h-4" />
+          <span>প্রিন্ট সেন্টার (১-ক্লিক ও সিলেক্ট বাল্ক প্রিন্ট)</span>
+        </button>
+
+        <button
           onClick={() => setSubTab('delete_center')}
           className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
             subTab === 'delete_center'
@@ -1334,6 +1354,19 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   <div>
                     <span className="font-bold text-xs text-neutral-900 block">স্টক ইন ও রেট এডিট</span>
                     <span className="text-[11px] text-neutral-500">ইনভেন্টরি পরিবর্তন</span>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => setSubTab('print_center')}
+                  className="p-3 rounded-xl border border-blue-200 bg-blue-50 hover:bg-blue-100 text-left transition-colors flex flex-col justify-between cursor-pointer"
+                >
+                  <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold mb-2">
+                    <Printer className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="font-bold text-xs text-blue-900 block">প্রিন্ট সেন্টার (১-ক্লিক ও সিলেক্ট প্রিন্ট)</span>
+                    <span className="text-[11px] text-blue-700">মেমো, পণ্য, দোকান ও বকেয়া বাল্ক প্রিন্ট</span>
                   </div>
                 </button>
 
@@ -1885,6 +1918,16 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               </p>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
+              {categories.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => printCategoriesBatch(categories, products)}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold text-xs shadow-xs transition-all cursor-pointer"
+                >
+                  <Printer className="w-4 h-4 text-blue-600" />
+                  <span>সব ক্যাটাগরি ১-ক্লিকে প্রিন্ট ({categories.length})</span>
+                </button>
+              )}
               {categories.length > 0 && onDeleteAllCategories && (
                 <button
                   type="button"
@@ -1986,6 +2029,17 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               </div>
 
               <div className="flex items-center gap-2 flex-wrap">
+                {products.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => printProductsBatch(products, '(সম্পূর্ণ ক্যাটালগ)')}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition-all shadow-xs cursor-pointer"
+                    title="সকল পণ্য ১-ক্লিকে প্রিন্ট করুন"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>সব পণ্য ১-ক্লিকে প্রিন্ট ({products.length})</span>
+                  </button>
+                )}
                 {products.length > 0 && onDeleteAllProducts && (
                   <button
                     type="button"
@@ -2133,6 +2187,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                         <td className="p-3 text-right">
                           <div className="inline-flex items-center gap-1">
                             <button
+                              type="button"
+                              onClick={() => printProductsBatch([p], `(${p.banglaName})`)}
+                              className="p-1.5 rounded-lg hover:bg-blue-100 text-neutral-500 hover:text-blue-600 cursor-pointer"
+                              title="এই পণ্যটি ১-ক্লিকে প্রিন্ট করুন"
+                            >
+                              <Printer className="w-4 h-4" />
+                            </button>
+                            <button
                               onClick={() => openEditProductModal(p)}
                               className="p-1.5 rounded-lg hover:bg-neutral-200 text-neutral-700"
                               title="পণ্য এডিট করুন"
@@ -2236,6 +2298,16 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 </p>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
+                {authorizedEmails.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => printStaffBatch(authorizedEmails)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold text-xs shadow-xs transition-all cursor-pointer shrink-0"
+                  >
+                    <Printer className="w-3.5 h-3.5 text-blue-600" />
+                    <span>সব স্টাফ ১-ক্লিকে প্রিন্ট</span>
+                  </button>
+                )}
                 {onDeleteAllStaffEmails && authorizedEmails.length > 1 && (
                   <button
                     type="button"
@@ -2493,6 +2565,16 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               </p>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
+              {routes.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => printRoutesBatch(routes, shops)}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold text-xs shadow-xs transition-all cursor-pointer"
+                >
+                  <Printer className="w-4 h-4 text-blue-600" />
+                  <span>সব রুট ১-ক্লিকে প্রিন্ট ({routes.length})</span>
+                </button>
+              )}
               {routes.length > 0 && onDeleteAllRoutes && (
                 <button
                   type="button"
@@ -3408,6 +3490,20 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           onUpdateProduct={onUpdateProduct}
           onShowToast={showToast}
           onRequestDeletePermission={onRequestDeletePermission}
+        />
+      )}
+
+      {/* SUB-TAB PRINT CENTER: 1-CLICK & INDIVIDUAL SELECT BULK PRINT */}
+      {subTab === 'print_center' && (
+        <AdminPrintCenter
+          products={products}
+          shops={shops}
+          orders={orders}
+          categories={categories}
+          routes={routes}
+          dailyExpenses={dailyExpenses}
+          dueCollections={dueCollections}
+          authorizedEmails={authorizedEmails}
         />
       )}
 

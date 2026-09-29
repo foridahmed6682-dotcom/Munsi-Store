@@ -26,10 +26,13 @@ import {
   Wallet,
   RotateCcw,
   Plus,
-  ClipboardList
+  ClipboardList,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 import { Order, Shop, PaymentMethod, DueCollectionRecord, DailyExpenseRecord } from '../types';
 import { getBusinessInfo } from '../lib/firebase';
+import { printOrdersBatch } from '../lib/printService';
 
 interface OrdersListViewProps {
   orders: Order[];
@@ -142,6 +145,20 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING' | 'DELIVERED' | 'CANCELLED'>('ALL');
   const [timeFilter, setTimeFilter] = useState<'TODAY' | 'YESTERDAY' | 'WEEK' | 'CUSTOM' | 'ALL'>('ALL');
   const [customDate, setCustomDate] = useState<string>('');
+  const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
+  const [bulkPrintMode, setBulkPrintMode] = useState<'slips' | 'table'>('slips');
+
+  const toggleSelectOrder = (id: string) => {
+    setSelectedOrderIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
 
   // Delivery & Payment Settlement Modal State
   const [settlingOrder, setSettlingOrder] = useState<Order | null>(null);
@@ -688,27 +705,108 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
         </div>
       </div>
 
-      {/* Bulk Actions Ribbon */}
+      {/* Bulk & Select Print Actions Ribbon */}
       {filteredOrders.length > 0 && (
-        <div className="bg-blue-50 border border-blue-200 p-3 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
-          <div>
-            <p className="text-xs font-bold text-blue-900 flex items-center gap-1.5">
+        <div className="bg-blue-50 border border-blue-200 p-3.5 rounded-2xl flex flex-col lg:flex-row lg:items-center justify-between gap-3 shadow-xs">
+          <div className="space-y-1">
+            <p className="text-xs sm:text-sm font-black text-blue-950 flex items-center gap-1.5">
               <Printer className="w-4 h-4 text-blue-600" />
-              <span>১-ক্লিকে বাল্ক মেমো প্রিন্ট করুন ({filteredOrders.length} টি অর্ডার)</span>
+              <span>
+                ১-ক্লিকে বাল্ক প্রিন্ট অথবা ১টা ১টা করে সিলেক্ট করে প্রিন্ট করুন ({filteredOrders.length} টি মেমো)
+              </span>
             </p>
-            <p className="text-[11px] text-blue-600">
-              নির্বাচিত ফিল্টারের আওতাভুক্ত সকল মেমো একসাথে প্রিন্ট বা পিডিএফ সেভ করুন (প্রতিটি মেমো আলাদা পৃষ্ঠায় প্রিন্ট হবে)।
+            <p className="text-[11px] text-blue-700">
+              নিচের তালিকা থেকে যেকোনো মেমোর বাম পাশের বক্সে টিক চিহ্ন দিয়ে বাছাই করে প্রিন্ট করুন অথবা ১-ক্লিকে সব মেমো একসাথে প্রিন্ট করুন।
             </p>
           </div>
-          <button
-            onClick={() => {
-              window.print();
-            }}
-            className="w-full sm:w-auto px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs rounded-xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5"
-          >
-            <Printer className="w-3.5 h-3.5" />
-            <span>বাল্ক প্রিন্ট শুরু করুন</span>
-          </button>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {/* Format Toggle: Slips vs Summary Table */}
+            <div className="flex items-center bg-white border border-blue-200 rounded-xl p-0.5">
+              <button
+                type="button"
+                onClick={() => setBulkPrintMode('slips')}
+                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
+                  bulkPrintMode === 'slips'
+                    ? 'bg-blue-600 text-white'
+                    : 'text-blue-900 hover:bg-blue-50'
+                }`}
+              >
+                মেমো স্লিপ
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkPrintMode('table')}
+                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
+                  bulkPrintMode === 'table'
+                    ? 'bg-blue-600 text-white'
+                    : 'text-blue-900 hover:bg-blue-50'
+                }`}
+              >
+                সামারি তালিকা
+              </button>
+            </div>
+
+            {/* Select All / Deselect All Button */}
+            <button
+              type="button"
+              onClick={() => {
+                const allSelected =
+                  filteredOrders.length > 0 &&
+                  filteredOrders.every((o) => selectedOrderIds.has(o.id));
+                if (allSelected) {
+                  setSelectedOrderIds(new Set());
+                } else {
+                  setSelectedOrderIds(new Set(filteredOrders.map((o) => o.id)));
+                }
+              }}
+              className="px-3 py-2 bg-white hover:bg-blue-100 text-blue-900 border border-blue-300 font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors"
+            >
+              {filteredOrders.length > 0 &&
+              filteredOrders.every((o) => selectedOrderIds.has(o.id)) ? (
+                <CheckSquare className="w-4 h-4 text-blue-600" />
+              ) : (
+                <Square className="w-4 h-4 text-blue-400" />
+              )}
+              <span>
+                {filteredOrders.length > 0 &&
+                filteredOrders.every((o) => selectedOrderIds.has(o.id))
+                  ? 'সব আন-সিলেক্ট'
+                  : `সব সিলেক্ট (${filteredOrders.length})`}
+              </span>
+            </button>
+
+            {/* Print Selected Button */}
+            {selectedOrderIds.size > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const chosen = orders.filter((o) => selectedOrderIds.has(o.id));
+                  printOrdersBatch(chosen, bulkPrintMode, `(নির্বাচিত ${chosen.length} টি)`);
+                }}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>নির্বাচিত ({selectedOrderIds.size}টি) প্রিন্ট করুন</span>
+              </button>
+            )}
+
+            {/* 1-Click Print All Filtered Button */}
+            <button
+              type="button"
+              onClick={() => {
+                printOrdersBatch(
+                  filteredOrders,
+                  bulkPrintMode,
+                  `(${filteredOrders.length} টি মেমো)`
+                );
+              }}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>১-ক্লিকে সব প্রিন্ট ({filteredOrders.length}টি)</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -724,65 +822,85 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
           filteredOrders.map((order) => {
             const isDelivered = order.deliveryStatus === 'DELIVERED';
             const isCancelled = order.deliveryStatus === 'CANCELLED';
+            const isSelected = selectedOrderIds.has(order.id);
 
             return (
               <div
                 key={order.id}
-                className="bg-white rounded-2xl p-3.5 sm:p-4 border border-neutral-200 shadow-xs hover:border-neutral-300 transition-all flex flex-col md:flex-row md:items-center justify-between gap-3"
+                className={`bg-white rounded-2xl p-3.5 sm:p-4 border shadow-xs transition-all flex flex-col md:flex-row md:items-center justify-between gap-3 ${
+                  isSelected
+                    ? 'border-blue-500 bg-blue-50/30 ring-1 ring-blue-500/30'
+                    : 'border-neutral-200 hover:border-neutral-300'
+                }`}
               >
-                {/* Order summary info */}
-                <div className="min-w-0 flex-1 space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-extrabold text-sm text-neutral-900">{order.memoNumber}</span>
-                    <span className="text-xs text-neutral-400">•</span>
-                    <span className="font-bold text-sm text-neutral-800 truncate">{order.shopName}</span>
-                    <span className="text-xs text-neutral-500 bg-neutral-100 px-2 py-0.5 rounded-md">
-                      {order.shopRoute}
-                    </span>
-
-                    {/* Customer E-commerce Badge */}
-                    {order.orderType === 'b2c_customer' && (
-                      <span className="text-[10px] font-bold text-teal-800 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-md">
-                        🛒 অনলাইন কাস্টমার
-                      </span>
-                    )}
-
-                    {/* Sync Status Badge */}
-                    {order.syncedWithSheets ? (
-                      <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                        <Cloud className="w-3 h-3 text-emerald-600" />
-                        <span>শিট সিঙ্কড</span>
-                      </span>
+                {/* Order summary info with Checkbox */}
+                <div className="min-w-0 flex-1 flex items-start gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => toggleSelectOrder(order.id)}
+                    className="mt-0.5 text-neutral-400 hover:text-blue-600 shrink-0 cursor-pointer"
+                    title="বাল্ক প্রিন্টের জন্য সিলেক্ট করুন"
+                  >
+                    {isSelected ? (
+                      <CheckSquare className="w-5 h-5 text-blue-600" />
                     ) : (
-                      <span className="flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
-                        <CloudOff className="w-3 h-3 text-amber-600" />
-                        <span>অফলাইন সেভড</span>
+                      <Square className="w-5 h-5" />
+                    )}
+                  </button>
+
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-extrabold text-sm text-neutral-900">{order.memoNumber}</span>
+                      <span className="text-xs text-neutral-400">•</span>
+                      <span className="font-bold text-sm text-neutral-800 truncate">{order.shopName}</span>
+                      <span className="text-xs text-neutral-500 bg-neutral-100 px-2 py-0.5 rounded-md">
+                        {order.shopRoute}
                       </span>
-                    )}
-                  </div>
 
-                  <p className="text-xs text-neutral-600">
-                    {order.items.map((i) => `${i.productName} (${i.quantity} ${i.unit})`).join(', ')}
-                  </p>
-
-                  <div className="flex flex-wrap items-center gap-3 text-[11px] text-neutral-500 pt-0.5">
-                    <span>
-                      তারিখ: {new Date(order.orderDate).toLocaleDateString('en-GB')}{' '}
-                      {new Date(order.orderDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                    <span>•</span>
-                    <span>ফোন: {order.shopPhone}</span>
-                    <span>•</span>
-                    <span>পেমেন্ট: <strong className="text-neutral-700">{order.paymentMethod}</strong></span>
-                    {(order.returnAmount || 0) > 0 && (
-                      <>
-                        <span>•</span>
-                        <span className="text-rose-600 font-bold">
-                          ফেরত/ড্যামেজ বাদ: ৳{(order.returnAmount || 0).toLocaleString()}
-                          {order.returnReason ? ` (${order.returnReason})` : ''}
+                      {/* Customer E-commerce Badge */}
+                      {order.orderType === 'b2c_customer' && (
+                        <span className="text-[10px] font-bold text-teal-800 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-md">
+                          🛒 অনলাইন কাস্টমার
                         </span>
-                      </>
-                    )}
+                      )}
+
+                      {/* Sync Status Badge */}
+                      {order.syncedWithSheets ? (
+                        <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                          <Cloud className="w-3 h-3 text-emerald-600" />
+                          <span>শিট সিঙ্কড</span>
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                          <CloudOff className="w-3 h-3 text-amber-600" />
+                          <span>অফলাইন সেভড</span>
+                        </span>
+                      )}
+                    </div>
+
+                    <p className="text-xs text-neutral-600">
+                      {order.items.map((i) => `${i.productName} (${i.quantity} ${i.unit})`).join(', ')}
+                    </p>
+
+                    <div className="flex flex-wrap items-center gap-3 text-[11px] text-neutral-500 pt-0.5">
+                      <span>
+                        তারিখ: {new Date(order.orderDate).toLocaleDateString('en-GB')}{' '}
+                        {new Date(order.orderDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                      <span>•</span>
+                      <span>ফোন: {order.shopPhone}</span>
+                      <span>•</span>
+                      <span>পেমেন্ট: <strong className="text-neutral-700">{order.paymentMethod}</strong></span>
+                      {(order.returnAmount || 0) > 0 && (
+                        <>
+                          <span>•</span>
+                          <span className="text-rose-600 font-bold">
+                            ফেরত/ড্যামেজ বাদ: ৳{(order.returnAmount || 0).toLocaleString()}
+                            {order.returnReason ? ` (${order.returnReason})` : ''}
+                          </span>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -857,10 +975,21 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                     <button
                       onClick={() => onViewMemo(order, false)}
                       className="px-2.5 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer"
-                      title="মেমো দেখুন ও প্রিন্ট করুন"
+                      title="মেমো দেখুন"
                     >
                       <Eye className="w-3.5 h-3.5" />
                       <span>মেমো</span>
+                    </button>
+
+                    {/* Direct 1-Click Print Single Memo Button */}
+                    <button
+                      type="button"
+                      onClick={() => printOrdersBatch([order], 'slips', '(সিঙ্গেল মেমো)')}
+                      className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-600 text-blue-700 hover:text-white border border-blue-200 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                      title="এই মেমোটি ১-ক্লিকে প্রিন্ট করুন"
+                    >
+                      <Printer className="w-3.5 h-3.5" />
+                      <span>প্রিন্ট</span>
                     </button>
 
                     {/* Admin Delete Button */}

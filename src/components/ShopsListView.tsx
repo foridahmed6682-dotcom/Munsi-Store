@@ -17,12 +17,16 @@ import {
   Navigation as NavIcon,
   Share2,
   FileText,
-  X
+  X,
+  Printer,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 import { Shop, PaymentMethod, Route, Order, DueCollectionRecord } from '../types';
 import { AddShopModal } from './AddShopModal';
 import { getBusinessInfo } from '../lib/firebase';
 import { parseBanglaNumber } from '../lib/storage';
+import { printShopsBatch } from '../lib/printService';
 
 interface ShopsListViewProps {
   shops: Shop[];
@@ -55,6 +59,19 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
   const [selectedRoute, setSelectedRoute] = useState('all');
   const [dateFilter, setDateFilter] = useState('');
   const [editingShop, setEditingShop] = useState<Shop | null>(null);
+  const [selectedShopIds, setSelectedShopIds] = useState<Set<string>>(new Set());
+
+  const toggleSelectShop = (id: string) => {
+    setSelectedShopIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
 
   // Due collection modal
   const [collectingShop, setCollectingShop] = useState<Shop | null>(null);
@@ -237,26 +254,121 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
         </div>
       </div>
 
+      {/* Bulk & Select Print Bar for Shops */}
+      {filteredShops.length > 0 && (
+        <div className="bg-blue-50 border border-blue-200 rounded-2xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-xs">
+          <div>
+            <p className="text-xs font-extrabold text-blue-950 flex items-center gap-1.5">
+              <Printer className="w-4 h-4 text-blue-600" />
+              <span>১-ক্লিকে অথবা সিলেক্ট করে দোকান ও বকেয়া তালিকা প্রিন্ট ({filteredShops.length}টি দোকান)</span>
+            </p>
+            <p className="text-[11px] text-blue-700">
+              দোকানের কার্ডে টিক দিয়ে নির্দিষ্ট দোকানগুলোর তালিকা প্রিন্ট করুন অথবা ১-ক্লিকে সব দোকানের বকেয়া শীট প্রিন্ট করুন।
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                const allSelected =
+                  filteredShops.length > 0 &&
+                  filteredShops.every((s) => selectedShopIds.has(s.id));
+                if (allSelected) {
+                  setSelectedShopIds(new Set());
+                } else {
+                  setSelectedShopIds(new Set(filteredShops.map((s) => s.id)));
+                }
+              }}
+              className="px-3 py-1.5 bg-white hover:bg-blue-100 text-blue-900 border border-blue-300 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+            >
+              {filteredShops.length > 0 &&
+              filteredShops.every((s) => selectedShopIds.has(s.id)) ? (
+                <CheckSquare className="w-4 h-4 text-blue-600" />
+              ) : (
+                <Square className="w-4 h-4 text-blue-400" />
+              )}
+              <span>
+                {filteredShops.length > 0 &&
+                filteredShops.every((s) => selectedShopIds.has(s.id))
+                  ? 'সব আন-সিলেক্ট'
+                  : `সব সিলেক্ট (${filteredShops.length})`}
+              </span>
+            </button>
+
+            {selectedShopIds.size > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const chosen = shops.filter((s) => selectedShopIds.has(s.id));
+                  printShopsBatch(chosen, `(নির্বাচিত ${chosen.length} টি দোকান)`);
+                }}
+                className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow-sm cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>নির্বাচিত ({selectedShopIds.size}টি) প্রিন্ট</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => printShopsBatch(filteredShops, `(${filteredShops.length} টি দোকান)`)}
+              className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow-sm cursor-pointer"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>১-ক্লিকে সব প্রিন্ট ({filteredShops.length}টি)</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Shops Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {filteredShops.map((shop) => {
           const hasHighDue = shop.previousDue >= 8000;
+          const isSelected = selectedShopIds.has(shop.id);
 
           return (
             <div
               key={shop.id}
               className={`bg-white rounded-2xl p-4 border transition-all flex flex-col justify-between ${
-                hasHighDue ? 'border-rose-200 shadow-xs' : 'border-neutral-200 hover:border-neutral-300'
+                isSelected
+                  ? 'border-blue-500 bg-blue-50/20 ring-1 ring-blue-500/30'
+                  : hasHighDue
+                  ? 'border-rose-200 shadow-xs'
+                  : 'border-neutral-200 hover:border-neutral-300'
               }`}
             >
               <div>
                 <div className="flex items-start justify-between gap-2">
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800">
-                    {shop.routeArea}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => toggleSelectShop(shop.id)}
+                      className="text-neutral-400 hover:text-blue-600 cursor-pointer"
+                      title="প্রিন্টের জন্য সিলেক্ট করুন"
+                    >
+                      {isSelected ? (
+                        <CheckSquare className="w-4 h-4 text-blue-600" />
+                      ) : (
+                        <Square className="w-4 h-4" />
+                      )}
+                    </button>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800">
+                      {shop.routeArea}
+                    </span>
+                  </div>
                   <div className="flex items-center gap-1.5">
                     <span className="text-[10px] text-neutral-500 font-medium">{shop.category}</span>
                     <div className="flex items-center gap-1 ml-1 bg-neutral-100 px-1 py-0.5 rounded-md shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => printShopsBatch([shop], `(${shop.name})`)}
+                        className="p-1 hover:text-blue-600 text-neutral-500 rounded transition-colors cursor-pointer"
+                        title="এই দোকানের তথ্য ১-ক্লিকে প্রিন্ট করুন"
+                      >
+                        <Printer className="w-3 h-3" />
+                      </button>
                       <button
                         onClick={() => setEditingShop(shop)}
                         className="p-1 hover:text-emerald-700 text-neutral-500 rounded transition-colors"
