@@ -221,6 +221,227 @@ export const DEFAULT_PRODUCTS: Product[] = [];
 
 export const DEFAULT_SHOPS: Shop[] = [];
 
+// ============================================================================
+// SAFE LOCALSTORAGE ENGINE & CRASH / QUOTA DIAGNOSTICS LOGGER
+// Prevents 5MB QuotaExceededError crashes caused by multiple Base64 image snapshots
+// ============================================================================
+export interface ClientDiagnosticEvent {
+  id: string;
+  timestamp: string;
+  source: 'client' | 'server' | 'firestore' | 'storage';
+  severity: 'error' | 'warning' | 'info';
+  category: 'quota_429' | 'storage_overflow' | 'payload_1mb' | 'network_sync' | 'runtime_crash' | 'recovery';
+  titleBn: string;
+  detailsBn: string;
+  technicalDetails?: string;
+}
+
+const DIAG_STORAGE_KEY = 'munsi_system_diagnostics_v1';
+
+export function getDiagnosticEvents(): ClientDiagnosticEvent[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(DIAG_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function recordDiagnosticEvent(
+  event: Omit<ClientDiagnosticEvent, 'id' | 'timestamp'> & { id?: string; timestamp?: string }
+): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const fullEvent: ClientDiagnosticEvent = {
+      id: event.id || `diag-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: event.timestamp || new Date().toISOString(),
+      source: event.source,
+      severity: event.severity,
+      category: event.category,
+      titleBn: event.titleBn,
+      detailsBn: event.detailsBn,
+      technicalDetails: event.technicalDetails,
+    };
+    const existing = getDiagnosticEvents();
+    const isDup = existing.some(
+      (e) =>
+        e.category === fullEvent.category &&
+        e.titleBn === fullEvent.titleBn &&
+        Math.abs(new Date(fullEvent.timestamp).getTime() - new Date(e.timestamp).getTime()) < 60000
+    );
+    if (!isDup) {
+      const updated = [fullEvent, ...existing].slice(0, 60);
+      try {
+        localStorage.setItem(DIAG_STORAGE_KEY, JSON.stringify(updated));
+      } catch {
+        // ignore if storage full
+      }
+      fetch('/api/diagnostics/log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fullEvent),
+      }).catch(() => {});
+    }
+  } catch {
+    // ignore
+  }
+}
+
+export function clearDiagnosticEvents(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem(DIAG_STORAGE_KEY);
+    fetch('/api/diagnostics/clear-logs', { method: 'POST' }).catch(() => {});
+  } catch {
+    // ignore
+  }
+}
+
+export function compactLocalBackupSnapshotsToFreeSpace(): number {
+  if (typeof window === 'undefined') return 0;
+  let freedChars = 0;
+  const heavyKeys = [
+    'munsi_auto_backup_vault_v1',
+    'munsi_auto_backup_snapshots_v1',
+    'munsi_auto_safety_snapshot_v1',
+    'munsi_last_known_good_state_v1',
+  ];
+  for (const k of heavyKeys) {
+    try {
+      const raw = localStorage.getItem(k);
+      if (!raw) continue;
+      const beforeLen = raw.length;
+      if (k === 'munsi_auto_backup_snapshots_v1' || k === 'munsi_auto_backup_vault_v1') {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          // Keep only 1 lightweight snapshot in browser localStorage (full 10 snapshots live on Server Disk)
+          const slim = parsed.slice(0, 1).map((snap: any) => ({
+            ...snap,
+            data: snap?.data
+              ? {
+                  ...snap.data,
+                  products: Array.isArray(snap.data.products)
+                    ? snap.data.products.map((p: any) =>
+                        p && typeof p.imageUrl === 'string' && p.imageUrl.startsWith('data:')
+                          ? { ...p, imageUrl: '' }
+                          : p
+                      )
+                    : [],
+                }
+              : snap?.data,
+          }));
+          const nextStr = JSON.stringify(slim);
+          localStorage.setItem(k, nextStr);
+          freedChars += Math.max(0, beforeLen - nextStr.length);
+        }
+      } else {
+        const parsed = JSON.parse(raw);
+        const targetProducts = parsed?.data?.products || parsed?.products;
+        if (Array.isArray(targetProducts)) {
+          const stripImgs = (prods: any[]) =>
+            prods.map((p: any) =>
+              p && typeof p.imageUrl === 'string' && p.imageUrl.startsWith('data:')
+                ? { ...p, imageUrl: '' }
+                : p
+            );
+          if (parsed?.data?.products) parsed.data.products = stripImgs(parsed.data.products);
+          if (parsed?.products) parsed.products = stripImgs(parsed.products);
+          const nextStr = JSON.stringify(parsed);
+          localStorage.setItem(k, nextStr);
+          freedChars += Math.max(0, beforeLen - nextStr.length);
+        }
+      }
+    } catch {
+      try {
+        localStorage.removeItem(k);
+      } catch {
+        // ignore
+      }
+    }
+  }
+  return Math.round(freedChars / 1024);
+}
+
+export function safeSetLocalStorage(key: string, value: string): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (err: any) {
+    const freedKB = compactLocalBackupSnapshotsToFreeSpace();
+    recordDiagnosticEvent({
+      source: 'storage',
+      severity: 'warning',
+      category: 'storage_overflow',
+      titleBn: 'ব্রাউজার লোকাল স্টোরেজ (5MB) পূর্ণ হয়ে গিয়েছিল — অটো-স্পেস ক্লিনআপ সম্পন্ন',
+      detailsBn: `নতুন ডাটা (${key}) সেভ করার সময় ব্রাউজারের ৫ মেগাবাইট মেমোরি পূর্ণ হয়ে গিয়েছিল। পুরনো স্ন্যাপশটগুলোর ভারী ছবি কম্প্যাক্ট করে ${freedKB} KB জায়গা খালি করা হয়েছে এবং ডাটা নিরাপদে সেভ হয়েছে।`,
+      technicalDetails: `QuotaExceededError on key "${key}" (payload ${(value.length / 1024).toFixed(1)} KB). Freed ${freedKB} KB.`,
+    });
+    try {
+      localStorage.setItem(key, value);
+      return true;
+    } catch (retryErr: any) {
+      recordDiagnosticEvent({
+        source: 'storage',
+        severity: 'error',
+        category: 'storage_overflow',
+        titleBn: `লোকাল স্টোরেজে (${key}) সেভ ব্যর্থ — মেমোরি ওভারফ্লো`,
+        detailsBn: 'ব্রাউজারের লোকাল স্টোরেজ সম্পূর্ণ পূর্ণ। অনুগ্রহ করে অ্যাডমিন প্যানেলের ডায়াগনস্টিক সেকশন থেকে "লোকাল ক্যাশ অপ্টিমাইজ" বাটনে ক্লিক করুন।',
+        technicalDetails: String(retryErr?.message || retryErr),
+      });
+      return false;
+    }
+  }
+}
+
+export function getLocalStorageHealthReport(): {
+  totalKB: number;
+  maxKB: number;
+  usagePercent: number;
+  breakdown: { key: string; sizeKB: number }[];
+} {
+  if (typeof window === 'undefined') {
+    return { totalKB: 0, maxKB: 5120, usagePercent: 0, breakdown: [] };
+  }
+  let totalChars = 0;
+  const breakdown: { key: string; sizeKB: number }[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k) continue;
+      const val = localStorage.getItem(k) || '';
+      const chars = k.length + val.length;
+      totalChars += chars;
+      breakdown.push({ key: k, sizeKB: Math.round((chars * 2) / 1024) });
+    }
+  } catch {
+    // ignore
+  }
+  breakdown.sort((a, b) => b.sizeKB - a.sizeKB);
+  const totalKB = Math.round((totalChars * 2) / 1024);
+  const maxKB = 5120;
+  return {
+    totalKB,
+    maxKB,
+    usagePercent: Math.min(100, Math.round((totalKB / maxKB) * 100)),
+    breakdown: breakdown.slice(0, 8),
+  };
+}
+
+// Proactively free bloated local snapshot base64 copies on module load if usage is high
+if (typeof window !== 'undefined') {
+  try {
+    const report = getLocalStorageHealthReport();
+    if (report.totalKB > 2400) {
+      compactLocalBackupSnapshotsToFreeSpace();
+    }
+  } catch {
+    // ignore
+  }
+}
+
 // Deleted ID Tracking helpers to prevent deleted items and legacy demo data from reappearing
 export function getDeletedProductIds(): Set<string> {
   try {
@@ -235,7 +456,7 @@ export function getDeletedProductIds(): Set<string> {
 export function addDeletedProductId(id: string) {
   const set = getDeletedProductIds();
   set.add(id);
-  localStorage.setItem(STORAGE_KEYS.DELETED_PRODUCTS, JSON.stringify(Array.from(set)));
+  safeSetLocalStorage(STORAGE_KEYS.DELETED_PRODUCTS, JSON.stringify(Array.from(set)));
 }
 
 export function getDeletedShopIds(): Set<string> {
@@ -252,7 +473,7 @@ export function getDeletedShopIds(): Set<string> {
 export function addDeletedShopId(id: string) {
   const set = getDeletedShopIds();
   set.add(id);
-  localStorage.setItem(STORAGE_KEYS.DELETED_SHOPS, JSON.stringify(Array.from(set)));
+  safeSetLocalStorage(STORAGE_KEYS.DELETED_SHOPS, JSON.stringify(Array.from(set)));
 }
 
 export function getDeletedOrderIds(): Set<string> {
@@ -269,7 +490,7 @@ export function getDeletedOrderIds(): Set<string> {
 export function addDeletedOrderId(id: string) {
   const set = getDeletedOrderIds();
   set.add(id);
-  localStorage.setItem(STORAGE_KEYS.DELETED_ORDERS, JSON.stringify(Array.from(set)));
+  safeSetLocalStorage(STORAGE_KEYS.DELETED_ORDERS, JSON.stringify(Array.from(set)));
 }
 
 export function getDeletedCategoryIds(): Set<string> {
@@ -285,7 +506,7 @@ export function getDeletedCategoryIds(): Set<string> {
 export function addDeletedCategoryId(id: string) {
   const set = getDeletedCategoryIds();
   set.add(id);
-  localStorage.setItem(STORAGE_KEYS.DELETED_CATEGORIES, JSON.stringify(Array.from(set)));
+  safeSetLocalStorage(STORAGE_KEYS.DELETED_CATEGORIES, JSON.stringify(Array.from(set)));
 }
 
 export function getDeletedRouteIds(): Set<string> {
@@ -301,7 +522,7 @@ export function getDeletedRouteIds(): Set<string> {
 export function addDeletedRouteId(id: string) {
   const set = getDeletedRouteIds();
   set.add(id);
-  localStorage.setItem(STORAGE_KEYS.DELETED_ROUTES, JSON.stringify(Array.from(set)));
+  safeSetLocalStorage(STORAGE_KEYS.DELETED_ROUTES, JSON.stringify(Array.from(set)));
 }
 
 export function isInitialSeedDone(): boolean {
@@ -309,7 +530,7 @@ export function isInitialSeedDone(): boolean {
 }
 
 export function markInitialSeedDone() {
-  localStorage.setItem(STORAGE_KEYS.SEED_DONE, 'true');
+  safeSetLocalStorage(STORAGE_KEYS.SEED_DONE, 'true');
 }
 
 export function getBusinessInfoLocal(): BusinessInfo | null {
@@ -327,7 +548,7 @@ export function getProducts(): Product[] {
     const parsed: Product[] = JSON.parse(raw);
     const clean = parsed.filter((p) => !deletedIds.has(p.id));
     if (clean.length !== parsed.length) {
-      localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(clean));
+      safeSetLocalStorage(STORAGE_KEYS.PRODUCTS, JSON.stringify(clean));
     }
     return clean;
   } catch (e) {
@@ -338,16 +559,13 @@ export function getProducts(): Product[] {
 export function saveProducts(products: Product[]) {
   const deletedIds = getDeletedProductIds();
   const clean = products.filter((p) => !deletedIds.has(p.id));
-  try {
-    localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(clean));
-  } catch (err) {
-    console.warn('localStorage quota warning while saving products, compacting large base64 images for local cache:', err);
+  if (!safeSetLocalStorage(STORAGE_KEYS.PRODUCTS, JSON.stringify(clean))) {
     try {
       const compacted = clean.map((p) => ({
         ...p,
-        imageUrl: p.imageUrl && p.imageUrl.length > 200000 ? '' : p.imageUrl,
+        imageUrl: p.imageUrl && p.imageUrl.length > 45000 ? '' : p.imageUrl,
       }));
-      localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(compacted));
+      safeSetLocalStorage(STORAGE_KEYS.PRODUCTS, JSON.stringify(compacted));
     } catch (innerErr) {
       console.warn('Could not write products to localStorage:', innerErr);
     }
@@ -406,11 +624,7 @@ export function getCategories(): Category[] {
 export function saveCategories(categories: Category[]) {
   const deletedIds = getDeletedCategoryIds();
   const clean = categories.filter((c) => !deletedIds.has(c.id));
-  try {
-    localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(clean));
-  } catch (err) {
-    console.warn('Could not save categories to localStorage:', err);
-  }
+  safeSetLocalStorage(STORAGE_KEYS.CATEGORIES, JSON.stringify(clean));
 }
 
 export function addOrUpdateCategory(category: Category): Category {
@@ -476,11 +690,7 @@ export function getRoutes(): Route[] {
 export function saveRoutes(routes: Route[]) {
   const deletedIds = getDeletedRouteIds();
   const clean = routes.filter((r) => !deletedIds.has(r.id));
-  try {
-    localStorage.setItem(STORAGE_KEYS.ROUTES, JSON.stringify(clean));
-  } catch (err) {
-    console.warn('Could not save routes to localStorage:', err);
-  }
+  safeSetLocalStorage(STORAGE_KEYS.ROUTES, JSON.stringify(clean));
 }
 
 export function addOrUpdateRoute(route: Route): Route {
@@ -537,11 +747,7 @@ export function getAuthorizedEmails(): AuthorizedUserEmail[] {
 }
 
 export function saveAuthorizedEmails(emails: AuthorizedUserEmail[]) {
-  try {
-    localStorage.setItem(STORAGE_KEYS.AUTHORIZED_EMAILS, JSON.stringify(emails));
-  } catch (err) {
-    console.warn('Could not save authorizedEmails to localStorage:', err);
-  }
+  safeSetLocalStorage(STORAGE_KEYS.AUTHORIZED_EMAILS, JSON.stringify(emails));
 }
 
 export function addOrUpdateAuthorizedEmail(emailData: AuthorizedUserEmail): AuthorizedUserEmail {
@@ -589,11 +795,7 @@ export function getShops(): Shop[] {
 export function saveShops(shops: Shop[]) {
   const deletedIds = getDeletedShopIds();
   const clean = shops.filter((s) => !deletedIds.has(s.id));
-  try {
-    localStorage.setItem(STORAGE_KEYS.SHOPS, JSON.stringify(clean));
-  } catch (err) {
-    console.warn('Could not save shops to localStorage:', err);
-  }
+  safeSetLocalStorage(STORAGE_KEYS.SHOPS, JSON.stringify(clean));
 }
 
 export function addOrUpdateShop(shop: Shop): Shop {
@@ -665,11 +867,7 @@ export function getOrders(): Order[] {
 export function saveOrders(orders: Order[]) {
   const deletedIds = getDeletedOrderIds();
   const clean = orders.filter((o) => !deletedIds.has(o.id));
-  try {
-    localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(clean));
-  } catch (err) {
-    console.warn('Could not save orders to localStorage:', err);
-  }
+  safeSetLocalStorage(STORAGE_KEYS.ORDERS, JSON.stringify(clean));
 }
 
 export function deleteOrder(orderId: string) {
@@ -774,7 +972,7 @@ export function recordDuePayment(shopId: string, amount: number, paymentMethod: 
 
   const collections = getDueCollections();
   collections.unshift(record);
-  localStorage.setItem(STORAGE_KEYS.COLLECTIONS, JSON.stringify(collections));
+  safeSetLocalStorage(STORAGE_KEYS.COLLECTIONS, JSON.stringify(collections));
 
   updateShopDue(shopId, -amount);
 
@@ -927,11 +1125,7 @@ export function deleteCustomerDeliveryAddress(): void {
 }
 
 export function saveDueCollections(collections: DueCollectionRecord[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEYS.COLLECTIONS, JSON.stringify(collections));
-  } catch (err) {
-    console.error('Failed to save due collections:', err);
-  }
+  safeSetLocalStorage(STORAGE_KEYS.COLLECTIONS, JSON.stringify(collections));
 }
 
 export function getDailyExpenses(): DailyExpenseRecord[] {
@@ -944,11 +1138,7 @@ export function getDailyExpenses(): DailyExpenseRecord[] {
 }
 
 export function saveDailyExpenses(expenses: DailyExpenseRecord[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEYS.DAILY_EXPENSES, JSON.stringify(expenses));
-  } catch (err) {
-    console.error('Failed to save daily expenses:', err);
-  }
+  safeSetLocalStorage(STORAGE_KEYS.DAILY_EXPENSES, JSON.stringify(expenses));
 }
 
 export function saveDailyExpense(expense: DailyExpenseRecord): DailyExpenseRecord {
@@ -1066,11 +1256,7 @@ export function getStaffTargets(): StaffTargetConfig[] {
 }
 
 export function saveStaffTargets(targets: StaffTargetConfig[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEYS.STAFF_TARGETS, JSON.stringify(targets));
-  } catch (err) {
-    console.error('Failed to save staff targets:', err);
-  }
+  safeSetLocalStorage(STORAGE_KEYS.STAFF_TARGETS, JSON.stringify(targets));
 }
 
 export function saveStaffTarget(target: StaffTargetConfig): StaffTargetConfig {

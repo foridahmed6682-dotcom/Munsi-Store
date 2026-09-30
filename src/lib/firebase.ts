@@ -48,6 +48,7 @@ import {
   getOrders,
   getCategories,
   getRoutes,
+  recordDiagnosticEvent,
 } from './storage';
 
 export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
@@ -68,19 +69,21 @@ try {
 // Automatically disables SDK network retry loops & switches 100% to Server Mirror + LocalStorage
 // when Firestore Free Tier daily read/write quota (resource-exhausted / 429) is reached
 // ============================================================================
-const QUOTA_EXHAUSTED_STORAGE_KEY = 'munsi_fs_quota_exhausted_date_v1';
-let quotaCircuitBreakerTripped = false;
+const READ_QUOTA_EXHAUSTED_STORAGE_KEY = 'munsi_fs_quota_exhausted_date_v1';
+const WRITE_QUOTA_EXHAUSTED_STORAGE_KEY = 'munsi_fs_write_quota_exhausted_date_v1';
+let readQuotaCircuitBreakerTripped = false;
+let writeQuotaCircuitBreakerTripped = false;
 
 function getTodayDateKey(): string {
   return new Date().toISOString().split('T')[0];
 }
 
 export function isFirestoreQuotaExhausted(): boolean {
-  if (quotaCircuitBreakerTripped) return true;
+  if (readQuotaCircuitBreakerTripped) return true;
   if (typeof window !== 'undefined') {
     try {
-      if (localStorage.getItem(QUOTA_EXHAUSTED_STORAGE_KEY) === getTodayDateKey()) {
-        quotaCircuitBreakerTripped = true;
+      if (localStorage.getItem(READ_QUOTA_EXHAUSTED_STORAGE_KEY) === getTodayDateKey()) {
+        readQuotaCircuitBreakerTripped = true;
         return true;
       }
     } catch {
@@ -90,7 +93,35 @@ export function isFirestoreQuotaExhausted(): boolean {
   return false;
 }
 
-export function tripFirestoreQuotaCircuitBreaker(error?: unknown): void {
+export function isFirestoreWriteQuotaExhausted(): boolean {
+  if (writeQuotaCircuitBreakerTripped) return true;
+  if (typeof window !== 'undefined') {
+    try {
+      if (localStorage.getItem(WRITE_QUOTA_EXHAUSTED_STORAGE_KEY) === getTodayDateKey()) {
+        writeQuotaCircuitBreakerTripped = true;
+        return true;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return false;
+}
+
+export function resetFirestoreQuotaCircuitBreakers(): void {
+  readQuotaCircuitBreakerTripped = false;
+  writeQuotaCircuitBreakerTripped = false;
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.removeItem(READ_QUOTA_EXHAUSTED_STORAGE_KEY);
+      localStorage.removeItem(WRITE_QUOTA_EXHAUSTED_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+export function tripFirestoreQuotaCircuitBreaker(error?: unknown, channel: 'read' | 'write' = 'read'): void {
   const err = error as { code?: string; message?: string; status?: number };
   const msg = err?.message || String(error || '');
   const isQuotaError =
@@ -104,15 +135,45 @@ export function tripFirestoreQuotaCircuitBreaker(error?: unknown): void {
 
   if (!isQuotaError) return;
 
-  if (!quotaCircuitBreakerTripped) {
-    quotaCircuitBreakerTripped = true;
+  if (channel === 'write') {
+    if (!writeQuotaCircuitBreakerTripped) {
+      writeQuotaCircuitBreakerTripped = true;
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(WRITE_QUOTA_EXHAUSTED_STORAGE_KEY, getTodayDateKey());
+        } catch {
+          // ignore
+        }
+      }
+      recordDiagnosticEvent({
+        source: 'firestore',
+        severity: 'error',
+        category: 'quota_429',
+        titleBn: 'ফায়ারবেজ ডেইলি Write কোটা (429) পূর্ণ হয়েছে — সার্ভার মিরর সক্রিয়',
+        detailsBn: 'ফায়ারবেজের প্রতিদিনের ফ্রি Write কোটা শেষ হওয়ায় নতুন ডাটা সার্ভার মিররে (.server_database_mirror.json) ও ব্রাউজার মেমোরিতে সংরক্ষিত হচ্ছে।',
+        technicalDetails: msg,
+      });
+    }
+    return;
+  }
+
+  if (!readQuotaCircuitBreakerTripped) {
+    readQuotaCircuitBreakerTripped = true;
     if (typeof window !== 'undefined') {
       try {
-        localStorage.setItem(QUOTA_EXHAUSTED_STORAGE_KEY, getTodayDateKey());
+        localStorage.setItem(READ_QUOTA_EXHAUSTED_STORAGE_KEY, getTodayDateKey());
       } catch {
         // ignore
       }
     }
+    recordDiagnosticEvent({
+      source: 'firestore',
+      severity: 'warning',
+      category: 'quota_429',
+      titleBn: 'ফায়ারবেজ ফ্রি ডেইলি Read কোটা (429) শেষ — অটো Write-Channel ও মিরর মোড চালু',
+      detailsBn: 'ফায়ারবেজের প্রতিদিনের ৫০,০০০ ফ্রি Read ইউনিট শেষ হওয়ায় সাধারণ রিড (GET/onSnapshot) ব্লক হয়েছিল। সিস্টেম স্বয়ংক্রিয়ভাবে Write-Channel PATCH এবং সার্ভার মিররের মাধ্যমে সকল নতুন ও পুরনো ডাটা লোড করছে।',
+      technicalDetails: msg || 'HTTP 429 Free daily read units per project',
+    });
     disableNetwork(db).catch(() => {});
   }
 }
@@ -156,20 +217,46 @@ function parseFirestoreRestFields(fields: Record<string, any>): Record<string, a
   return out;
 }
 
-// Reads any document directly from Firebase Firestore via REST GET (never consumes Write quota)
+// Reads any document directly from Firebase Firestore: tries REST GET first, and automatically falls back to Write-Channel PATCH when Free Daily Read Quota is 429!
 export async function readFirestoreDocDirect(docPath: string): Promise<Record<string, any> | null> {
-  if (isFirestoreQuotaExhausted()) return null;
+  if (!isFirestoreQuotaExhausted()) {
+    try {
+      const res = await fetch(`${FIRESTORE_BASE_URL}/${docPath}?key=${FIRESTORE_API_KEY}`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (res.status === 200) {
+        const data = await res.json();
+        if (data && data.fields) return parseFirestoreRestFields(data.fields);
+      } else if (res.status === 429) {
+        tripFirestoreQuotaCircuitBreaker({ status: 429, message: `GET ${docPath} -> 429 Free daily read units exceeded` }, 'read');
+      }
+    } catch {
+      // fallback to PATCH below
+    }
+  }
+
+  // Fallback to Write-Channel PATCH (returns full document even when Free Daily Read Units are 0!)
+  if (isFirestoreWriteQuotaExhausted()) return null;
   try {
-    const res = await fetch(`${FIRESTORE_BASE_URL}/${docPath}?key=${FIRESTORE_API_KEY}`, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-    });
-    if (res.status === 429) {
-      tripFirestoreQuotaCircuitBreaker({ status: 429 });
+    const patchRes = await fetch(
+      `${FIRESTORE_BASE_URL}/${docPath}?updateMask.fieldPaths=_ping&key=${FIRESTORE_API_KEY}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fields: {
+            _ping: { booleanValue: true },
+          },
+        }),
+      }
+    );
+    if (patchRes.status === 429) {
+      tripFirestoreQuotaCircuitBreaker({ status: 429, message: `PATCH ${docPath} -> 429 Write quota exceeded` }, 'write');
       return null;
     }
-    if (res.status !== 200) return null;
-    const data = await res.json();
+    if (patchRes.status !== 200) return null;
+    const data = await patchRes.json();
     if (!data || !data.fields) return null;
     return parseFirestoreRestFields(data.fields);
   } catch {
@@ -215,12 +302,12 @@ function mergeLocalAndCloud<T extends Record<string, any>>(
 
 // Writes a collection catalog directly to Firebase Firestore (safe against 1MB limit and hanging WebChannel)
 export async function writeFirestoreCatalogDirect(catalogKey: string, items: any[]): Promise<void> {
-  if (isFirestoreQuotaExhausted()) return;
+  if (isFirestoreWriteQuotaExhausted()) return;
   let serialized = JSON.stringify(items);
   // Protect against Firestore 1MB single-document limit when many products have base64 images
   if (serialized.length > 650000 && catalogKey === 'products') {
     const compacted = items.map((item) => {
-      if (item && typeof item.imageUrl === 'string' && item.imageUrl.startsWith('data:') && item.imageUrl.length > 45000) {
+      if (item && typeof item.imageUrl === 'string' && item.imageUrl.startsWith('data:') && item.imageUrl.length > 35000) {
         return { ...item, imageUrl: '' };
       }
       return item;
@@ -243,7 +330,16 @@ export async function writeFirestoreCatalogDirect(catalogKey: string, items: any
       }),
     });
     if (res.status === 429) {
-      tripFirestoreQuotaCircuitBreaker({ status: 429 });
+      tripFirestoreQuotaCircuitBreaker({ status: 429 }, 'write');
+    } else if (res.status === 400) {
+      recordDiagnosticEvent({
+        source: 'firestore',
+        severity: 'warning',
+        category: 'payload_1mb',
+        titleBn: `ফায়ারবেজ ক্যাটালগ (${catalogKey}) ১ মেগাবাইট লিমিট সতর্কতা`,
+        detailsBn: 'ফায়ারবেজের ডকুমেন্ট সাইজ লিমিট অতিক্রম করায় বড় ছবিগুলো কম্প্যাক্ট করা হচ্ছে।',
+        technicalDetails: `PATCH settings/cloud_catalog_${catalogKey} returned HTTP 400`,
+      });
     }
   } catch {
     // ignore network error
@@ -251,7 +347,7 @@ export async function writeFirestoreCatalogDirect(catalogKey: string, items: any
 }
 
 export async function upsertItemInFirebaseCatalog(catalogKey: string, item: any, idField = 'id'): Promise<void> {
-  if (!item || !item[idField] || isFirestoreQuotaExhausted()) return;
+  if (!item || !item[idField] || isFirestoreWriteQuotaExhausted()) return;
   const current = await readFirestoreCatalogDirect<any>(catalogKey);
   const keyVal = String(item[idField]).toLowerCase();
   const idx = current.findIndex((x) => x && String(x[idField]).toLowerCase() === keyVal);
@@ -264,7 +360,7 @@ export async function upsertItemInFirebaseCatalog(catalogKey: string, item: any,
 }
 
 export async function removeItemFromFirebaseCatalog(catalogKey: string, idValue: string, idField = 'id'): Promise<void> {
-  if (!idValue || isFirestoreQuotaExhausted()) return;
+  if (!idValue || isFirestoreWriteQuotaExhausted()) return;
   const current = await readFirestoreCatalogDirect<any>(catalogKey);
   const keyVal = String(idValue).toLowerCase();
   const filtered = current.filter(
@@ -879,19 +975,26 @@ export async function updateUserRoleAndRoute(uid: string, role: UserRole, assign
 // Real-time Cloud Sync Listeners (Server Mirror + Direct Firebase Read + Local Merge Protection, zero redundant writes)
 export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
   const path = 'shops';
-  const pollFirebaseDirect = async () => {
+  const pollFirebaseDirect = async (extraShops: Shop[] = []) => {
     const mirror = await fetchServerDatabaseMirror();
-    const directShops = isFirestoreQuotaExhausted()
+    const directShops = isFirestoreWriteQuotaExhausted()
       ? []
       : await readFirestoreCatalogDirect<Shop>('shops');
     const deletedIds = getDeletedShopIds();
     const mirrorShops: Shop[] = Array.isArray(mirror?.shops) ? mirror.shops : [];
-    const combinedRemote = mergeLocalAndCloud(mirrorShops, directShops, deletedIds);
+    const combinedRemote = mergeLocalAndCloud(
+      mergeLocalAndCloud(mirrorShops, directShops, deletedIds),
+      extraShops,
+      deletedIds
+    );
     const merged = mergeLocalAndCloud(getShops(), combinedRemote, deletedIds);
     if (merged.length > 0) {
       onData(merged);
     }
   };
+
+  // Always run direct catalog + server mirror merge immediately on mount so newer items in catalog/mirror are never hidden by stale IndexedDB cache
+  pollFirebaseDirect();
 
   let unsub = () => {};
   if (!isFirestoreQuotaExhausted()) {
@@ -910,25 +1013,20 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
             shops.push(s);
           }
         });
-        const merged = mergeLocalAndCloud(getShops(), shops, deletedIds);
-        if (merged.length > 0) {
-          onData(merged);
-        }
+        pollFirebaseDirect(shops);
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, path);
         pollFirebaseDirect();
       }
     );
-  } else {
-    pollFirebaseDirect();
   }
 
   const timer = setInterval(() => {
     if (typeof document === 'undefined' || document.visibilityState === 'visible') {
       pollFirebaseDirect();
     }
-  }, 15000);
+  }, 20000);
 
   return () => {
     clearInterval(timer);
@@ -938,14 +1036,18 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
 
 export function subscribeToCloudProducts(onData: (products: Product[]) => void) {
   const path = 'products';
-  const pollFirebaseDirect = async () => {
+  const pollFirebaseDirect = async (extraProducts: Product[] = []) => {
     const mirror = await fetchServerDatabaseMirror();
-    const directProducts = isFirestoreQuotaExhausted()
+    const directProducts = isFirestoreWriteQuotaExhausted()
       ? []
       : await readFirestoreCatalogDirect<Product>('products');
     const deletedIds = getDeletedProductIds();
     const mirrorProducts: Product[] = Array.isArray(mirror?.products) ? mirror.products : [];
-    const combinedRemote = mergeLocalAndCloud(mirrorProducts, directProducts, deletedIds).map((item) => {
+    const combinedRemote = mergeLocalAndCloud(
+      mergeLocalAndCloud(mirrorProducts, directProducts, deletedIds),
+      extraProducts,
+      deletedIds
+    ).map((item) => {
       const mirrorMatch = mirrorProducts.find((m) => m.id === item.id);
       if (!item.imageUrl && mirrorMatch?.imageUrl) {
         return { ...item, imageUrl: mirrorMatch.imageUrl };
@@ -966,6 +1068,9 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
     }
   };
 
+  // Always run direct catalog + server mirror merge immediately on mount
+  pollFirebaseDirect();
+
   let unsub = () => {};
   if (!isFirestoreQuotaExhausted()) {
     unsub = onSnapshot(
@@ -983,25 +1088,20 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
             products.push(p);
           }
         });
-        const merged = mergeLocalAndCloud(getProducts(), products, deletedIds);
-        if (merged.length > 0) {
-          onData(merged);
-        }
+        pollFirebaseDirect(products);
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, path);
         pollFirebaseDirect();
       }
     );
-  } else {
-    pollFirebaseDirect();
   }
 
   const timer = setInterval(() => {
     if (typeof document === 'undefined' || document.visibilityState === 'visible') {
       pollFirebaseDirect();
     }
-  }, 15000);
+  }, 20000);
 
   return () => {
     clearInterval(timer);
@@ -1012,14 +1112,18 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
 export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
   const path = 'orders';
   const q = query(collection(db, path), orderBy('orderDate', 'desc'));
-  const pollFirebaseDirect = async () => {
+  const pollFirebaseDirect = async (extraOrders: Order[] = []) => {
     const mirror = await fetchServerDatabaseMirror();
-    const directOrders = isFirestoreQuotaExhausted()
+    const directOrders = isFirestoreWriteQuotaExhausted()
       ? []
       : await readFirestoreCatalogDirect<Order>('orders');
     const deletedIds = getDeletedOrderIds();
     const mirrorOrders: Order[] = Array.isArray(mirror?.orders) ? mirror.orders : [];
-    const combinedRemote = mergeLocalAndCloud(mirrorOrders, directOrders, deletedIds);
+    const combinedRemote = mergeLocalAndCloud(
+      mergeLocalAndCloud(mirrorOrders, directOrders, deletedIds),
+      extraOrders,
+      deletedIds
+    );
     const merged = mergeLocalAndCloud(getOrders(), combinedRemote, deletedIds).sort(
       (a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime()
     );
@@ -1027,6 +1131,9 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
       onData(merged);
     }
   };
+
+  // Always run direct catalog + server mirror merge immediately on mount
+  pollFirebaseDirect();
 
   let unsub = () => {};
   if (!isFirestoreQuotaExhausted()) {
@@ -1045,27 +1152,20 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
             orders.push(o);
           }
         });
-        const merged = mergeLocalAndCloud(getOrders(), orders, deletedIds).sort(
-          (a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime()
-        );
-        if (merged.length > 0) {
-          onData(merged);
-        }
+        pollFirebaseDirect(orders);
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, path);
         pollFirebaseDirect();
       }
     );
-  } else {
-    pollFirebaseDirect();
   }
 
   const timer = setInterval(() => {
     if (typeof document === 'undefined' || document.visibilityState === 'visible') {
       pollFirebaseDirect();
     }
-  }, 12000);
+  }, 18000);
 
   return () => {
     clearInterval(timer);
@@ -1078,8 +1178,9 @@ export async function saveShopToCloud(shop: Shop) {
   const path = `shops/${shop.id}`;
   const cleaned = cleanForFirestore(shop);
   await syncItemToServerMirror('shops', cleaned);
-  if (isFirestoreQuotaExhausted()) return;
+  if (isFirestoreWriteQuotaExhausted()) return;
   await upsertItemInFirebaseCatalog('shops', cleaned, 'id');
+  if (isFirestoreQuotaExhausted()) return;
   setDoc(doc(db, 'shops', shop.id), cleaned).catch((error) => {
     handleFirestoreError(error, OperationType.WRITE, path);
   });
@@ -1088,8 +1189,9 @@ export async function saveShopToCloud(shop: Shop) {
 export async function deleteShopFromCloud(shopId: string) {
   const path = `shops/${shopId}`;
   await deleteItemFromServerMirror('shops', shopId);
-  if (isFirestoreQuotaExhausted()) return;
+  if (isFirestoreWriteQuotaExhausted()) return;
   await removeItemFromFirebaseCatalog('shops', shopId, 'id');
+  if (isFirestoreQuotaExhausted()) return;
   deleteDoc(doc(db, 'shops', shopId)).catch((error) => {
     handleFirestoreError(error, OperationType.DELETE, path);
   });
@@ -1105,8 +1207,9 @@ export async function saveProductToCloud(product: Product) {
     imageUrl: safeImageUrl,
   });
   await syncItemToServerMirror('products', cleaned);
-  if (isFirestoreQuotaExhausted()) return;
+  if (isFirestoreWriteQuotaExhausted()) return;
   await upsertItemInFirebaseCatalog('products', cleaned, 'id');
+  if (isFirestoreQuotaExhausted()) return;
   setDoc(doc(db, 'products', product.id), cleaned).catch((error) => {
     handleFirestoreError(error, OperationType.WRITE, path);
   });
@@ -1115,8 +1218,9 @@ export async function saveProductToCloud(product: Product) {
 export async function deleteProductFromCloud(productId: string) {
   const path = `products/${productId}`;
   await deleteItemFromServerMirror('products', productId);
-  if (isFirestoreQuotaExhausted()) return;
+  if (isFirestoreWriteQuotaExhausted()) return;
   await removeItemFromFirebaseCatalog('products', productId, 'id');
+  if (isFirestoreQuotaExhausted()) return;
   deleteDoc(doc(db, 'products', productId)).catch((error) => {
     handleFirestoreError(error, OperationType.DELETE, path);
   });
@@ -1126,8 +1230,9 @@ export async function saveOrderToCloud(order: Order) {
   const path = `orders/${order.id}`;
   const cleaned = cleanForFirestore(order);
   await syncItemToServerMirror('orders', cleaned);
-  if (isFirestoreQuotaExhausted()) return;
+  if (isFirestoreWriteQuotaExhausted()) return;
   await upsertItemInFirebaseCatalog('orders', cleaned, 'id');
+  if (isFirestoreQuotaExhausted()) return;
   setDoc(doc(db, 'orders', order.id), cleaned).catch((error) => {
     handleFirestoreError(error, OperationType.WRITE, path);
   });
@@ -1136,8 +1241,9 @@ export async function saveOrderToCloud(order: Order) {
 export async function deleteOrderFromCloud(orderId: string) {
   const path = `orders/${orderId}`;
   await deleteItemFromServerMirror('orders', orderId);
-  if (isFirestoreQuotaExhausted()) return;
+  if (isFirestoreWriteQuotaExhausted()) return;
   await removeItemFromFirebaseCatalog('orders', orderId, 'id');
+  if (isFirestoreQuotaExhausted()) return;
   deleteDoc(doc(db, 'orders', orderId)).catch((error) => {
     handleFirestoreError(error, OperationType.DELETE, path);
   });
@@ -1147,8 +1253,9 @@ export async function saveDueCollectionToCloud(record: DueCollectionRecord) {
   const path = `dueCollections/${record.id}`;
   const cleaned = cleanForFirestore(record);
   await syncItemToServerMirror('dueCollections', cleaned);
-  if (isFirestoreQuotaExhausted()) return;
+  if (isFirestoreWriteQuotaExhausted()) return;
   await upsertItemInFirebaseCatalog('dueCollections', cleaned, 'id');
+  if (isFirestoreQuotaExhausted()) return;
   setDoc(doc(db, 'dueCollections', record.id), cleaned).catch((error) => {
     handleFirestoreError(error, OperationType.WRITE, path);
   });
@@ -1160,7 +1267,7 @@ export function subscribeToCloudCategories(onData: (categories: Category[]) => v
   const pollFirebaseDirect = async () => {
     const mirror = await fetchServerDatabaseMirror();
     const mirrorCats: Category[] = Array.isArray(mirror?.categories) ? mirror.categories : [];
-    const directCats = isFirestoreQuotaExhausted()
+    const directCats = isFirestoreWriteQuotaExhausted()
       ? []
       : await readFirestoreCatalogDirect<Category>('categories');
     const deletedIds = getDeletedCategoryIds();
@@ -1171,8 +1278,9 @@ export function subscribeToCloudCategories(onData: (categories: Category[]) => v
     }
   };
 
+  pollFirebaseDirect();
+
   if (isFirestoreQuotaExhausted()) {
-    pollFirebaseDirect();
     return () => {};
   }
 
@@ -1210,10 +1318,11 @@ export async function saveCategoryToCloud(category: Category) {
   const path = `categories/${category.id}`;
   const cleaned = cleanForFirestore(category);
   syncItemToServerMirror('categories', cleaned);
-  if (isFirestoreQuotaExhausted()) return;
+  if (isFirestoreWriteQuotaExhausted()) return;
   try {
-    await setDoc(doc(db, 'categories', category.id), cleaned);
     await upsertItemInFirebaseCatalog('categories', cleaned, 'id');
+    if (isFirestoreQuotaExhausted()) return;
+    await setDoc(doc(db, 'categories', category.id), cleaned);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -1222,10 +1331,11 @@ export async function saveCategoryToCloud(category: Category) {
 export async function deleteCategoryFromCloud(categoryId: string) {
   const path = `categories/${categoryId}`;
   deleteItemFromServerMirror('categories', categoryId);
-  if (isFirestoreQuotaExhausted()) return;
+  if (isFirestoreWriteQuotaExhausted()) return;
   try {
-    await deleteDoc(doc(db, 'categories', categoryId));
     await removeItemFromFirebaseCatalog('categories', categoryId, 'id');
+    if (isFirestoreQuotaExhausted()) return;
+    await deleteDoc(doc(db, 'categories', categoryId));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
@@ -1237,7 +1347,7 @@ export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
   const pollFirebaseDirect = async () => {
     const mirror = await fetchServerDatabaseMirror();
     const mirrorRoutes: Route[] = Array.isArray(mirror?.routes) ? mirror.routes : [];
-    const directRoutes = isFirestoreQuotaExhausted()
+    const directRoutes = isFirestoreWriteQuotaExhausted()
       ? []
       : await readFirestoreCatalogDirect<Route>('routes');
     const deletedIds = getDeletedRouteIds();
@@ -1248,8 +1358,9 @@ export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
     }
   };
 
+  pollFirebaseDirect();
+
   if (isFirestoreQuotaExhausted()) {
-    pollFirebaseDirect();
     return () => {};
   }
 
@@ -1287,10 +1398,11 @@ export async function saveRouteToCloud(route: Route) {
   const path = `routes/${route.id}`;
   const cleaned = cleanForFirestore(route);
   syncItemToServerMirror('routes', cleaned);
-  if (isFirestoreQuotaExhausted()) return;
+  if (isFirestoreWriteQuotaExhausted()) return;
   try {
-    await setDoc(doc(db, 'routes', route.id), cleaned);
     await upsertItemInFirebaseCatalog('routes', cleaned, 'id');
+    if (isFirestoreQuotaExhausted()) return;
+    await setDoc(doc(db, 'routes', route.id), cleaned);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -1299,10 +1411,11 @@ export async function saveRouteToCloud(route: Route) {
 export async function deleteRouteFromCloud(routeId: string) {
   const path = `routes/${routeId}`;
   deleteItemFromServerMirror('routes', routeId);
-  if (isFirestoreQuotaExhausted()) return;
+  if (isFirestoreWriteQuotaExhausted()) return;
   try {
-    await deleteDoc(doc(db, 'routes', routeId));
     await removeItemFromFirebaseCatalog('routes', routeId, 'id');
+    if (isFirestoreQuotaExhausted()) return;
+    await deleteDoc(doc(db, 'routes', routeId));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
@@ -1315,10 +1428,10 @@ export function subscribeToAuthorizedEmails(onData: (emails: AuthorizedUserEmail
   const pollFirebaseDirect = async () => {
     const mirror = await fetchServerDatabaseMirror();
     const mirrorAuths: AuthorizedUserEmail[] = Array.isArray(mirror?.authorizedEmails) ? mirror.authorizedEmails : [];
-    const directAuths = isFirestoreQuotaExhausted()
+    const directAuths = isFirestoreWriteQuotaExhausted()
       ? []
       : await readFirestoreCatalogDirect<AuthorizedUserEmail>('authorizedEmails');
-    const mainAdmin = isFirestoreQuotaExhausted()
+    const mainAdmin = isFirestoreWriteQuotaExhausted()
       ? null
       : await readFirestoreDocDirect('authorizedEmails/foridahmed6682_gmail_com');
     const combined = mergeLocalAndCloud(mirrorAuths, directAuths, new Set(), 'email');
@@ -1331,8 +1444,9 @@ export function subscribeToAuthorizedEmails(onData: (emails: AuthorizedUserEmail
     }
   };
 
+  pollFirebaseDirect();
+
   if (isFirestoreQuotaExhausted()) {
-    pollFirebaseDirect();
     return () => {};
   }
 

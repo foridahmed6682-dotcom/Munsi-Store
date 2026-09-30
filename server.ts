@@ -76,28 +76,125 @@ function parseFirestoreFields(fields: Record<string, any>): Record<string, any> 
   return out;
 }
 
-// Reads a Firestore document via REST GET, with automatic circuit breaker if daily quota (429) is exhausted
-let serverFirestoreQuotaExhaustedDate = '';
-function isServerFirestoreQuotaExhausted(): boolean {
+// Separate Read vs Write Quota tracking so 429 on Free Daily Read Units NEVER blocks Write-Channel PATCH reads/writes
+let serverFirestoreReadQuotaExhaustedDate = '';
+let serverFirestoreWriteQuotaExhaustedDate = '';
+
+export interface SystemDiagnosticEvent {
+  id: string;
+  timestamp: string;
+  source: 'client' | 'server' | 'firestore' | 'storage';
+  severity: 'error' | 'warning' | 'info';
+  category: 'quota_429' | 'storage_overflow' | 'payload_1mb' | 'network_sync' | 'runtime_crash' | 'recovery';
+  titleBn: string;
+  detailsBn: string;
+  technicalDetails?: string;
+}
+
+const DIAGNOSTICS_FILE = path.join(process.cwd(), '.server_diagnostics_log.json');
+let serverDiagnosticLogs: SystemDiagnosticEvent[] = [];
+try {
+  if (fs.existsSync(DIAGNOSTICS_FILE)) {
+    const parsed = JSON.parse(fs.readFileSync(DIAGNOSTICS_FILE, 'utf-8'));
+    if (Array.isArray(parsed)) serverDiagnosticLogs = parsed;
+  }
+} catch {
+  // ignore
+}
+
+function addServerDiagnosticEvent(event: Omit<SystemDiagnosticEvent, 'id' | 'timestamp'> & { id?: string; timestamp?: string }) {
+  try {
+    const fullEvent: SystemDiagnosticEvent = {
+      id: event.id || `diag-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: event.timestamp || new Date().toISOString(),
+      source: event.source,
+      severity: event.severity,
+      category: event.category,
+      titleBn: event.titleBn,
+      detailsBn: event.detailsBn,
+      technicalDetails: event.technicalDetails,
+    };
+    // Avoid spamming duplicate identical titles within 60 seconds
+    const recentDup = serverDiagnosticLogs.find(
+      (e) =>
+        e.category === fullEvent.category &&
+        e.titleBn === fullEvent.titleBn &&
+        Math.abs(new Date(fullEvent.timestamp).getTime() - new Date(e.timestamp).getTime()) < 60000
+    );
+    if (recentDup) return;
+    serverDiagnosticLogs = [fullEvent, ...serverDiagnosticLogs].slice(0, 80);
+    fs.writeFileSync(DIAGNOSTICS_FILE, JSON.stringify(serverDiagnosticLogs, null, 2));
+  } catch {
+    // ignore
+  }
+}
+
+function isServerFirestoreReadQuotaExhausted(): boolean {
   const today = new Date().toISOString().split('T')[0];
-  return serverFirestoreQuotaExhaustedDate === today;
+  return serverFirestoreReadQuotaExhaustedDate === today;
+}
+
+function isServerFirestoreWriteQuotaExhausted(): boolean {
+  const today = new Date().toISOString().split('T')[0];
+  return serverFirestoreWriteQuotaExhaustedDate === today;
 }
 
 async function readFirestoreDocViaPatch(docPath: string): Promise<Record<string, any> | null> {
   if (!fbConfig.projectId || !fbConfig.firestoreDatabaseId || !fbConfig.apiKey) return null;
-  if (isServerFirestoreQuotaExhausted()) return null;
   const baseUrl = `https://firestore.googleapis.com/v1/projects/${fbConfig.projectId}/databases/${fbConfig.firestoreDatabaseId}/documents`;
+
+  // 1. Try standard GET first if Read Quota is not marked exhausted
+  if (!isServerFirestoreReadQuotaExhausted()) {
+    try {
+      const res = await fetch(`${baseUrl}/${docPath}?key=${fbConfig.apiKey}`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (res.status === 200) {
+        const data = await res.json();
+        if (data && data.fields) return parseFirestoreFields(data.fields);
+      } else if (res.status === 429) {
+        serverFirestoreReadQuotaExhaustedDate = new Date().toISOString().split('T')[0];
+        addServerDiagnosticEvent({
+          source: 'firestore',
+          severity: 'warning',
+          category: 'quota_429',
+          titleBn: 'ফায়ারবেজ ডেইলি ফ্রি Read কোটা (৫০,০০০/দিন) পূর্ণ হয়েছে — অটো Write-Channel ব্রিজ চালু',
+          detailsBn: 'স্ট্যান্ডার্ড ফায়ারবেজ GET/onSnapshot রিড লিমিট (429) অতিক্রম করায় সিস্টেম স্বয়ংক্রিয়ভাবে Write-Channel PATCH এবং সার্ভার মিরর থেকে ১০০% ডাটা রিড করছে।',
+          technicalDetails: `GET ${docPath} returned HTTP 429 (Free daily read units per project). Switched to PATCH read bridge.`,
+        });
+      }
+    } catch {
+      // fallback to PATCH below
+    }
+  }
+
+  // 2. Fallback to Write-Channel PATCH (works even when Free Daily Read Units are 0!)
+  if (isServerFirestoreWriteQuotaExhausted()) return null;
   try {
-    const res = await fetch(`${baseUrl}/${docPath}?key=${fbConfig.apiKey}`, {
-      method: 'GET',
+    const patchRes = await fetch(`${baseUrl}/${docPath}?updateMask.fieldPaths=_ping&key=${fbConfig.apiKey}`, {
+      method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fields: {
+          _ping: { booleanValue: true },
+        },
+      }),
     });
-    if (res.status === 429) {
-      serverFirestoreQuotaExhaustedDate = new Date().toISOString().split('T')[0];
+    if (patchRes.status === 429) {
+      serverFirestoreWriteQuotaExhaustedDate = new Date().toISOString().split('T')[0];
+      addServerDiagnosticEvent({
+        source: 'firestore',
+        severity: 'error',
+        category: 'quota_429',
+        titleBn: 'ফায়ারবেজ ডেইলি Write কোটা (২০,০০০/দিন) পূর্ণ হয়েছে',
+        detailsBn: 'ফায়ারবেজের প্রতিদিনের ফ্রি রাইট কোটা শেষ হওয়ায় ডাটা এখন সার্ভার ডিস্ক মিরর (.server_database_mirror.json) এবং লোকাল স্টোরেজে সংরক্ষিত হচ্ছে।',
+        technicalDetails: `PATCH ${docPath} returned HTTP 429.`,
+      });
       return null;
     }
-    if (res.status !== 200) return null;
-    const data = await res.json();
+    if (patchRes.status !== 200) return null;
+    const data = await patchRes.json();
     if (!data || !data.fields) return null;
     return parseFirestoreFields(data.fields);
   } catch {
@@ -108,21 +205,62 @@ async function readFirestoreDocViaPatch(docPath: string): Promise<Record<string,
 // Saves a JSON catalog array into a single Firestore settings document via PATCH so it can always be recovered in 1 operation
 async function writeFirestoreCatalogViaPatch(catalogKey: string, items: any[]): Promise<void> {
   if (!fbConfig.projectId || !fbConfig.firestoreDatabaseId || !fbConfig.apiKey) return;
-  if (isServerFirestoreQuotaExhausted()) return;
+  if (isServerFirestoreWriteQuotaExhausted()) return;
   const baseUrl = `https://firestore.googleapis.com/v1/projects/${fbConfig.projectId}/databases/${fbConfig.firestoreDatabaseId}/documents`;
   try {
+    let serialized = JSON.stringify(items);
+    // Protect against Firestore 1MB (1,048,576 bytes) single-document limit
+    if (serialized.length > 650000) {
+      if (catalogKey === 'products') {
+        const compacted = items.map((item) => {
+          if (item && typeof item.imageUrl === 'string' && item.imageUrl.startsWith('data:') && item.imageUrl.length > 35000) {
+            return { ...item, imageUrl: '' };
+          }
+          return item;
+        });
+        serialized = JSON.stringify(compacted);
+      } else if (catalogKey === 'auto_backup_snapshots') {
+        const compactedSnaps = items.slice(0, 2).map((snap) => ({
+          ...snap,
+          data: snap?.data
+            ? {
+                ...snap.data,
+                products: Array.isArray(snap.data.products)
+                  ? snap.data.products.map((p: any) =>
+                      p && typeof p.imageUrl === 'string' && p.imageUrl.startsWith('data:')
+                        ? { ...p, imageUrl: '' }
+                        : p
+                    )
+                  : [],
+              }
+            : snap?.data,
+        }));
+        serialized = JSON.stringify(compactedSnaps);
+      }
+    }
+
     const res = await fetch(`${baseUrl}/settings/cloud_catalog_${catalogKey}?key=${fbConfig.apiKey}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         fields: {
-          itemsJson: { stringValue: JSON.stringify(items) },
+          itemsJson: { stringValue: serialized },
           updatedAt: { stringValue: new Date().toISOString() },
         },
       }),
     });
     if (res.status === 429) {
-      serverFirestoreQuotaExhaustedDate = new Date().toISOString().split('T')[0];
+      serverFirestoreWriteQuotaExhaustedDate = new Date().toISOString().split('T')[0];
+    } else if (res.status === 400) {
+      const errTxt = await res.text().catch(() => '');
+      addServerDiagnosticEvent({
+        source: 'firestore',
+        severity: 'warning',
+        category: 'payload_1mb',
+        titleBn: `ক্লাউড ক্যাটালগ (${catalogKey}) সাইজ লিমিট সতর্কতা`,
+        detailsBn: 'ফায়ারবেজের ১ মেগাবাইট ডকুমেন্ট লিমিট অতিক্রম করার চেষ্টা হয়েছিল। বড় ছবিগুলো অটো-কম্প্যাক্ট করা হয়েছে।',
+        technicalDetails: `PATCH settings/cloud_catalog_${catalogKey} HTTP 400: ${errTxt.slice(0, 200)}`,
+      });
     }
   } catch {
     // ignore background cloud sync error
@@ -484,12 +622,13 @@ async function startServer() {
         body.upsertCollection ||
           body.deleteCollection ||
           body.clearCollection ||
-          body.businessInfo
+          body.businessInfo ||
+          body.forceCatalogSync
       );
 
       if (changed) {
         saveServerDbMirror();
-        if (isExplicitMutation) {
+        if (isExplicitMutation || touchedCatalogs.size > 0) {
           touchedCatalogs.forEach((catKey) => {
             const list = (serverDbMirror as any)[catKey];
             if (Array.isArray(list)) {
@@ -500,7 +639,95 @@ async function startServer() {
       }
       res.json({ success: true, updatedAt: serverDbMirror.updatedAt });
     } catch (err: any) {
+      addServerDiagnosticEvent({
+        source: 'server',
+        severity: 'error',
+        category: 'runtime_crash',
+        titleBn: 'সার্ভার মিরর সিঙ্ক এরর',
+        detailsBn: err.message || 'সার্ভার মিররে ডাটা সেভ করার সময় ত্রুটি ঘটেছে।',
+        technicalDetails: err.stack || String(err),
+      });
       res.status(500).json({ error: err.message || 'Mirror sync error' });
+    }
+  });
+
+  // Crash & Data Sync Diagnostics API for Admin Panel
+  app.get('/api/diagnostics', (req, res) => {
+    let mirrorSizeBytes = 0;
+    try {
+      if (fs.existsSync(DB_MIRROR_FILE)) {
+        mirrorSizeBytes = fs.statSync(DB_MIRROR_FILE).size;
+      }
+    } catch {
+      // ignore
+    }
+    res.json({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      firestoreReadQuotaExhausted: isServerFirestoreReadQuotaExhausted(),
+      firestoreWriteQuotaExhausted: isServerFirestoreWriteQuotaExhausted(),
+      mirrorStats: {
+        products: serverDbMirror.products?.length || 0,
+        shops: serverDbMirror.shops?.length || 0,
+        orders: serverDbMirror.orders?.length || 0,
+        categories: serverDbMirror.categories?.length || 0,
+        routes: serverDbMirror.routes?.length || 0,
+        authorizedEmails: serverDbMirror.authorizedEmails?.length || 0,
+        dueCollections: serverDbMirror.dueCollections?.length || 0,
+        dailyExpenses: serverDbMirror.dailyExpenses?.length || 0,
+        updatedAt: serverDbMirror.updatedAt,
+        mirrorSizeKB: Math.round(mirrorSizeBytes / 1024),
+      },
+      snapshotsCount: serverSnapshots.length,
+      logs: serverDiagnosticLogs,
+    });
+  });
+
+  app.post('/api/diagnostics/log', (req, res) => {
+    try {
+      const ev = req.body;
+      if (ev && ev.titleBn) {
+        addServerDiagnosticEvent({
+          source: ev.source || 'client',
+          severity: ev.severity || 'warning',
+          category: ev.category || 'runtime_crash',
+          titleBn: ev.titleBn,
+          detailsBn: ev.detailsBn || '',
+          technicalDetails: ev.technicalDetails || '',
+        });
+      }
+      res.json({ success: true, logs: serverDiagnosticLogs });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/diagnostics/clear-logs', (req, res) => {
+    serverDiagnosticLogs = [];
+    try {
+      fs.writeFileSync(DIAGNOSTICS_FILE, '[]');
+    } catch {
+      // ignore
+    }
+    res.json({ success: true });
+  });
+
+  app.post('/api/diagnostics/recover', async (req, res) => {
+    try {
+      await bootstrapServerMirrorFromFirestore();
+      addServerDiagnosticEvent({
+        source: 'server',
+        severity: 'info',
+        category: 'recovery',
+        titleBn: 'ফায়ারবেজ Write-Channel ও সার্ভার মিরর থেকে গভীর ডাটা রিকভারি সম্পন্ন',
+        detailsBn: `মোট পণ্য: ${serverDbMirror.products.length}টি, দোকান: ${serverDbMirror.shops.length}টি, অর্ডার: ${serverDbMirror.orders.length}টি পুনরুদ্ধার ও সিঙ্ক করা হয়েছে।`,
+      });
+      res.json({
+        success: true,
+        mirror: serverDbMirror,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Recovery failed' });
     }
   });
 

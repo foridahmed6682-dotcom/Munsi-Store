@@ -145,9 +145,35 @@ export function saveAutoBackupSnapshot(
     };
 
     const updated = [snapshot, ...existing].slice(0, MAX_SNAPSHOTS);
-    localStorage.setItem(AUTO_BACKUP_VAULT_KEY, JSON.stringify(updated));
 
-    // Also push asynchronously to server & cloud vault
+    // Compact base64 images for the browser localStorage copy so 10 snapshots never overflow 5MB browser quota
+    const slimLocalVault = updated.slice(0, 3).map((s) => ({
+      ...s,
+      data: s.data
+        ? {
+            ...s.data,
+            products: Array.isArray(s.data.products)
+              ? s.data.products.map((p) =>
+                  p && typeof p.imageUrl === 'string' && p.imageUrl.startsWith('data:') && p.imageUrl.length > 15000
+                    ? { ...p, imageUrl: '' }
+                    : p
+                )
+              : [],
+          }
+        : s.data,
+    }));
+
+    try {
+      localStorage.setItem(AUTO_BACKUP_VAULT_KEY, JSON.stringify(slimLocalVault));
+    } catch {
+      try {
+        localStorage.setItem(AUTO_BACKUP_VAULT_KEY, JSON.stringify(slimLocalVault.slice(0, 1)));
+      } catch {
+        // ignore local vault quota error
+      }
+    }
+
+    // Also push full snapshot asynchronously to server & cloud vault
     fetch('/api/db/snapshots', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -187,7 +213,26 @@ export async function fetchAllAutoBackupSnapshots(): Promise<AutoBackupSnapshot[
         const merged = Array.from(map.values())
           .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
           .slice(0, MAX_SNAPSHOTS);
-        localStorage.setItem(AUTO_BACKUP_VAULT_KEY, JSON.stringify(merged));
+        try {
+          const slimMerged = merged.slice(0, 2).map((s) => ({
+            ...s,
+            data: s.data
+              ? {
+                  ...s.data,
+                  products: Array.isArray(s.data.products)
+                    ? s.data.products.map((p) =>
+                        p && typeof p.imageUrl === 'string' && p.imageUrl.startsWith('data:') && p.imageUrl.length > 15000
+                          ? { ...p, imageUrl: '' }
+                          : p
+                      )
+                    : [],
+                }
+              : s.data,
+          }));
+          localStorage.setItem(AUTO_BACKUP_VAULT_KEY, JSON.stringify(slimMerged));
+        } catch {
+          // ignore localStorage quota on snapshot cache
+        }
         return merged;
       }
     }

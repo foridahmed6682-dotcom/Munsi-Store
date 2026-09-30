@@ -46,7 +46,8 @@ import {
   Smartphone,
   CreditCard,
   Banknote,
-  Printer
+  Printer,
+  Activity
 } from 'lucide-react';
 import {
   Product,
@@ -83,6 +84,7 @@ import { PushNotificationManager } from './PushNotificationManager';
 import { AdminSodaiStorefrontManager } from './AdminSodaiStorefrontManager';
 import { AdminDeleteCenter } from './AdminDeleteCenter';
 import { AdminPrintCenter } from './AdminPrintCenter';
+import { AdminDiagnosticsMonitor } from './AdminDiagnosticsMonitor';
 import { DeletePermissionRequest } from './DeleteConfirmModal';
 import {
   printProductsBatch,
@@ -149,9 +151,10 @@ interface AdminDashboardViewProps {
   onDeleteAllStaffEmails?: () => void;
   onDeleteEverythingAllAtOnce?: () => void;
   onRequestDeletePermission?: (req: Omit<DeletePermissionRequest, 'isOpen'>) => void;
+  onForceDeepCloudRecovery?: () => Promise<void>;
 }
 
-type AdminSubTab = 'overview' | 'storefront' | 'categories' | 'products' | 'routes' | 'access' | 'analytics' | 'push' | 'settings' | 'backup' | 'print_center' | 'delete_center';
+type AdminSubTab = 'overview' | 'storefront' | 'categories' | 'products' | 'routes' | 'access' | 'analytics' | 'push' | 'settings' | 'backup' | 'print_center' | 'delete_center' | 'diagnostics';
 
 const AVAILABLE_ROUTES = [
   'সব রুট (All Routes)',
@@ -234,6 +237,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   onDeleteAllStaffEmails,
   onDeleteEverythingAllAtOnce,
   onRequestDeletePermission,
+  onForceDeepCloudRecovery,
 }) => {
   const [subTab, setSubTab] = useState<AdminSubTab>('overview');
 
@@ -1179,6 +1183,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         </button>
 
         <button
+          onClick={() => setSubTab('diagnostics')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+            subTab === 'diagnostics'
+              ? 'bg-emerald-600 text-white font-black shadow-md'
+              : 'text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300'
+          }`}
+        >
+          <Activity className="w-4 h-4" />
+          <span>ক্র্যাশ ও সিঙ্ক মনিটর (কেন ক্র্যাশ হয়)</span>
+        </button>
+
+        <button
           onClick={() => setSubTab('print_center')}
           className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
             subTab === 'print_center'
@@ -1380,6 +1396,19 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   <div>
                     <span className="font-bold text-xs text-rose-900 block">ডিলিট সেন্টার (১-ক্লিক ও ১-টা ১-টা)</span>
                     <span className="text-[11px] text-rose-700">পণ্য, দোকান, মেমো, রুট ডিলিট</span>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => setSubTab('diagnostics')}
+                  className="p-3 rounded-xl border border-teal-300 bg-teal-50/80 hover:bg-teal-100 text-left transition-colors flex flex-col justify-between cursor-pointer"
+                >
+                  <div className="w-8 h-8 rounded-lg bg-teal-700 text-white flex items-center justify-center font-bold mb-2">
+                    <Activity className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="font-bold text-xs text-teal-950 block">ক্র্যাশ ও ডাটা সিঙ্ক মনিটর</span>
+                    <span className="text-[11px] text-teal-800">কেন ক্র্যাশ হয় ও ক্লাউড রিকভারি</span>
                   </div>
                 </button>
               </div>
@@ -3541,9 +3570,32 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         />
       )}
 
+      {/* SUB-TAB DIAGNOSTICS: CRASH & DATA SYNC MONITOR */}
+      {subTab === 'diagnostics' && (
+        <AdminDiagnosticsMonitor
+          productsCount={products.length}
+          shopsCount={shops.length}
+          ordersCount={orders.length}
+          categoriesCount={categories.length}
+          routesCount={routes.length}
+          onForceDeepCloudRecovery={onForceDeepCloudRecovery}
+          onShowToast={showToast}
+        />
+      )}
+
       {/* SUB-TAB 6: BACKUP & RESTORE HUB */}
       {subTab === 'backup' && (
         <div className="space-y-5 animate-fadeIn">
+          {/* Quick link to Crash & Sync Diagnostics Monitor inside Backup Hub */}
+          <AdminDiagnosticsMonitor
+            productsCount={products.length}
+            shopsCount={shops.length}
+            ordersCount={orders.length}
+            categoriesCount={categories.length}
+            routesCount={routes.length}
+            onForceDeepCloudRecovery={onForceDeepCloudRecovery}
+            onShowToast={showToast}
+          />
           {/* Header Banner */}
           <div className="bg-gradient-to-r from-amber-900 via-neutral-900 to-emerald-950 text-white rounded-2xl p-5 border border-amber-600/30 shadow-md">
             <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">

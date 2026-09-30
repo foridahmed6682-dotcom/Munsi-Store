@@ -53,7 +53,8 @@ import {
   deleteAllDailyExpensesLocal,
   deleteAllDueCollectionsLocal,
   resetAllShopDuesLocal,
-  deleteAllStaffAuthorizedEmailsLocal
+  deleteAllStaffAuthorizedEmailsLocal,
+  recordDiagnosticEvent
 } from './lib/storage';
 import {
   subscribeToCloudShops,
@@ -98,7 +99,9 @@ import {
   resolveRoleByEmailAndUid,
   logout,
   fetchServerDatabaseMirror,
-  pushBulkDataToServerMirror
+  pushBulkDataToServerMirror,
+  readFirestoreCatalogDirect,
+  writeFirestoreCatalogDirect
 } from './lib/firebase';
 import { getStoredGoogleToken } from './lib/firebaseAuth';
 import {
@@ -251,8 +254,42 @@ export default function App() {
       showToast('ইন্টারনেট সংযোগ বিচ্ছিন্ন। অফলাইন মোডে দ্রুত অর্ডার কাটা চালু আছে।', 'info');
     };
 
+    const handleGlobalRuntimeError = (event: ErrorEvent) => {
+      const msg = event?.message || String(event?.error || 'অজানা রানটাইম এরর');
+      if (msg.includes('ResizeObserver') || msg.includes('WebSocket')) return;
+      recordDiagnosticEvent({
+        source: 'client',
+        severity: 'error',
+        category: msg.toLowerCase().includes('quota') ? 'storage_overflow' : 'runtime_crash',
+        titleBn: 'ব্রাউজার রানটাইম ক্র্যাশ / জাভাস্ক্রিপ্ট এরর শনাক্ত',
+        detailsBn: `অ্যাপ চলার সময় একটি অপ্রত্যাশিত ত্রুটি ঘটেছে: ${msg}`,
+        technicalDetails: `${msg} (${event?.filename || 'unknown'}:${event?.lineno || 0}:${event?.colno || 0})`,
+      });
+    };
+
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event?.reason;
+      const msg = reason?.message || String(reason || '');
+      if (!msg || msg.includes('WebSocket') || msg.includes('AbortError')) return;
+      const isQuota = msg.includes('429') || msg.includes('resource-exhausted') || msg.includes('Quota');
+      recordDiagnosticEvent({
+        source: 'client',
+        severity: isQuota ? 'warning' : 'error',
+        category: isQuota ? 'quota_429' : 'network_sync',
+        titleBn: isQuota
+          ? 'ফায়ারবেজ ফ্রি কোটা লিমিট (429) — অটো রিকভারি মোড সক্রিয়'
+          : 'ব্যাকগ্রাউন্ড নেটওয়ার্ক / ডাটা সিঙ্ক ত্রুটি',
+        detailsBn: isQuota
+          ? 'ফায়ারবেজের ডেইলি ফ্রি Read কোটা পূর্ণ হওয়ায় Write-Channel PATCH ও সার্ভার মিরর ব্যবহৃত হচ্ছে।'
+          : `নেটওয়ার্ক বা ডাটা প্রসেসিংয়ে সমস্যা: ${msg.slice(0, 160)}`,
+        technicalDetails: msg.slice(0, 400),
+      });
+    };
+
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    window.addEventListener('error', handleGlobalRuntimeError);
+    window.addEventListener('unhandledrejection', handleUnhandledRejection);
 
     // Subscribe to Firestore Real-time Collections (if online)
     seedInitialCloudDataIfEmpty();
@@ -530,6 +567,8 @@ export default function App() {
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('error', handleGlobalRuntimeError);
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection);
       if (unsubscribeBizInfo) unsubscribeBizInfo();
       if (unsubscribeShops) unsubscribeShops();
       if (unsubscribeProducts) unsubscribeProducts();
@@ -1753,69 +1792,163 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [orders, products, shops, categories, routes, dueCollections, dailyExpenses, authorizedEmails, businessInfo, activeSimulatedRole]);
 
-  // Restore Database from JSON Backup
+  // 1-Click Force Deep Cloud & Server Mirror Recovery
+  const handleForceCloudRecovery = async () => {
+    try {
+      showToast('ফায়ারবেজ Write-Channel ও সার্ভার মিরর থেকে সকল ডাটা রিকভারি হচ্ছে...', 'info');
+      const [recoverRes, catProds, catShops, catOrders, catCats, catRoutes] = await Promise.all([
+        fetch('/api/diagnostics/recover', { method: 'POST' })
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null),
+        readFirestoreCatalogDirect<Product>('products'),
+        readFirestoreCatalogDirect<Shop>('shops'),
+        readFirestoreCatalogDirect<Order>('orders'),
+        readFirestoreCatalogDirect<Category>('categories'),
+        readFirestoreCatalogDirect<Route>('routes'),
+      ]);
+
+      const mirror = recoverRes?.mirror || (await fetchServerDatabaseMirror());
+      const mergeList = <T extends Record<string, any>>(a: T[], b: T[], c: T[], del: Set<string>, idKey = 'id'): T[] => {
+        const map = new Map<string, T>();
+        for (const list of [a, b, c]) {
+          for (const item of list || []) {
+            const k = item?.[idKey] ? String(item[idKey]) : '';
+            if (k && !del.has(k)) {
+              const prev = map.get(k);
+              map.set(
+                k,
+                prev
+                  ? {
+                      ...prev,
+                      ...item,
+                      ...(prev.imageUrl && !item.imageUrl ? { imageUrl: prev.imageUrl } : {}),
+                    }
+                  : item
+              );
+            }
+          }
+        }
+        return Array.from(map.values());
+      };
+
+      const mergedProds = mergeList(getProducts(), mirror?.products || [], catProds, getDeletedProductIds());
+      const mergedShops = mergeList(getShops(), mirror?.shops || [], catShops, getDeletedShopIds());
+      const mergedOrders = mergeList(getOrders(), mirror?.orders || [], catOrders, getDeletedOrderIds()).sort(
+        (a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime()
+      );
+      const mergedCats = mergeList(getCategories(), mirror?.categories || [], catCats, getDeletedCategoryIds());
+      const mergedRoutes = mergeList(getRoutes(), mirror?.routes || [], catRoutes, getDeletedRouteIds());
+
+      if (mergedProds.length > 0) {
+        saveProducts(mergedProds);
+        setProducts(mergedProds);
+      }
+      if (mergedShops.length > 0) {
+        saveShops(mergedShops);
+        setShops(mergedShops);
+      }
+      if (mergedOrders.length > 0) {
+        saveOrders(mergedOrders);
+        setOrders(mergedOrders);
+      }
+      if (mergedCats.length > 0) {
+        saveCategories(mergedCats);
+        setCategories(mergedCats);
+      }
+      if (mergedRoutes.length > 0) {
+        saveRoutes(mergedRoutes);
+        setRoutes(mergedRoutes);
+      }
+
+      await pushBulkDataToServerMirror({
+        products: mergedProds,
+        shops: mergedShops,
+        orders: mergedOrders,
+        categories: mergedCats,
+        routes: mergedRoutes,
+      });
+
+      reloadData();
+      showToast(
+        `ডাটা রিকভারি সম্পন্ন! মোট পণ্য: ${mergedProds.length}টি, দোকান: ${mergedShops.length}টি, মেমো: ${mergedOrders.length}টি পাওয়া গেছে।`,
+        'success'
+      );
+    } catch (err: any) {
+      showToast('ডাটা রিকভারি করার সময় সমস্যা হয়েছে', 'error');
+    }
+  };
+
+  // Restore Database from JSON Backup (Race-Condition-Free Bulk Sync)
   const handleRestoreFromBackupJSON = async (backupData: FullBackupData) => {
     try {
-      if (backupData.products && backupData.products.length > 0) {
-        setProducts(backupData.products);
-        saveProducts(backupData.products);
-        for (const p of backupData.products) {
-          saveProductToCloud(p).catch(console.warn);
-        }
+      const existingProducts = getProducts();
+      const restoredProducts =
+        backupData.products && backupData.products.length > 0
+          ? backupData.products.map((p) => {
+              if (!p.imageUrl) {
+                const match = existingProducts.find((ep) => ep.id === p.id);
+                if (match?.imageUrl) return { ...p, imageUrl: match.imageUrl };
+              }
+              return p;
+            })
+          : existingProducts;
+
+      if (restoredProducts.length > 0) {
+        setProducts(restoredProducts);
+        saveProducts(restoredProducts);
+        writeFirestoreCatalogDirect('products', restoredProducts).catch(console.warn);
       }
       if (backupData.shops && backupData.shops.length > 0) {
         setShops(backupData.shops);
         saveShops(backupData.shops);
-        for (const s of backupData.shops) {
-          saveShopToCloud(s).catch(console.warn);
-        }
+        writeFirestoreCatalogDirect('shops', backupData.shops).catch(console.warn);
       }
       if (backupData.orders && backupData.orders.length > 0) {
         setOrders(backupData.orders);
         saveOrders(backupData.orders);
-        for (const o of backupData.orders) {
-          saveOrderToCloud(o).catch(console.warn);
-        }
+        writeFirestoreCatalogDirect('orders', backupData.orders).catch(console.warn);
       }
       if (backupData.categories && backupData.categories.length > 0) {
         setCategories(backupData.categories);
         saveCategories(backupData.categories);
-        for (const c of backupData.categories) {
-          saveCategoryToCloud(c).catch(console.warn);
-        }
+        writeFirestoreCatalogDirect('categories', backupData.categories).catch(console.warn);
       }
       if (backupData.routes && backupData.routes.length > 0) {
         setRoutes(backupData.routes);
         saveRoutes(backupData.routes);
-        for (const r of backupData.routes) {
-          saveRouteToCloud(r).catch(console.warn);
-        }
+        writeFirestoreCatalogDirect('routes', backupData.routes).catch(console.warn);
       }
       if (backupData.dueCollections && backupData.dueCollections.length > 0) {
         setDueCollections(backupData.dueCollections);
         saveDueCollections(backupData.dueCollections);
-        for (const dc of backupData.dueCollections) {
-          saveDueCollectionToCloud(dc).catch(console.warn);
-        }
+        writeFirestoreCatalogDirect('dueCollections', backupData.dueCollections).catch(console.warn);
       }
       if (backupData.dailyExpenses && backupData.dailyExpenses.length > 0) {
         setDailyExpenses(backupData.dailyExpenses);
         saveDailyExpenses(backupData.dailyExpenses);
-        for (const exp of backupData.dailyExpenses) {
-          saveDailyExpenseToCloud(exp).catch(console.warn);
-        }
+        writeFirestoreCatalogDirect('dailyExpenses', backupData.dailyExpenses).catch(console.warn);
       }
       if (backupData.authorizedEmails && backupData.authorizedEmails.length > 0) {
         setAuthorizedEmails(backupData.authorizedEmails);
         saveAuthorizedEmails(backupData.authorizedEmails);
-        for (const ae of backupData.authorizedEmails) {
-          saveAuthorizedEmailToCloud(ae).catch(console.warn);
-        }
+        writeFirestoreCatalogDirect('authorizedEmails', backupData.authorizedEmails).catch(console.warn);
       }
       if (backupData.businessInfo) {
         setBusinessInfo(backupData.businessInfo);
         saveBusinessInfoLocal(backupData.businessInfo);
       }
+
+      await pushBulkDataToServerMirror({
+        products: restoredProducts,
+        shops: backupData.shops || getShops(),
+        orders: backupData.orders || getOrders(),
+        categories: backupData.categories || getCategories(),
+        routes: backupData.routes || getRoutes(),
+        authorizedEmails: backupData.authorizedEmails || getAuthorizedEmails(),
+        businessInfo: backupData.businessInfo || getBusinessInfo(),
+      });
+
+      reloadData();
       showToast('ব্যাকআপ থেকে সম্পূর্ণ ডাটা সফলভাবে রিস্টোর ও ক্লাউড সিঙ্ক হয়েছে!', 'success');
     } catch (e: any) {
       console.error('Restore failed:', e);
@@ -2121,6 +2254,7 @@ export default function App() {
                 onDeleteAllStaffEmails={handleDeleteAllStaffEmails}
                 onDeleteEverythingAllAtOnce={handleDeleteEverythingAllAtOnce}
                 onRequestDeletePermission={requestDeletePermission}
+                onForceCloudRecovery={handleForceCloudRecovery}
               />
             )}
           </>
