@@ -54,7 +54,8 @@ import {
   deleteAllDueCollectionsLocal,
   resetAllShopDuesLocal,
   deleteAllStaffAuthorizedEmailsLocal,
-  recordDiagnosticEvent
+  recordDiagnosticEvent,
+  prepareDeletedIdsForRestore
 } from './lib/storage';
 import {
   subscribeToCloudShops,
@@ -101,7 +102,8 @@ import {
   fetchServerDatabaseMirror,
   pushBulkDataToServerMirror,
   readFirestoreCatalogDirect,
-  writeFirestoreCatalogDirect
+  writeFirestoreCatalogDirect,
+  setRestoreCooldown
 } from './lib/firebase';
 import { getStoredGoogleToken } from './lib/firebaseAuth';
 import {
@@ -1770,10 +1772,11 @@ export default function App() {
     }
   };
 
-  // Automatic Background Rolling Snapshot & Daily Auto-Download
+  // Automatic Background Rolling Snapshot & 3x Daily Scheduled Auto-Download (9:00 AM, 8:00 PM, 10:00 PM)
   useEffect(() => {
     if (orders.length === 0 && products.length === 0 && shops.length === 0) return;
-    const timer = setTimeout(() => {
+
+    const runScheduledBackupCheck = (saveSnap = false) => {
       const fullBackup = generateFullBackupObject(orders, products, shops, categories, routes, {
         dueCollections,
         dailyExpenses,
@@ -1781,15 +1784,31 @@ export default function App() {
         businessInfo,
         triggerReason: 'স্বয়ংক্রিয় ব্যাকআপ',
       });
-      saveAutoBackupSnapshot(fullBackup, 'স্বয়ংক্রিয় ব্যাকআপ');
+      if (saveSnap) {
+        saveAutoBackupSnapshot(fullBackup, 'স্বয়ংক্রিয় ব্যাকআপ');
+      }
       if (activeSimulatedRole === 'admin') {
-        const downloaded = checkAndTriggerDailyAutoDownload(fullBackup);
-        if (downloaded) {
-          showToast('আজকের স্বয়ংক্রিয় দৈনিক ব্যাকআপ ফাইল ডিভাইসে ডাউনলোড হয়েছে!', 'info');
+        const slotLabel = checkAndTriggerDailyAutoDownload(fullBackup);
+        if (slotLabel) {
+          saveAutoBackupSnapshot(fullBackup, `অটো-ডাউনলোড (${slotLabel})`);
+          showToast(`অটো-ব্যাকআপ ফাইল (${slotLabel}) ডিভাইসে স্বয়ংক্রিয়ভাবে ডাউনলোড হয়েছে!`, 'success');
         }
       }
-    }, 3500);
-    return () => clearTimeout(timer);
+    };
+
+    const timer = setTimeout(() => {
+      runScheduledBackupCheck(true);
+    }, 3000);
+
+    // Check every 25 seconds so if the clock reaches 9:00 AM, 8:00 PM, or 10:00 PM while app is open, it downloads on time
+    const interval = setInterval(() => {
+      runScheduledBackupCheck(false);
+    }, 25000);
+
+    return () => {
+      clearTimeout(timer);
+      clearInterval(interval);
+    };
   }, [orders, products, shops, categories, routes, dueCollections, dailyExpenses, authorizedEmails, businessInfo, activeSimulatedRole]);
 
   // 1-Click Force Deep Cloud & Server Mirror Recovery
@@ -1878,78 +1897,185 @@ export default function App() {
     }
   };
 
-  // Restore Database from JSON Backup (Race-Condition-Free Bulk Sync)
-  const handleRestoreFromBackupJSON = async (backupData: FullBackupData) => {
+  // Restore Database from JSON Backup or Snapshot (Race-Condition-Free & Unblocks Deleted Tombstones)
+  const handleRestoreFromBackupJSON = async (
+    rawBackupData: FullBackupData,
+    mode: 'replace' | 'merge' = 'replace'
+  ) => {
     try {
+      setRestoreCooldown(15000);
+
+      // Unwrap if a snapshot wrapper object was passed directly
+      const backupData: FullBackupData =
+        (rawBackupData as any)?.data && typeof (rawBackupData as any).data === 'object'
+          ? (rawBackupData as any).data
+          : rawBackupData;
+
       const existingProducts = getProducts();
-      const restoredProducts =
-        backupData.products && backupData.products.length > 0
-          ? backupData.products.map((p) => {
-              if (!p.imageUrl) {
-                const match = existingProducts.find((ep) => ep.id === p.id);
-                if (match?.imageUrl) return { ...p, imageUrl: match.imageUrl };
-              }
-              return p;
-            })
-          : existingProducts;
+      const existingShops = getShops();
+      const existingOrders = getOrders();
+      const existingCategories = getCategories();
+      const existingRoutes = getRoutes();
 
-      if (restoredProducts.length > 0) {
-        setProducts(restoredProducts);
-        saveProducts(restoredProducts);
-        writeFirestoreCatalogDirect('products', restoredProducts).catch(console.warn);
-      }
-      if (backupData.shops && backupData.shops.length > 0) {
-        setShops(backupData.shops);
-        saveShops(backupData.shops);
-        writeFirestoreCatalogDirect('shops', backupData.shops).catch(console.warn);
-      }
-      if (backupData.orders && backupData.orders.length > 0) {
-        setOrders(backupData.orders);
-        saveOrders(backupData.orders);
-        writeFirestoreCatalogDirect('orders', backupData.orders).catch(console.warn);
-      }
-      if (backupData.categories && backupData.categories.length > 0) {
-        setCategories(backupData.categories);
-        saveCategories(backupData.categories);
-        writeFirestoreCatalogDirect('categories', backupData.categories).catch(console.warn);
-      }
-      if (backupData.routes && backupData.routes.length > 0) {
-        setRoutes(backupData.routes);
-        saveRoutes(backupData.routes);
-        writeFirestoreCatalogDirect('routes', backupData.routes).catch(console.warn);
-      }
-      if (backupData.dueCollections && backupData.dueCollections.length > 0) {
-        setDueCollections(backupData.dueCollections);
-        saveDueCollections(backupData.dueCollections);
-        writeFirestoreCatalogDirect('dueCollections', backupData.dueCollections).catch(console.warn);
-      }
-      if (backupData.dailyExpenses && backupData.dailyExpenses.length > 0) {
-        setDailyExpenses(backupData.dailyExpenses);
-        saveDailyExpenses(backupData.dailyExpenses);
-        writeFirestoreCatalogDirect('dailyExpenses', backupData.dailyExpenses).catch(console.warn);
-      }
-      if (backupData.authorizedEmails && backupData.authorizedEmails.length > 0) {
-        setAuthorizedEmails(backupData.authorizedEmails);
-        saveAuthorizedEmails(backupData.authorizedEmails);
-        writeFirestoreCatalogDirect('authorizedEmails', backupData.authorizedEmails).catch(console.warn);
-      }
-      if (backupData.businessInfo) {
-        setBusinessInfo(backupData.businessInfo);
-        saveBusinessInfoLocal(backupData.businessInfo);
-      }
+      // 1. CRITICAL: Unblock all IDs in the backup/snapshot from DELETED_* tombstones in localStorage!
+      prepareDeletedIdsForRestore(
+        {
+          products: Array.isArray(backupData.products) ? backupData.products : undefined,
+          shops: Array.isArray(backupData.shops) ? backupData.shops : undefined,
+          orders: Array.isArray(backupData.orders) ? backupData.orders : undefined,
+          categories: Array.isArray(backupData.categories) ? backupData.categories : undefined,
+          routes: Array.isArray(backupData.routes) ? backupData.routes : undefined,
+        },
+        mode
+      );
 
-      await pushBulkDataToServerMirror({
-        products: restoredProducts,
-        shops: backupData.shops || getShops(),
-        orders: backupData.orders || getOrders(),
-        categories: backupData.categories || getCategories(),
-        routes: backupData.routes || getRoutes(),
-        authorizedEmails: backupData.authorizedEmails || getAuthorizedEmails(),
-        businessInfo: backupData.businessInfo || getBusinessInfo(),
+      const mergeItems = <T extends Record<string, any>>(base: T[], incoming: T[], idKey = 'id'): T[] => {
+        const map = new Map<string, T>();
+        for (const item of base || []) {
+          const k = item?.[idKey] ? String(item[idKey]) : '';
+          if (k) map.set(k, item);
+        }
+        for (const item of incoming || []) {
+          const k = item?.[idKey] ? String(item[idKey]) : '';
+          if (k) {
+            const prev = map.get(k);
+            map.set(
+              k,
+              prev
+                ? {
+                    ...prev,
+                    ...item,
+                    ...(prev.imageUrl && !item.imageUrl ? { imageUrl: prev.imageUrl } : {}),
+                  }
+                : item
+            );
+          }
+        }
+        return Array.from(map.values());
+      };
+
+      const incomingProducts = Array.isArray(backupData.products) ? backupData.products : [];
+      const finalProducts = (
+        mode === 'merge' ? mergeItems(existingProducts, incomingProducts) : incomingProducts
+      ).map((p) => {
+        if (!p.imageUrl) {
+          const match = existingProducts.find((ep) => ep.id === p.id);
+          if (match?.imageUrl) return { ...p, imageUrl: match.imageUrl };
+        }
+        return p;
+      });
+
+      const incomingShops = Array.isArray(backupData.shops) ? backupData.shops : [];
+      const finalShops = mode === 'merge' ? mergeItems(existingShops, incomingShops) : incomingShops;
+
+      const incomingOrders = Array.isArray(backupData.orders) ? backupData.orders : [];
+      const finalOrders = (
+        mode === 'merge' ? mergeItems(existingOrders, incomingOrders) : incomingOrders
+      ).sort((a, b) => new Date(b.orderDate || 0).getTime() - new Date(a.orderDate || 0).getTime());
+
+      const incomingCategories = Array.isArray(backupData.categories)
+        ? backupData.categories
+        : existingCategories;
+      const finalCategories =
+        mode === 'merge'
+          ? mergeItems(existingCategories, incomingCategories)
+          : incomingCategories.length > 0
+          ? incomingCategories
+          : existingCategories;
+
+      const incomingRoutes = Array.isArray(backupData.routes) ? backupData.routes : existingRoutes;
+      const finalRoutes =
+        mode === 'merge'
+          ? mergeItems(existingRoutes, incomingRoutes)
+          : incomingRoutes.length > 0
+          ? incomingRoutes
+          : existingRoutes;
+
+      const finalDueCollections = Array.isArray(backupData.dueCollections)
+        ? mode === 'merge'
+          ? mergeItems(getDueCollections(), backupData.dueCollections)
+          : backupData.dueCollections
+        : getDueCollections();
+
+      const finalDailyExpenses = Array.isArray(backupData.dailyExpenses)
+        ? mode === 'merge'
+          ? mergeItems(getDailyExpenses(), backupData.dailyExpenses)
+          : backupData.dailyExpenses
+        : getDailyExpenses();
+
+      const finalAuthEmails =
+        Array.isArray(backupData.authorizedEmails) && backupData.authorizedEmails.length > 0
+          ? mergeItems(getAuthorizedEmails(), backupData.authorizedEmails, 'email')
+          : getAuthorizedEmails();
+
+      const finalBizInfo = backupData.businessInfo
+        ? { ...getBusinessInfo(), ...backupData.businessInfo }
+        : getBusinessInfo();
+
+      // 2. Save to LocalStorage & React State immediately
+      saveProducts(finalProducts);
+      setProducts([...finalProducts]);
+
+      saveShops(finalShops);
+      setShops([...finalShops]);
+
+      saveOrders(finalOrders);
+      setOrders([...finalOrders]);
+
+      saveCategories(finalCategories);
+      setCategories([...finalCategories]);
+
+      saveRoutes(finalRoutes);
+      setRoutes([...finalRoutes]);
+
+      saveDueCollections(finalDueCollections);
+      setDueCollections([...finalDueCollections]);
+
+      saveDailyExpenses(finalDailyExpenses);
+      setDailyExpenses([...finalDailyExpenses]);
+
+      saveAuthorizedEmails(finalAuthEmails);
+      setAuthorizedEmails([...finalAuthEmails]);
+
+      saveBusinessInfoLocal(finalBizInfo);
+      setBusinessInfo(finalBizInfo);
+
+      // 3. Push to Server Mirror (with replaceAll when replacing) & Firestore Catalog Vaults
+      await Promise.allSettled([
+        pushBulkDataToServerMirror({
+          replaceAll: mode === 'replace',
+          products: finalProducts,
+          shops: finalShops,
+          orders: finalOrders,
+          categories: finalCategories,
+          routes: finalRoutes,
+          dueCollections: finalDueCollections,
+          dailyExpenses: finalDailyExpenses,
+          authorizedEmails: finalAuthEmails,
+          businessInfo: finalBizInfo,
+        }),
+        writeFirestoreCatalogDirect('products', finalProducts),
+        writeFirestoreCatalogDirect('shops', finalShops),
+        writeFirestoreCatalogDirect('orders', finalOrders),
+        writeFirestoreCatalogDirect('categories', finalCategories),
+        writeFirestoreCatalogDirect('routes', finalRoutes),
+        writeFirestoreCatalogDirect('dueCollections', finalDueCollections),
+        writeFirestoreCatalogDirect('dailyExpenses', finalDailyExpenses),
+      ]);
+
+      recordDiagnosticEvent({
+        source: 'client',
+        severity: 'info',
+        category: 'recovery',
+        titleBn: `ব্যাকআপ / স্ন্যাপশট রিস্টোর সফল (${mode === 'replace' ? 'হুবহু প্রতিস্থাপন' : 'মার্জ'})`,
+        detailsBn: `মোট পণ্য: ${finalProducts.length}টি, দোকান: ${finalShops.length}টি, মেমো: ${finalOrders.length}টি সক্রিয় করা হয়েছে।`,
       });
 
       reloadData();
-      showToast('ব্যাকআপ থেকে সম্পূর্ণ ডাটা সফলভাবে রিস্টোর ও ক্লাউড সিঙ্ক হয়েছে!', 'success');
+      showToast(
+        `রিস্টোর সম্পন্ন! পণ্য: ${finalProducts.length}টি, দোকান: ${finalShops.length}টি ও মেমো: ${finalOrders.length}টি সফলভাবে লোড হয়েছে!`,
+        'success'
+      );
     } catch (e: any) {
       console.error('Restore failed:', e);
       showToast('ডাটা রিস্টোর করতে সমস্যা হয়েছে', 'error');

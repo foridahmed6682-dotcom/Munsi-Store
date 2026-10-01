@@ -78,7 +78,8 @@ import {
   generateFullBackupObject,
   downloadJSONFile,
   getDailyAutoDownloadEnabled,
-  setDailyAutoDownloadEnabled
+  setDailyAutoDownloadEnabled,
+  getScheduledAutoDownloadStatus
 } from '../lib/backupService';
 import { PushNotificationManager } from './PushNotificationManager';
 import { AdminSodaiStorefrontManager } from './AdminSodaiStorefrontManager';
@@ -135,7 +136,7 @@ interface AdminDashboardViewProps {
   onDownloadOrdersCSV?: () => void;
   onDownloadInventoryCSV?: () => void;
   onDownloadShopsCSV?: () => void;
-  onRestoreFromBackupJSON?: (data: FullBackupData) => Promise<void>;
+  onRestoreFromBackupJSON?: (data: FullBackupData, mode?: 'replace' | 'merge') => Promise<void>;
   onViewMemo?: (order: Order, editMode?: boolean) => void;
   onDeleteOrder?: (orderId: string, skipConfirm?: boolean) => void;
   onDeleteDailyExpense?: (expenseId: string, skipConfirm?: boolean) => void;
@@ -247,12 +248,15 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [restoreFileError, setRestoreFileError] = useState<string | null>(null);
   const [parsedRestoreData, setParsedRestoreData] = useState<FullBackupData | null>(null);
   const [isRestoring, setIsRestoring] = useState(false);
+  const [restoringSnapId, setRestoringSnapId] = useState<string | null>(null);
   const [autoSnapshots, setAutoSnapshots] = useState<AutoBackupSnapshot[]>(() => getLocalAutoBackupSnapshots());
   const [dailyAutoDownload, setDailyAutoDownload] = useState<boolean>(() => getDailyAutoDownloadEnabled());
+  const [scheduledSlotsStatus, setScheduledSlotsStatus] = useState(() => getScheduledAutoDownloadStatus());
 
   useEffect(() => {
     if (subTab === 'backup') {
       fetchAllAutoBackupSnapshots().then((snaps) => setAutoSnapshots(snaps));
+      setScheduledSlotsStatus(getScheduledAutoDownloadStatus());
     }
   }, [subTab, orders.length, shops.length, products.length]);
 
@@ -3663,8 +3667,10 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               </div>
               <div className="bg-white/5 border border-white/10 rounded-xl p-2.5 flex items-center justify-between gap-2 col-span-2 sm:col-span-1">
                 <div>
-                  <div className="font-bold text-amber-300">৫. দৈনিক অটো-ডাউনলোড</div>
-                  <div className="text-[10px] text-neutral-300">{dailyAutoDownload ? 'চালু আছে (প্রথম ভিজিটে)' : 'অপশনাল টগল'}</div>
+                  <div className="font-bold text-amber-300">৫. ৩-বেলা অটো-ডাউনলোড</div>
+                  <div className="text-[10px] text-neutral-300">
+                    {dailyAutoDownload ? 'সকাল ৯টা, সন্ধ্যা ৮টা ও রাত ১০টা' : 'বন্ধ আছে'}
+                  </div>
                 </div>
                 <input
                   type="checkbox"
@@ -3675,13 +3681,58 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                     setDailyAutoDownloadEnabled(val);
                     showToast(
                       val
-                        ? 'দৈনিক অটো-ডাউনলোড চালু হয়েছে! প্রতিদিন প্রথমবার অ্যাপ ওপেন করলেই ব্যাকআপ ফাইল ডাউনলোড হবে।'
-                        : 'দৈনিক অটো-ডাউনলোড বন্ধ করা হয়েছে।',
+                        ? '৩-বেলা অটো-ডাউনলোড চালু হয়েছে! প্রতিদিন সকাল ৯টা, সন্ধ্যা ৮টা ও রাত ১০টায় ব্যাকআপ ডাউনলোড হবে।'
+                        : 'অটো-ডাউনলোড বন্ধ করা হয়েছে।',
                       'info'
                     );
                   }}
                   className="w-4 h-4 accent-amber-400 cursor-pointer shrink-0"
                 />
+              </div>
+            </div>
+
+            {/* 3x Daily Scheduled Auto-Download Status Bar (9:00 AM, 8:00 PM, 10:00 PM) */}
+            <div className="mt-3 pt-3 border-t border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
+              <div className="flex items-center gap-2 text-amber-200 font-bold">
+                <span>⏰ প্রতিদিনের ৩-বেলা অটো ব্যাকআপ ডাউনলোড শিডিউল:</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 flex-1 max-w-2xl">
+                <div className="px-3 py-1.5 rounded-xl bg-white/10 border border-white/15 flex items-center justify-between">
+                  <span className="font-bold text-white text-[11px]">১. সকাল ৯:০০ টা</span>
+                  {scheduledSlotsStatus.slots.morning_9am ? (
+                    <span className="px-2 py-0.5 rounded bg-emerald-400 text-neutral-950 font-black text-[10px]">
+                      ✓ ডাউনলোড সম্পন্ন
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded bg-amber-400/20 text-amber-200 font-bold text-[10px]">
+                      সক্রিয় শিডিউল
+                    </span>
+                  )}
+                </div>
+                <div className="px-3 py-1.5 rounded-xl bg-white/10 border border-white/15 flex items-center justify-between">
+                  <span className="font-bold text-white text-[11px]">২. সন্ধ্যা ৮:০০ টা</span>
+                  {scheduledSlotsStatus.slots.evening_8pm ? (
+                    <span className="px-2 py-0.5 rounded bg-emerald-400 text-neutral-950 font-black text-[10px]">
+                      ✓ ডাউনলোড সম্পন্ন
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded bg-amber-400/20 text-amber-200 font-bold text-[10px]">
+                      সক্রিয় শিডিউল
+                    </span>
+                  )}
+                </div>
+                <div className="px-3 py-1.5 rounded-xl bg-white/10 border border-white/15 flex items-center justify-between">
+                  <span className="font-bold text-white text-[11px]">৩. রাত ১০:০০ টা</span>
+                  {scheduledSlotsStatus.slots.night_10pm ? (
+                    <span className="px-2 py-0.5 rounded bg-emerald-400 text-neutral-950 font-black text-[10px]">
+                      ✓ ডাউনলোড সম্পন্ন
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded bg-amber-400/20 text-amber-200 font-bold text-[10px]">
+                      সক্রিয় শিডিউল
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -3774,15 +3825,23 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                         onClick={async () => {
                           if (!onRestoreFromBackupJSON) return;
                           setIsRestoring(true);
+                          setRestoringSnapId(snap.id);
                           try {
-                            await onRestoreFromBackupJSON(snap.data);
+                            await onRestoreFromBackupJSON(snap.data, 'replace');
+                            showToast(
+                              `স্ন্যাপশট #${idx + 1} (${snap.label}) থেকে সফলভাবে ডাটা রিস্টোর হয়েছে!`,
+                              'success'
+                            );
+                          } catch (err: any) {
+                            showToast('স্ন্যাপশট রিস্টোর করতে সমস্যা হয়েছে', 'error');
                           } finally {
                             setIsRestoring(false);
+                            setRestoringSnapId(null);
                           }
                         }}
                         className="px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold cursor-pointer disabled:opacity-50"
                       >
-                        রিস্টোর
+                        {restoringSnapId === snap.id ? 'রিস্টোর হচ্ছে...' : 'রিস্টোর'}
                       </button>
                     </div>
                   </div>
@@ -3990,17 +4049,33 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   accept=".json,application/json"
                   onChange={(e) => {
                     const file = e.target.files?.[0];
+                    // Always reset input value so selecting the same file again fires onChange
+                    e.target.value = '';
                     if (!file) return;
                     const reader = new FileReader();
-                    reader.onload = (event) => {
+                    reader.onload = async (event) => {
                       const text = event.target?.result as string;
                       const res = parseAndValidateBackupJSON(text);
                       if (!res.isValid || !res.data) {
                         setRestoreFileError(res.error || 'ভুল ফরম্যাটের ফাইল');
                         setParsedRestoreData(null);
+                        showToast(res.error || 'ভুল ফরম্যাটের ব্যাকআপ ফাইল', 'error');
                       } else {
                         setRestoreFileError(null);
                         setParsedRestoreData(res.data);
+                        // Immediately restore the uploaded backup file so user doesn't have to guess why uploading didn't apply it
+                        if (onRestoreFromBackupJSON) {
+                          setIsRestoring(true);
+                          try {
+                            await onRestoreFromBackupJSON(res.data, 'replace');
+                            showToast(
+                              `ব্যাকআপ ফাইল সফলভাবে রিস্টোর হয়েছে! (পণ্য: ${res.data.products?.length || 0}টি, দোকান: ${res.data.shops?.length || 0}টি, মেমো: ${res.data.orders?.length || 0}টি)`,
+                              'success'
+                            );
+                          } finally {
+                            setIsRestoring(false);
+                          }
+                        }
                       }
                     };
                     reader.readAsText(file);
@@ -4016,35 +4091,70 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 )}
 
                 {parsedRestoreData && (
-                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl space-y-2">
+                  <div className="p-3.5 bg-emerald-50 border-2 border-emerald-300 rounded-xl space-y-2.5">
                     <div className="text-xs font-bold text-emerald-950 flex items-center justify-between">
-                      <span>ফাইল যাচাইকরণ সফল:</span>
-                      <span className="text-[10px] text-emerald-700 font-semibold">{new Date(parsedRestoreData.exportDate).toLocaleString('bn-BD')}</span>
+                      <span className="flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        <span>ব্যাকআপ ফাইল লোড ও রিস্টোর প্রস্তুত:</span>
+                      </span>
+                      <span className="text-[10px] text-emerald-700 font-semibold">
+                        {new Date(parsedRestoreData.exportDate).toLocaleString('bn-BD')}
+                      </span>
                     </div>
-                    <div className="grid grid-cols-3 gap-1 text-[11px] text-emerald-900">
-                      <div>অর্ডার: <strong>{parsedRestoreData.orders?.length || 0}</strong></div>
-                      <div>পণ্য: <strong>{parsedRestoreData.products?.length || 0}</strong></div>
-                      <div>দোকান: <strong>{parsedRestoreData.shops?.length || 0}</strong></div>
+                    <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5 text-[11px] text-emerald-900 bg-white/80 p-2 rounded-lg border border-emerald-200">
+                      <div>অর্ডার: <strong>{parsedRestoreData.orders?.length || 0}টি</strong></div>
+                      <div>পণ্য: <strong>{parsedRestoreData.products?.length || 0}টি</strong></div>
+                      <div>দোকান: <strong>{parsedRestoreData.shops?.length || 0}টি</strong></div>
+                      <div>ক্যাটাগরি: <strong>{parsedRestoreData.categories?.length || 0}টি</strong></div>
+                      <div>রুট: <strong>{parsedRestoreData.routes?.length || 0}টি</strong></div>
                     </div>
-                    <button
-                      type="button"
-                      disabled={isRestoring}
-                      onClick={async () => {
-                        if (!parsedRestoreData) return;
-                        setIsRestoring(true);
-                        try {
-                          if (onRestoreFromBackupJSON) {
-                            await onRestoreFromBackupJSON(parsedRestoreData);
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        disabled={isRestoring}
+                        onClick={async () => {
+                          if (!parsedRestoreData) return;
+                          setIsRestoring(true);
+                          try {
+                            if (onRestoreFromBackupJSON) {
+                              await onRestoreFromBackupJSON(parsedRestoreData, 'replace');
+                            }
+                            showToast(
+                              `ব্যাকআপ ফাইল থেকে হুবহু ডাটা রিস্টোর সম্পন্ন হয়েছে!`,
+                              'success'
+                            );
+                          } finally {
+                            setIsRestoring(false);
                           }
-                          setParsedRestoreData(null);
-                        } finally {
-                          setIsRestoring(false);
-                        }
-                      }}
-                      className="w-full py-2 bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs rounded-lg shadow-sm transition-all cursor-pointer"
-                    >
-                      {isRestoring ? 'রিস্টোর হচ্ছে...' : 'এখনই ডাটা রিস্টোর করুন'}
-                    </button>
+                        }}
+                        className="w-full py-2 px-3 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-lg shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        {isRestoring ? 'রিস্টোর হচ্ছে...' : '✓ হুবহু ফাইল রিস্টোর করুন (Replace)'}
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={isRestoring}
+                        onClick={async () => {
+                          if (!parsedRestoreData) return;
+                          setIsRestoring(true);
+                          try {
+                            if (onRestoreFromBackupJSON) {
+                              await onRestoreFromBackupJSON(parsedRestoreData, 'merge');
+                            }
+                            showToast(
+                              `ব্যাকআপ ফাইলের ডাটা বর্তমান ডাটার সাথে একত্রিত (Merge) করা হয়েছে!`,
+                              'success'
+                            );
+                          } finally {
+                            setIsRestoring(false);
+                          }
+                        }}
+                        className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        {isRestoring ? 'মার্জ হচ্ছে...' : '+ বর্তমান ডাটার সাথে মার্জ করুন'}
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>

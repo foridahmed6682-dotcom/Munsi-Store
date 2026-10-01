@@ -568,50 +568,115 @@ async function startServer() {
         }
       }
 
-      if (Array.isArray(body.products) && body.products.length > 0) {
-        serverDbMirror.products = mergeArrayById(serverDbMirror.products, body.products, 'id');
-        touchedCatalogs.add('products');
-        changed = true;
+      const replaceAll = Boolean(body.replaceAll);
+
+      if (Array.isArray(body.products)) {
+        if (replaceAll) {
+          const oldProdMap = new Map(
+            (serverDbMirror.products || []).map((p: any) => [String(p?.id || ''), p])
+          );
+          serverDbMirror.products = body.products.map((p: any) => {
+            if (p && !p.imageUrl && p.id && oldProdMap.has(String(p.id))) {
+              const prev = oldProdMap.get(String(p.id));
+              if (prev?.imageUrl) return { ...p, imageUrl: prev.imageUrl };
+            }
+            return p;
+          });
+          touchedCatalogs.add('products');
+          changed = true;
+        } else if (body.products.length > 0) {
+          serverDbMirror.products = mergeArrayById(serverDbMirror.products, body.products, 'id');
+          touchedCatalogs.add('products');
+          changed = true;
+        }
       }
-      if (Array.isArray(body.shops) && body.shops.length > 0) {
-        serverDbMirror.shops = mergeArrayById(serverDbMirror.shops, body.shops, 'id');
-        touchedCatalogs.add('shops');
-        changed = true;
+      if (Array.isArray(body.shops)) {
+        if (replaceAll) {
+          serverDbMirror.shops = body.shops;
+          touchedCatalogs.add('shops');
+          changed = true;
+        } else if (body.shops.length > 0) {
+          serverDbMirror.shops = mergeArrayById(serverDbMirror.shops, body.shops, 'id');
+          touchedCatalogs.add('shops');
+          changed = true;
+        }
       }
-      if (Array.isArray(body.orders) && body.orders.length > 0) {
-        serverDbMirror.orders = mergeArrayById(serverDbMirror.orders, body.orders, 'id');
-        touchedCatalogs.add('orders');
-        changed = true;
+      if (Array.isArray(body.orders)) {
+        if (replaceAll) {
+          serverDbMirror.orders = body.orders;
+          touchedCatalogs.add('orders');
+          changed = true;
+        } else if (body.orders.length > 0) {
+          serverDbMirror.orders = mergeArrayById(serverDbMirror.orders, body.orders, 'id');
+          touchedCatalogs.add('orders');
+          changed = true;
+        }
       }
-      if (Array.isArray(body.categories) && body.categories.length > 0) {
-        serverDbMirror.categories = mergeArrayById(serverDbMirror.categories, body.categories, 'id');
-        touchedCatalogs.add('categories');
-        changed = true;
+      if (Array.isArray(body.categories)) {
+        if (replaceAll) {
+          serverDbMirror.categories = body.categories;
+          touchedCatalogs.add('categories');
+          changed = true;
+        } else if (body.categories.length > 0) {
+          serverDbMirror.categories = mergeArrayById(serverDbMirror.categories, body.categories, 'id');
+          touchedCatalogs.add('categories');
+          changed = true;
+        }
       }
-      if (Array.isArray(body.routes) && body.routes.length > 0) {
-        serverDbMirror.routes = mergeArrayById(serverDbMirror.routes, body.routes, 'id');
-        touchedCatalogs.add('routes');
-        changed = true;
+      if (Array.isArray(body.routes)) {
+        if (replaceAll) {
+          serverDbMirror.routes = body.routes;
+          touchedCatalogs.add('routes');
+          changed = true;
+        } else if (body.routes.length > 0) {
+          serverDbMirror.routes = mergeArrayById(serverDbMirror.routes, body.routes, 'id');
+          touchedCatalogs.add('routes');
+          changed = true;
+        }
       }
-      if (Array.isArray(body.authorizedEmails) && body.authorizedEmails.length > 0) {
-        serverDbMirror.authorizedEmails = mergeArrayById(serverDbMirror.authorizedEmails, body.authorizedEmails, 'email');
-        touchedCatalogs.add('authorizedEmails');
-        changed = true;
+      if (Array.isArray(body.authorizedEmails)) {
+        if (replaceAll && body.authorizedEmails.length > 0) {
+          serverDbMirror.authorizedEmails = mergeArrayById(body.authorizedEmails, serverDbMirror.authorizedEmails.filter((x: any) => String(x?.email || '').toLowerCase() === 'foridahmed6682@gmail.com'), 'email');
+          touchedCatalogs.add('authorizedEmails');
+          changed = true;
+        } else if (body.authorizedEmails.length > 0) {
+          serverDbMirror.authorizedEmails = mergeArrayById(serverDbMirror.authorizedEmails, body.authorizedEmails, 'email');
+          touchedCatalogs.add('authorizedEmails');
+          changed = true;
+        }
       }
-      if (Array.isArray(body.dueCollections) && body.dueCollections.length > 0) {
-        serverDbMirror.dueCollections = mergeArrayById(serverDbMirror.dueCollections, body.dueCollections, 'id');
-        touchedCatalogs.add('dueCollections');
-        changed = true;
+      if (Array.isArray(body.dueCollections)) {
+        if (replaceAll) {
+          serverDbMirror.dueCollections = body.dueCollections;
+          touchedCatalogs.add('dueCollections');
+          changed = true;
+        } else if (body.dueCollections.length > 0) {
+          serverDbMirror.dueCollections = mergeArrayById(serverDbMirror.dueCollections, body.dueCollections, 'id');
+          touchedCatalogs.add('dueCollections');
+          changed = true;
+        }
       }
-      if (Array.isArray(body.dailyExpenses) && body.dailyExpenses.length > 0) {
-        serverDbMirror.dailyExpenses = mergeArrayById(serverDbMirror.dailyExpenses, body.dailyExpenses, 'id');
-        touchedCatalogs.add('dailyExpenses');
-        changed = true;
+      if (Array.isArray(body.dailyExpenses)) {
+        if (replaceAll) {
+          serverDbMirror.dailyExpenses = body.dailyExpenses;
+          touchedCatalogs.add('dailyExpenses');
+          changed = true;
+        } else if (body.dailyExpenses.length > 0) {
+          serverDbMirror.dailyExpenses = mergeArrayById(serverDbMirror.dailyExpenses, body.dailyExpenses, 'id');
+          touchedCatalogs.add('dailyExpenses');
+          changed = true;
+        }
       }
-      if (Array.isArray(body.staffTargets) && body.staffTargets.length > 0) {
-        serverDbMirror.staffTargets = mergeArrayById(serverDbMirror.staffTargets, body.staffTargets, 'id');
-        touchedCatalogs.add('staffTargets');
-        changed = true;
+      if (Array.isArray(body.staffTargets)) {
+        if (replaceAll) {
+          serverDbMirror.staffTargets = body.staffTargets;
+          touchedCatalogs.add('staffTargets');
+          changed = true;
+        } else if (body.staffTargets.length > 0) {
+          serverDbMirror.staffTargets = mergeArrayById(serverDbMirror.staffTargets, body.staffTargets, 'id');
+          touchedCatalogs.add('staffTargets');
+          changed = true;
+        }
       }
       if (body.businessInfo && typeof body.businessInfo === 'object') {
         serverDbMirror.businessInfo = { ...(serverDbMirror.businessInfo || {}), ...body.businessInfo };
@@ -619,7 +684,8 @@ async function startServer() {
       }
 
       const isExplicitMutation = Boolean(
-        body.upsertCollection ||
+        replaceAll ||
+          body.upsertCollection ||
           body.deleteCollection ||
           body.clearCollection ||
           body.businessInfo ||

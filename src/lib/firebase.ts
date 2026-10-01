@@ -73,6 +73,15 @@ const READ_QUOTA_EXHAUSTED_STORAGE_KEY = 'munsi_fs_quota_exhausted_date_v1';
 const WRITE_QUOTA_EXHAUSTED_STORAGE_KEY = 'munsi_fs_write_quota_exhausted_date_v1';
 let readQuotaCircuitBreakerTripped = false;
 let writeQuotaCircuitBreakerTripped = false;
+let restoreCooldownUntil = 0;
+
+export function setRestoreCooldown(ms = 12000): void {
+  restoreCooldownUntil = Date.now() + ms;
+}
+
+export function isRestoreCooldownActive(): boolean {
+  return Date.now() < restoreCooldownUntil;
+}
 
 function getTodayDateKey(): string {
   return new Date().toISOString().split('T')[0];
@@ -395,11 +404,15 @@ export async function deleteItemFromServerMirror(deleteCollection: string, delet
 }
 
 export async function pushBulkDataToServerMirror(payload: {
+  replaceAll?: boolean;
   products?: Product[];
   shops?: Shop[];
   orders?: Order[];
   categories?: Category[];
   routes?: Route[];
+  dueCollections?: DueCollectionRecord[];
+  dailyExpenses?: DailyExpenseRecord[];
+  staffTargets?: StaffTargetConfig[];
   authorizedEmails?: AuthorizedUserEmail[];
   businessInfo?: BusinessInfo;
 }) {
@@ -976,6 +989,7 @@ export async function updateUserRoleAndRoute(uid: string, role: UserRole, assign
 export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
   const path = 'shops';
   const pollFirebaseDirect = async (extraShops: Shop[] = []) => {
+    if (isRestoreCooldownActive()) return;
     const mirror = await fetchServerDatabaseMirror();
     const directShops = isFirestoreWriteQuotaExhausted()
       ? []
@@ -1037,6 +1051,7 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
 export function subscribeToCloudProducts(onData: (products: Product[]) => void) {
   const path = 'products';
   const pollFirebaseDirect = async (extraProducts: Product[] = []) => {
+    if (isRestoreCooldownActive()) return;
     const mirror = await fetchServerDatabaseMirror();
     const directProducts = isFirestoreWriteQuotaExhausted()
       ? []
@@ -1113,6 +1128,7 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
   const path = 'orders';
   const q = query(collection(db, path), orderBy('orderDate', 'desc'));
   const pollFirebaseDirect = async (extraOrders: Order[] = []) => {
+    if (isRestoreCooldownActive()) return;
     const mirror = await fetchServerDatabaseMirror();
     const directOrders = isFirestoreWriteQuotaExhausted()
       ? []

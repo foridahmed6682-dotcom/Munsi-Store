@@ -446,8 +446,11 @@ if (typeof window !== 'undefined') {
 export function getDeletedProductIds(): Set<string> {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.DELETED_PRODUCTS);
-    const list: string[] = raw ? JSON.parse(raw) : [];
-    return new Set([...DEMO_PRODUCT_IDS, ...list]);
+    if (raw !== null) {
+      const list: string[] = JSON.parse(raw);
+      return new Set(Array.isArray(list) ? list : []);
+    }
+    return new Set(DEMO_PRODUCT_IDS);
   } catch {
     return new Set(DEMO_PRODUCT_IDS);
   }
@@ -463,8 +466,11 @@ export function getDeletedShopIds(): Set<string> {
   const demoShops = ['shop-1', 'shop-2', 'shop-3', 'shop-4', 'shop-5', 'shop-6'];
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.DELETED_SHOPS);
-    const list: string[] = raw ? JSON.parse(raw) : [];
-    return new Set([...demoShops, ...list]);
+    if (raw !== null) {
+      const list: string[] = JSON.parse(raw);
+      return new Set(Array.isArray(list) ? list : []);
+    }
+    return new Set(demoShops);
   } catch {
     return new Set(demoShops);
   }
@@ -480,8 +486,11 @@ export function getDeletedOrderIds(): Set<string> {
   const demoOrders = ['ord-101', 'ord-102'];
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.DELETED_ORDERS);
-    const list: string[] = raw ? JSON.parse(raw) : [];
-    return new Set([...demoOrders, ...list]);
+    if (raw !== null) {
+      const list: string[] = JSON.parse(raw);
+      return new Set(Array.isArray(list) ? list : []);
+    }
+    return new Set(demoOrders);
   } catch {
     return new Set(demoOrders);
   }
@@ -496,8 +505,11 @@ export function addDeletedOrderId(id: string) {
 export function getDeletedCategoryIds(): Set<string> {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.DELETED_CATEGORIES);
-    const list: string[] = raw ? JSON.parse(raw) : [];
-    return new Set([...DEMO_CATEGORY_IDS, ...list]);
+    if (raw !== null) {
+      const list: string[] = JSON.parse(raw);
+      return new Set(Array.isArray(list) ? list : []);
+    }
+    return new Set(DEMO_CATEGORY_IDS);
   } catch {
     return new Set(DEMO_CATEGORY_IDS);
   }
@@ -512,8 +524,11 @@ export function addDeletedCategoryId(id: string) {
 export function getDeletedRouteIds(): Set<string> {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.DELETED_ROUTES);
-    const list: string[] = raw ? JSON.parse(raw) : [];
-    return new Set([...DEMO_ROUTE_IDS, ...list]);
+    if (raw !== null) {
+      const list: string[] = JSON.parse(raw);
+      return new Set(Array.isArray(list) ? list : []);
+    }
+    return new Set(DEMO_ROUTE_IDS);
   } catch {
     return new Set(DEMO_ROUTE_IDS);
   }
@@ -523,6 +538,48 @@ export function addDeletedRouteId(id: string) {
   const set = getDeletedRouteIds();
   set.add(id);
   safeSetLocalStorage(STORAGE_KEYS.DELETED_ROUTES, JSON.stringify(Array.from(set)));
+}
+
+/**
+ * Unblocks all IDs present in a restored backup/snapshot so saveProducts/saveShops/saveOrders
+ * never filter them out, and in 'replace' mode marks removed IDs as deleted so cloud listeners
+ * do not resurrect items that are not in the backup.
+ */
+export function prepareDeletedIdsForRestore(
+  backupData: {
+    products?: Product[];
+    shops?: Shop[];
+    orders?: Order[];
+    categories?: Category[];
+    routes?: Route[];
+  },
+  mode: 'replace' | 'merge' = 'replace'
+) {
+  const syncDeletedSet = <T extends { id: string }>(
+    storageKey: string,
+    currentDeleted: Set<string>,
+    currentItems: T[],
+    incomingItems: T[] | undefined
+  ) => {
+    if (!Array.isArray(incomingItems)) return;
+    const incomingIds = new Set(incomingItems.map((x) => x?.id).filter(Boolean));
+    const nextDeleted = new Set(currentDeleted);
+    if (mode === 'replace') {
+      currentItems.forEach((item) => {
+        if (item?.id && !incomingIds.has(item.id)) {
+          nextDeleted.add(item.id);
+        }
+      });
+    }
+    incomingIds.forEach((id) => nextDeleted.delete(id));
+    safeSetLocalStorage(storageKey, JSON.stringify(Array.from(nextDeleted)));
+  };
+
+  syncDeletedSet(STORAGE_KEYS.DELETED_PRODUCTS, getDeletedProductIds(), getProducts(), backupData.products);
+  syncDeletedSet(STORAGE_KEYS.DELETED_SHOPS, getDeletedShopIds(), getShops(), backupData.shops);
+  syncDeletedSet(STORAGE_KEYS.DELETED_ORDERS, getDeletedOrderIds(), getOrders(), backupData.orders);
+  syncDeletedSet(STORAGE_KEYS.DELETED_CATEGORIES, getDeletedCategoryIds(), getCategories(), backupData.categories);
+  syncDeletedSet(STORAGE_KEYS.DELETED_ROUTES, getDeletedRouteIds(), getRoutes(), backupData.routes);
 }
 
 export function isInitialSeedDone(): boolean {

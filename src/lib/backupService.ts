@@ -242,11 +242,32 @@ export async function fetchAllAutoBackupSnapshots(): Promise<AutoBackupSnapshot[
   return local;
 }
 
+export type AutoDownloadSlotId = 'morning_9am' | 'evening_8pm' | 'night_10pm';
+
+export interface ScheduledAutoDownloadStatus {
+  date: string; // Local YYYY-MM-DD
+  slots: {
+    morning_9am?: string; // ISO time when downloaded
+    evening_8pm?: string; // ISO time when downloaded
+    night_10pm?: string;  // ISO time when downloaded
+  };
+}
+
+const SCHEDULED_AUTO_DOWNLOAD_KEY = 'munsi_scheduled_3x_auto_download_v2';
+
+export function getLocalDateKey(d: Date = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 export function getDailyAutoDownloadEnabled(): boolean {
   try {
-    return localStorage.getItem(AUTO_DOWNLOAD_ENABLED_KEY) === 'true';
+    // Enabled by default unless explicitly set to 'false'
+    return localStorage.getItem(AUTO_DOWNLOAD_ENABLED_KEY) !== 'false';
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -258,19 +279,105 @@ export function setDailyAutoDownloadEnabled(enabled: boolean): void {
   }
 }
 
-export function checkAndTriggerDailyAutoDownload(backupData: FullBackupData): boolean {
+export function getScheduledAutoDownloadStatus(): ScheduledAutoDownloadStatus {
+  const today = getLocalDateKey();
   try {
-    if (!getDailyAutoDownloadEnabled()) return false;
-    if (backupData.orders.length === 0 && backupData.shops.length === 0) return false;
-    const today = new Date().toISOString().split('T')[0];
-    const lastDate = localStorage.getItem(LAST_AUTO_DOWNLOAD_DATE_KEY);
-    if (lastDate === today) return false;
-
-    localStorage.setItem(LAST_AUTO_DOWNLOAD_DATE_KEY, today);
-    downloadJSONFile(backupData, `MunsiEnterprise_AutoBackup_${today}.json`);
-    return true;
+    const raw = localStorage.getItem(SCHEDULED_AUTO_DOWNLOAD_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as ScheduledAutoDownloadStatus;
+      if (parsed && parsed.date === today && parsed.slots && typeof parsed.slots === 'object') {
+        return parsed;
+      }
+    }
   } catch {
-    return false;
+    // ignore
+  }
+  return { date: today, slots: {} };
+}
+
+/**
+ * Checks if any of the 3 daily auto-backup slots (9:00 AM, 8:00 PM, 10:00 PM)
+ * has arrived and has not been downloaded yet today.
+ * Returns the slot label in Bangla if a download was triggered, or null otherwise.
+ */
+export function checkAndTriggerDailyAutoDownload(backupData: FullBackupData): string | null {
+  try {
+    if (!getDailyAutoDownloadEnabled()) return null;
+    if (
+      (!backupData.orders || backupData.orders.length === 0) &&
+      (!backupData.shops || backupData.shops.length === 0) &&
+      (!backupData.products || backupData.products.length === 0)
+    ) {
+      return null;
+    }
+
+    const now = new Date();
+    const hour = now.getHours();
+    const today = getLocalDateKey(now);
+    const status = getScheduledAutoDownloadStatus();
+
+    // Determine active slot based on local hour:
+    // 1) সকাল ৯টা (9:00 AM -> 09:00 to 19:59)
+    // 2) সন্ধ্যা ৮টা (8:00 PM -> 20:00 to 21:59)
+    // 3) রাত ১০টা (10:00 PM -> 22:00 to 23:59)
+    let activeSlot: {
+      id: AutoDownloadSlotId;
+      labelBn: string;
+      fileTag: string;
+    } | null = null;
+
+    if (hour >= 9 && hour < 20) {
+      activeSlot = {
+        id: 'morning_9am',
+        labelBn: 'সকাল ৯টা (9:00 AM)',
+        fileTag: '09-00_AM',
+      };
+    } else if (hour >= 20 && hour < 22) {
+      activeSlot = {
+        id: 'evening_8pm',
+        labelBn: 'সন্ধ্যা ৮টা (8:00 PM)',
+        fileTag: '08-00_PM',
+      };
+    } else if (hour >= 22 && hour <= 23) {
+      activeSlot = {
+        id: 'night_10pm',
+        labelBn: 'রাত ১০টা (10:00 PM)',
+        fileTag: '10-00_PM',
+      };
+    }
+
+    if (!activeSlot) return null;
+
+    // Already downloaded for this slot today?
+    if (status.slots[activeSlot.id]) {
+      return null;
+    }
+
+    // Mark slot as downloaded for today
+    const nextStatus: ScheduledAutoDownloadStatus = {
+      date: today,
+      slots: {
+        ...status.slots,
+        [activeSlot.id]: now.toISOString(),
+      },
+    };
+    localStorage.setItem(SCHEDULED_AUTO_DOWNLOAD_KEY, JSON.stringify(nextStatus));
+    localStorage.setItem(LAST_AUTO_DOWNLOAD_DATE_KEY, `${today}_${activeSlot.id}`);
+
+    const payloadWithSlot: FullBackupData = {
+      ...backupData,
+      exportDate: now.toISOString(),
+      triggerReason: `অটো-ডাউনলোড ব্যাকআপ (${activeSlot.labelBn})`,
+    };
+
+    downloadJSONFile(
+      payloadWithSlot,
+      `MunsiStore_AutoBackup_${today}_${activeSlot.fileTag}.json`
+    );
+
+    return activeSlot.labelBn;
+  } catch {
+    return null;
   }
 }
 
@@ -550,7 +657,7 @@ export function downloadShopsCSV(shops: Shop[]): void {
 }
 
 /**
- * Validate and restore database from a JSON backup file
+ * Validate and restore database from any JSON backup or snapshot file
  */
 export function parseAndValidateBackupJSON(jsonContent: string): {
   isValid: boolean;
@@ -558,14 +665,88 @@ export function parseAndValidateBackupJSON(jsonContent: string): {
   data?: FullBackupData;
 } {
   try {
-    const parsed = JSON.parse(jsonContent);
+    const cleanedText = (jsonContent || '').replace(/^\uFEFF/, '').trim();
+    if (!cleanedText) {
+      return { isValid: false, error: 'ফাইলটি খালি।' };
+    }
+    let parsed = JSON.parse(cleanedText);
     if (!parsed || typeof parsed !== 'object') {
       return { isValid: false, error: 'ফাইলটি সঠিক JSON ফরম্যাটে নেই।' };
     }
-    if (!Array.isArray(parsed.orders) && !Array.isArray(parsed.products) && !Array.isArray(parsed.shops)) {
-      return { isValid: false, error: 'ব্যাকআপ ফাইলে কোনো অর্ডার, প্রোডাক্ট বা দোকানের তালিকা পাওয়া যায়নি।' };
+
+    // Support Time-Machine Snapshot files ({ id, timestamp, label, data: { ... } })
+    // or Server Mirror files ({ mirror: { ... } })
+    if (parsed.data && typeof parsed.data === 'object') {
+      parsed = parsed.data;
+    } else if (parsed.mirror && typeof parsed.mirror === 'object') {
+      parsed = parsed.mirror;
+    } else if (Array.isArray(parsed.snapshots) && parsed.snapshots.length > 0 && parsed.snapshots[0]?.data) {
+      parsed = parsed.snapshots[0].data;
     }
-    return { isValid: true, data: parsed };
+
+    const hasOrders = Array.isArray(parsed.orders);
+    const hasProducts = Array.isArray(parsed.products);
+    const hasShops = Array.isArray(parsed.shops);
+    const hasCategories = Array.isArray(parsed.categories);
+    const hasRoutes = Array.isArray(parsed.routes);
+
+    if (!hasOrders && !hasProducts && !hasShops && !hasCategories && !hasRoutes) {
+      return {
+        isValid: false,
+        error: 'ব্যাকআপ ফাইলে কোনো অর্ডার, প্রোডাক্ট বা দোকানের তালিকা পাওয়া যায়নি।',
+      };
+    }
+
+    const orders: Order[] = hasOrders ? parsed.orders : [];
+    const products: Product[] = hasProducts ? parsed.products : [];
+    const shops: Shop[] = hasShops ? parsed.shops : [];
+    const categories: Category[] = hasCategories ? parsed.categories : [];
+    const routes: Route[] = hasRoutes ? parsed.routes : [];
+    const dueCollections: DueCollectionRecord[] = Array.isArray(parsed.dueCollections)
+      ? parsed.dueCollections
+      : [];
+    const dailyExpenses: DailyExpenseRecord[] = Array.isArray(parsed.dailyExpenses)
+      ? parsed.dailyExpenses
+      : [];
+    const staffTargets: StaffTargetConfig[] = Array.isArray(parsed.staffTargets)
+      ? parsed.staffTargets
+      : [];
+    const authorizedEmails: AuthorizedUserEmail[] = Array.isArray(parsed.authorizedEmails)
+      ? parsed.authorizedEmails
+      : [];
+
+    const totalSales = orders.reduce((sum, o) => sum + (Number(o?.netTotal) || 0), 0);
+    const totalCash = orders.reduce((sum, o) => sum + (Number(o?.paidAmount) || 0), 0);
+    const totalDue = shops.reduce((sum, s) => sum + (Number(s?.previousDue) || 0), 0);
+
+    const normalized: FullBackupData = {
+      version: parsed.version || '2.0',
+      exportDate: parsed.exportDate || parsed.timestamp || parsed.updatedAt || new Date().toISOString(),
+      businessName: parsed.businessName || parsed.businessInfo?.banglaName || 'মুন্সী এন্টারপ্রাইজ',
+      triggerReason: parsed.triggerReason || parsed.label || 'ব্যাকআপ ফাইল রিস্টোর',
+      summary: parsed.summary || {
+        totalOrders: orders.length,
+        totalSalesAmount: totalSales,
+        totalCashCollected: totalCash,
+        totalDueAmount: totalDue,
+        totalShops: shops.length,
+        totalProducts: products.length,
+        totalDueCollections: dueCollections.length,
+        totalExpenses: dailyExpenses.length,
+      },
+      orders,
+      products,
+      shops,
+      categories,
+      routes,
+      dueCollections,
+      dailyExpenses,
+      staffTargets,
+      authorizedEmails,
+      businessInfo: parsed.businessInfo,
+    };
+
+    return { isValid: true, data: normalized };
   } catch (err: any) {
     return { isValid: false, error: `ব্যাকআপ ফাইল পার্স করতে ব্যর্থ: ${err.message}` };
   }
