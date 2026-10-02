@@ -79,6 +79,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [newImageUrl, setNewImageUrl] = useState('');
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [uploadStatusMsg, setUploadStatusMsg] = useState<{ text: string; isError?: boolean } | null>(null);
+  const [productFormError, setProductFormError] = useState<string | null>(null);
 
   const categories = useMemo(() => {
     const set = new Set<string>();

@@ -47,7 +47,11 @@ import {
   CreditCard,
   Banknote,
   Printer,
-  Activity
+  Activity,
+  CheckSquare,
+  Square,
+  RotateCcw,
+  Calendar
 } from 'lucide-react';
 import {
   Product,
@@ -141,6 +145,7 @@ interface AdminDashboardViewProps {
   onDeleteOrder?: (orderId: string, skipConfirm?: boolean) => void;
   onDeleteDailyExpense?: (expenseId: string, skipConfirm?: boolean) => void;
   onDeleteDueCollection?: (collectionId: string, skipConfirm?: boolean) => void;
+  onDeleteBatchDueCollections?: (ids: string[]) => void;
   onDeleteAllProducts?: () => void;
   onDeleteAllShops?: () => void;
   onDeleteAllOrders?: () => void;
@@ -149,13 +154,15 @@ interface AdminDashboardViewProps {
   onDeleteAllDailyExpenses?: () => void;
   onDeleteAllDueCollections?: () => void;
   onResetAllShopDues?: () => void;
+  onResetShopDue?: (shopId: string, skipConfirm?: boolean) => void;
+  onResetBatchShopDues?: (shopIds: string[], skipConfirm?: boolean) => void;
   onDeleteAllStaffEmails?: () => void;
   onDeleteEverythingAllAtOnce?: () => void;
   onRequestDeletePermission?: (req: Omit<DeletePermissionRequest, 'isOpen'>) => void;
   onForceDeepCloudRecovery?: () => Promise<void>;
 }
 
-type AdminSubTab = 'overview' | 'storefront' | 'categories' | 'products' | 'routes' | 'access' | 'analytics' | 'push' | 'settings' | 'backup' | 'print_center' | 'delete_center' | 'diagnostics';
+type AdminSubTab = 'overview' | 'storefront' | 'categories' | 'products' | 'routes' | 'access' | 'analytics' | 'due_history' | 'push' | 'settings' | 'backup' | 'print_center' | 'delete_center' | 'diagnostics';
 
 const AVAILABLE_ROUTES = [
   'সব রুট (All Routes)',
@@ -227,6 +234,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   onDeleteOrder,
   onDeleteDailyExpense,
   onDeleteDueCollection,
+  onDeleteBatchDueCollections,
   onDeleteAllProducts,
   onDeleteAllShops,
   onDeleteAllOrders,
@@ -235,6 +243,8 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   onDeleteAllDailyExpenses,
   onDeleteAllDueCollections,
   onResetAllShopDues,
+  onResetShopDue,
+  onResetBatchShopDues,
   onDeleteAllStaffEmails,
   onDeleteEverythingAllAtOnce,
   onRequestDeletePermission,
@@ -259,6 +269,189 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       setScheduledSlotsStatus(getScheduledAutoDownloadStatus());
     }
   }, [subTab, orders.length, shops.length, products.length]);
+
+  // Due History & Bulk Delete State
+  const [dueSearchQuery, setDueSearchQuery] = useState('');
+  const [dueDateFilter, setDueDateFilter] = useState<'ALL' | 'TODAY' | 'YESTERDAY' | 'WEEK' | 'MONTH'>('ALL');
+  const [dueMethodFilter, setDueMethodFilter] = useState<string>('ALL');
+  const [dueRouteFilter, setDueRouteFilter] = useState<string>('ALL');
+  const [dueSortOrder, setDueSortOrder] = useState<'NEWEST' | 'OLDEST' | 'AMOUNT_DESC'>('NEWEST');
+  const [selectedDueIds, setSelectedDueIds] = useState<Set<string>>(new Set());
+
+  const filteredDueCollections = useMemo(() => {
+    const q = dueSearchQuery.trim().toLowerCase();
+    const now = new Date();
+    const todayStr = now.toISOString().split('T')[0];
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+    const sevenDaysAgo = new Date(now);
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const monthStartStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+
+    const shopMap = new Map<string, Shop>();
+    shops.forEach((s) => {
+      shopMap.set(s.id, s);
+      shopMap.set(s.name.trim().toLowerCase(), s);
+    });
+
+    let list = dueCollections.filter((c) => {
+      if (q) {
+        const matchesShop = (c.shopName || '').toLowerCase().includes(q);
+        const matchesNotes = (c.notes || '').toLowerCase().includes(q);
+        const matchesMethod = (c.paymentMethod || '').toLowerCase().includes(q);
+        const matchesAmount = String(c.amount || '').includes(q);
+        const matchesDate = (c.date || '').includes(q);
+        if (!matchesShop && !matchesNotes && !matchesMethod && !matchesAmount && !matchesDate) {
+          return false;
+        }
+      }
+
+      if (dueDateFilter === 'TODAY') {
+        if (!c.date?.startsWith(todayStr)) return false;
+      } else if (dueDateFilter === 'YESTERDAY') {
+        if (!c.date?.startsWith(yesterdayStr)) return false;
+      } else if (dueDateFilter === 'WEEK') {
+        const cDate = new Date(c.date);
+        if (cDate < sevenDaysAgo) return false;
+      } else if (dueDateFilter === 'MONTH') {
+        if (c.date < monthStartStr) return false;
+      }
+
+      if (dueMethodFilter !== 'ALL') {
+        if (c.paymentMethod !== dueMethodFilter) return false;
+      }
+
+      if (dueRouteFilter !== 'ALL') {
+        const shop = shopMap.get(c.shopId) || shopMap.get((c.shopName || '').trim().toLowerCase());
+        const routeName = shop?.routeArea || '';
+        if (routeName !== dueRouteFilter) return false;
+      }
+
+      return true;
+    });
+
+    if (dueSortOrder === 'OLDEST') {
+      list = [...list].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    } else if (dueSortOrder === 'AMOUNT_DESC') {
+      list = [...list].sort((a, b) => (b.amount || 0) - (a.amount || 0));
+    } else {
+      list = [...list].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    }
+
+    return list;
+  }, [dueCollections, dueSearchQuery, dueDateFilter, dueMethodFilter, dueRouteFilter, dueSortOrder, shops]);
+
+  const toggleSelectDueItem = (id: string) => {
+    setSelectedDueIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAllFilteredDues = () => {
+    if (selectedDueIds.size === filteredDueCollections.length && filteredDueCollections.length > 0) {
+      setSelectedDueIds(new Set());
+    } else {
+      setSelectedDueIds(new Set(filteredDueCollections.map((c) => c.id)));
+    }
+  };
+
+  const handleBulkDeleteSelectedDues = () => {
+    const ids = Array.from(selectedDueIds);
+    if (ids.length === 0) return;
+    if (onDeleteBatchDueCollections) {
+      onDeleteBatchDueCollections(ids);
+      setSelectedDueIds(new Set());
+    } else {
+      const targetCollections = dueCollections.filter((c) => ids.includes(c.id));
+      const totalAmount = targetCollections.reduce((s, c) => s + (c.amount || 0), 0);
+      onRequestDeletePermission?.({
+        title: `নির্বাচিত ${ids.length}টি বকেয়া হিস্ট্রি বাল্ক ডিলিট`,
+        itemLabel: `মোট ${ids.length}টি রেকর্ড (৳${totalAmount.toLocaleString()})`,
+        isBulk: true,
+        message: `আপনি কি নিশ্চিতভাবে বাছাইকৃত ${ids.length}টি বকেয়া আদায়ের রেকর্ড ডিলিট করতে চান?`,
+        confirmButtonText: `হ্যাঁ, ${ids.length}টি রেকর্ড ডিলিট করুন`,
+        onConfirm: () => {
+          ids.forEach((id) => onDeleteDueCollection?.(id, true));
+          setSelectedDueIds(new Set());
+        },
+      });
+    }
+  };
+
+  // Active view mode in due_history tab: 'shop_dues' (দোকানের বকেয়া খাতা ও বাল্ক শূন্য করুন) or 'collections_log' (বকেয়া আদায় হিস্ট্রি)
+  const [dueTabMode, setDueTabMode] = useState<'shop_dues' | 'collections_log'>('shop_dues');
+
+  // Shop Dues Management State
+  const [shopDueSearch, setShopDueSearch] = useState('');
+  const [shopDueRouteFilter, setShopDueRouteFilter] = useState('ALL');
+  const [shopDueStatusFilter, setShopDueStatusFilter] = useState<'ALL' | 'WITH_DUE' | 'ZERO_DUE'>('WITH_DUE');
+  const [selectedShopDueIds, setSelectedShopDueIds] = useState<Set<string>>(new Set());
+
+  const filteredShopsForDue = useMemo(() => {
+    const q = shopDueSearch.trim().toLowerCase();
+    return shops
+      .filter((s) => {
+        if (shopDueStatusFilter === 'WITH_DUE' && (s.previousDue || 0) <= 0) return false;
+        if (shopDueStatusFilter === 'ZERO_DUE' && (s.previousDue || 0) > 0) return false;
+        if (shopDueRouteFilter !== 'ALL' && s.routeArea !== shopDueRouteFilter) return false;
+        if (q) {
+          const matchesName = (s.name || '').toLowerCase().includes(q);
+          const matchesOwner = (s.ownerName || '').toLowerCase().includes(q);
+          const matchesPhone = (s.phone || '').includes(q);
+          const matchesRoute = (s.routeArea || '').toLowerCase().includes(q);
+          const matchesDue = String(s.previousDue || 0).includes(q);
+          if (!matchesName && !matchesOwner && !matchesPhone && !matchesRoute && !matchesDue) {
+            return false;
+          }
+        }
+        return true;
+      })
+      .sort((a, b) => (b.previousDue || 0) - (a.previousDue || 0));
+  }, [shops, shopDueSearch, shopDueRouteFilter, shopDueStatusFilter]);
+
+  const toggleSelectShopDue = (id: string) => {
+    setSelectedShopDueIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAllFilteredShopDues = () => {
+    if (selectedShopDueIds.size === filteredShopsForDue.length && filteredShopsForDue.length > 0) {
+      setSelectedShopDueIds(new Set());
+    } else {
+      setSelectedShopDueIds(new Set(filteredShopsForDue.map((s) => s.id)));
+    }
+  };
+
+  const handleBulkResetSelectedShopDues = () => {
+    const ids = Array.from(selectedShopDueIds);
+    if (ids.length === 0) return;
+    if (onResetBatchShopDues) {
+      onResetBatchShopDues(ids);
+      setSelectedShopDueIds(new Set());
+    } else {
+      const targetShops = shops.filter((s) => ids.includes(s.id));
+      const totalAmount = targetShops.reduce((sum, s) => sum + (s.previousDue || 0), 0);
+      onRequestDeletePermission?.({
+        title: `নির্বাচিত ${ids.length}টি দোকানের বকেয়া বাল্ক ৳০ (শূন্য) করার পারমিশন`,
+        itemLabel: `মোট ${ids.length}টি দোকান (বকেয়া: ৳${totalAmount.toLocaleString()})`,
+        isBulk: true,
+        message: `আপনি কি নিশ্চিতভাবে বাছাইকৃত ${ids.length}টি দোকানের বকেয়া একসাথে মুছে ৳০ (শূন্য) করতে চান? দোকান মুছে যাবে না, শুধু বকেয়া ০ হবে।`,
+        confirmButtonText: `হ্যাঁ, ${ids.length}টি দোকানের বকেয়া ৳০ করুন`,
+        onConfirm: () => {
+          ids.forEach((id) => onResetShopDue?.(id, true));
+          setSelectedShopDueIds(new Set());
+        },
+      });
+    }
+  };
 
   const allAvailableRouteNames = useMemo(() => {
     const set = new Set<string>();
@@ -1054,6 +1247,13 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               <span>স্টাফ অনুমতি</span>
             </button>
             <button
+              onClick={() => setSubTab('due_history')}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-600/90 hover:bg-amber-500 text-white font-semibold text-xs border border-amber-400/50 shadow-sm transition-all"
+            >
+              <DollarSign className="w-3.5 h-3.5 text-amber-200" />
+              <span>বকেয়া হিস্ট্রি</span>
+            </button>
+            <button
               onClick={() => setSubTab('delete_center')}
               className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs border border-rose-400/50 shadow-md transition-all active:scale-95 cursor-pointer"
             >
@@ -1088,6 +1288,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         >
           <TrendingUp className="w-4 h-4" />
           <span>লাভ-ক্ষতি ও স্টাফ টার্গেট</span>
+        </button>
+
+        <button
+          onClick={() => setSubTab('due_history')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+            subTab === 'due_history'
+              ? 'bg-amber-600 text-white font-black shadow-md'
+              : 'text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-300'
+          }`}
+        >
+          <DollarSign className="w-4 h-4 text-amber-500" />
+          <span>বকেয়া হিস্ট্রি ও বাল্ক ডিলিট ({dueCollections.length})</span>
         </button>
 
         <button
@@ -1258,20 +1470,34 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               <span className="text-[10px] text-emerald-600 font-bold">{metrics.totalOrders}টি বুকিং</span>
             </div>
 
-            <div className="bg-white p-3.5 rounded-2xl border border-neutral-200 shadow-xs">
-              <span className="text-[11px] font-semibold text-neutral-500">ক্যাশ আদায়</span>
+            <div
+              onClick={() => setSubTab('due_history')}
+              className="bg-white p-3.5 rounded-2xl border border-neutral-200 hover:border-emerald-400 shadow-xs cursor-pointer transition-all hover:scale-[1.02]"
+              title="বকেয়া আদায় হিস্ট্রি ও বাল্ক ডিলিট দেখুন"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-neutral-500">ক্যাশ আদায়</span>
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold">হিস্ট্রি →</span>
+              </div>
               <div className="text-lg font-black text-emerald-700 mt-1">
                 ৳{metrics.totalCashCollected.toLocaleString()}
               </div>
-              <span className="text-[10px] text-neutral-500 font-medium">ফিল্ড কালেকশন</span>
+              <span className="text-[10px] text-neutral-500 font-medium">ফিল্ড কালেকশন ({dueCollections.length}টি)</span>
             </div>
 
-            <div className="bg-white p-3.5 rounded-2xl border border-neutral-200 shadow-xs">
-              <span className="text-[11px] font-semibold text-neutral-500">দোকানের বকেয়া</span>
+            <div
+              onClick={() => setSubTab('due_history')}
+              className="bg-white p-3.5 rounded-2xl border border-neutral-200 hover:border-rose-400 shadow-xs cursor-pointer transition-all hover:scale-[1.02]"
+              title="বকেয়া আদায় হিস্ট্রি ও বাল্ক ডিলিট দেখুন"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-neutral-500">দোকানের বকেয়া</span>
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 font-bold">খাতা →</span>
+              </div>
               <div className="text-lg font-black text-rose-700 mt-1">
                 ৳{metrics.totalDueReceivable.toLocaleString()}
               </div>
-              <span className="text-[10px] text-rose-600 font-bold">বাকী খাতা</span>
+              <span className="text-[10px] text-rose-600 font-bold">বাকী খাতা ও কালেকশন</span>
             </div>
 
             <div className="bg-white p-3.5 rounded-2xl border border-neutral-200 shadow-xs">
@@ -1374,6 +1600,19 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   <div>
                     <span className="font-bold text-xs text-neutral-900 block">স্টক ইন ও রেট এডিট</span>
                     <span className="text-[11px] text-neutral-500">ইনভেন্টরি পরিবর্তন</span>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => setSubTab('due_history')}
+                  className="p-3 rounded-xl border border-amber-300 bg-amber-50/80 hover:bg-amber-100 text-left transition-colors flex flex-col justify-between cursor-pointer"
+                >
+                  <div className="w-8 h-8 rounded-lg bg-amber-600 text-white flex items-center justify-center font-bold mb-2">
+                    <DollarSign className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="font-bold text-xs text-amber-950 block">বকেয়া হিস্ট্রি ও বাল্ক ডিলিট</span>
+                    <span className="text-[11px] text-amber-800">{dueCollections.length}টি কালেকশন এন্ট্রি পরিচালনা</span>
                   </div>
                 </button>
 
@@ -3526,6 +3765,676 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         />
       )}
 
+      {/* SUB-TAB DUE HISTORY & SHOP DUES BULK DELETE / ZERO RESET */}
+      {subTab === 'due_history' && (() => {
+        const totalDueCollectedAll = dueCollections.reduce((sum, c) => sum + (c.amount || 0), 0);
+        const cashTotal = dueCollections.filter((c) => c.paymentMethod === 'CASH').reduce((sum, c) => sum + (c.amount || 0), 0);
+        const digitalTotal = dueCollections.filter((c) => c.paymentMethod !== 'CASH').reduce((sum, c) => sum + (c.amount || 0), 0);
+        const todayStr = new Date().toISOString().split('T')[0];
+        const todayTotal = dueCollections.filter((c) => c.date?.startsWith(todayStr)).reduce((sum, c) => sum + (c.amount || 0), 0);
+
+        // Shop Dues calculations
+        const totalMarketDue = shops.reduce((sum, s) => sum + (s.previousDue || 0), 0);
+        const shopsWithDue = shops.filter((s) => (s.previousDue || 0) > 0);
+        const zeroDueShops = shops.filter((s) => (s.previousDue || 0) <= 0);
+
+        const selectedShopDueTotal = filteredShopsForDue
+          .filter((s) => selectedShopDueIds.has(s.id))
+          .reduce((sum, s) => sum + (s.previousDue || 0), 0);
+
+        const selectedAmount = filteredDueCollections
+          .filter((c) => selectedDueIds.has(c.id))
+          .reduce((sum, c) => sum + (c.amount || 0), 0);
+
+        return (
+          <div className="space-y-5 animate-fadeIn">
+            {/* Top Master Banner */}
+            <div className="bg-gradient-to-r from-amber-950 via-neutral-900 to-amber-900 text-white rounded-3xl p-5 sm:p-6 shadow-xl border border-amber-600/40">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div className="space-y-1.5">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-400 text-neutral-950 text-[11px] font-black uppercase tracking-wider">
+                    <DollarSign className="w-3.5 h-3.5" />
+                    দোকানের বকেয়া খাতা ও কালেকশন হিস্ট্রি কন্ট্রোল
+                  </span>
+                  <h2 className="text-lg sm:text-2xl font-black">
+                    দোকানের বকেয়া বাল্ক আকারে ডিলিট ও ৳০ (শূন্য) করার প্যানেল
+                  </h2>
+                  <p className="text-xs text-amber-100/90 max-w-3xl leading-relaxed">
+                    এখান থেকে যেকোনো দোকানের বর্তমান বকেয়া (Previous Due) বাল্ক সিলেক্ট করে মুছে ৳০ (শূন্য) করে দিতে পারবেন। এছাড়াও মাঠপর্যায়ে নগদ আদায়কৃত পূর্বের হিস্ট্রি লগ মুছে ফেলার নিয়ন্ত্রণ রয়েছে।
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setSubTab('delete_center')}
+                    className="px-4 py-2.5 rounded-2xl bg-white/15 hover:bg-white/25 text-white border border-white/30 font-black text-xs flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
+                  >
+                    <Trash2 className="w-4 h-4 text-rose-300" />
+                    <span>মাস্টার ডিলিট সেন্টার</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => onResetAllShopDues && onResetAllShopDues()}
+                    disabled={shopsWithDue.length === 0}
+                    className="px-4 py-2.5 rounded-2xl bg-rose-600 hover:bg-rose-500 disabled:opacity-40 text-white font-black text-xs flex items-center gap-1.5 shadow-lg cursor-pointer transition-all active:scale-95"
+                    title="সকল দোকানের বকেয়া ১ ক্লিকে মুছে ৳০ করুন"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                    <span>১-ক্লিকে সব বকেয়া ৳০ করুন ({shopsWithDue.length} দোকান)</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* 4 Summary Stat Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-5 pt-4 border-t border-white/10 text-xs">
+                <div className="bg-white/10 rounded-2xl p-3 border border-white/10">
+                  <span className="text-[11px] text-rose-300 block font-semibold">মার্কেটে মোট বকেয়া</span>
+                  <span className="text-xl font-black text-rose-300 font-mono mt-0.5 block">৳{totalMarketDue.toLocaleString()}</span>
+                  <span className="text-[10px] text-neutral-300">{shopsWithDue.length}টি দোকানে বকেয়া রয়েছে</span>
+                </div>
+
+                <div className="bg-white/10 rounded-2xl p-3 border border-white/10">
+                  <span className="text-[11px] text-amber-200 block font-semibold">বকেয়াযুক্ত মোট দোকান</span>
+                  <span className="text-xl font-black text-white font-mono mt-0.5 block">{shopsWithDue.length} টি</span>
+                  <span className="text-[10px] text-neutral-300">পরিশোধিত/নগদ: {zeroDueShops.length}টি</span>
+                </div>
+
+                <div className="bg-white/10 rounded-2xl p-3 border border-white/10">
+                  <span className="text-[11px] text-emerald-300 block font-semibold">সর্বমোট ক্যাশ আদায় হিস্ট্রি</span>
+                  <span className="text-xl font-black text-emerald-300 font-mono mt-0.5 block">৳{totalDueCollectedAll.toLocaleString()}</span>
+                  <span className="text-[10px] text-neutral-300">আজকের আদায়: ৳{todayTotal.toLocaleString()}</span>
+                </div>
+
+                <div className="bg-white/10 rounded-2xl p-3 border border-white/10">
+                  <span className="text-[11px] text-purple-300 block font-semibold">মোট রেজিস্টার্ড দোকান</span>
+                  <span className="text-xl font-black text-purple-200 font-mono mt-0.5 block">{shops.length} টি</span>
+                  <span className="text-[10px] text-neutral-300">সকল সক্রিয় রুট মিলিয়ে</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Mode Switcher Toggle: Shop Dues (দোকানের বকেয়া খাতা ও বাল্ক শূন্য করুন) vs Collections History (আদায় লগ) */}
+            <div className="bg-white p-2.5 rounded-2xl border border-neutral-200/90 shadow-xs flex flex-col sm:flex-row gap-2 items-center justify-between">
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => setDueTabMode('shop_dues')}
+                  className={`flex-1 sm:flex-initial px-4 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                    dueTabMode === 'shop_dues'
+                      ? 'bg-amber-600 text-white shadow-md'
+                      : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
+                  }`}
+                >
+                  <Store className="w-4 h-4" />
+                  <span>দোকানের বকেয়া খাতা ও বাল্ক ৳০ করুন ({shopsWithDue.length} দোকানে বাকি)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setDueTabMode('collections_log')}
+                  className={`flex-1 sm:flex-initial px-4 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                    dueTabMode === 'collections_log'
+                      ? 'bg-amber-600 text-white shadow-md'
+                      : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
+                  }`}
+                >
+                  <DollarSign className="w-4 h-4" />
+                  <span>বকেয়া আদায় হিস্ট্রি ও লগ ({dueCollections.length}টি রেকর্ড)</span>
+                </button>
+              </div>
+
+              <div className="text-xs font-bold text-neutral-600">
+                {dueTabMode === 'shop_dues' ? (
+                  <span>
+                    মোট বকেয়া: <strong className="text-rose-600 font-mono text-sm">৳{totalMarketDue.toLocaleString()}</strong> ({shopsWithDue.length} দোকানে)
+                  </span>
+                ) : (
+                  <span>
+                    আদায় রেকর্ড: <strong className="text-emerald-700 font-mono text-sm">{dueCollections.length}</strong> টি (৳{totalDueCollectedAll.toLocaleString()})
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* TAB 1: SHOP DUES MANAGEMENT & BULK ZERO (০) RESET */}
+            {dueTabMode === 'shop_dues' && (
+              <div className="space-y-4 animate-fadeIn">
+                {/* Search & Filter Controls */}
+                <div className="bg-white rounded-2xl border border-neutral-200 p-4 shadow-xs space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2.5">
+                    {/* Status filter pills */}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs font-bold text-neutral-500 mr-1">ফিল্টার:</span>
+                      {[
+                        { id: 'WITH_DUE', label: `বকেয়া রয়েছে (${shopsWithDue.length})` },
+                        { id: 'ALL', label: `সকল দোকান (${shops.length})` },
+                        { id: 'ZERO_DUE', label: `পরিশোধিত / নগদ (${zeroDueShops.length})` },
+                      ].map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => {
+                            setShopDueStatusFilter(item.id as any);
+                            setSelectedShopDueIds(new Set());
+                          }}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                            shopDueStatusFilter === item.id
+                              ? 'bg-amber-600 text-white shadow-xs'
+                              : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                          }`}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Route Filter Dropdown */}
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <span className="text-neutral-500 font-bold">রুট:</span>
+                      <select
+                        value={shopDueRouteFilter}
+                        onChange={(e) => {
+                          setShopDueRouteFilter(e.target.value);
+                          setSelectedShopDueIds(new Set());
+                        }}
+                        className="px-2.5 py-1.5 rounded-xl border border-neutral-300 bg-white font-bold text-neutral-800 text-xs"
+                      >
+                        {allAvailableRouteNames.map((r) => (
+                          <option key={r} value={r === 'সব রুট (All Routes)' ? 'ALL' : r}>
+                            {r}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Search bar */}
+                  <div className="relative">
+                    <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={shopDueSearch}
+                      onChange={(e) => {
+                        setShopDueSearch(e.target.value);
+                        setSelectedShopDueIds(new Set());
+                      }}
+                      placeholder="দোকানের নাম, মালিকের নাম, মোবাইল বা রুট দিয়ে খুঁজুন..."
+                      className="w-full pl-9 pr-4 py-2 rounded-xl border border-neutral-300 text-xs font-medium text-neutral-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    />
+                    {shopDueSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setShopDueSearch('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-700 text-xs font-bold"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Bulk Action Toolbar for Shop Dues */}
+                <div className="bg-neutral-900 text-white px-4 sm:px-5 py-3.5 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={toggleSelectAllFilteredShopDues}
+                      className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-extrabold text-xs flex items-center gap-1.5 cursor-pointer transition-colors"
+                    >
+                      {selectedShopDueIds.size === filteredShopsForDue.length && filteredShopsForDue.length > 0 ? (
+                        <CheckSquare className="w-4 h-4 text-amber-400" />
+                      ) : (
+                        <Square className="w-4 h-4 text-neutral-400" />
+                      )}
+                      <span>
+                        {selectedShopDueIds.size === filteredShopsForDue.length && filteredShopsForDue.length > 0
+                          ? 'সব আন-সিলেক্ট করুন'
+                          : `সব সিলেক্ট করুন (${filteredShopsForDue.length}টি)`}
+                      </span>
+                    </button>
+
+                    <div className="text-xs text-neutral-300 font-semibold">
+                      প্রদর্শিত: <strong className="text-white font-mono">{filteredShopsForDue.length}</strong> টি দোকান
+                    </div>
+                  </div>
+
+                  {/* Bulk Reset Button when shops selected */}
+                  <div className="flex items-center gap-2">
+                    {selectedShopDueIds.size > 0 && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-amber-300 hidden md:inline">
+                          বাছাইকৃত: {selectedShopDueIds.size}টি (মোট বকেয়া: ৳{selectedShopDueTotal.toLocaleString()})
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleBulkResetSelectedShopDues}
+                          className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-neutral-950 font-black text-xs flex items-center gap-1.5 shadow-md cursor-pointer animate-in zoom-in-95 active:scale-95"
+                        >
+                          <RotateCcw className="w-4 h-4 text-neutral-950" />
+                          <span>টিক দেওয়া ({selectedShopDueIds.size}টি) দোকানের বকেয়া বাল্ক ৳০ (শূন্য) করুন</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Shop Dues Table */}
+                {filteredShopsForDue.length === 0 ? (
+                  <div className="bg-white rounded-3xl border border-neutral-200 p-12 text-center text-neutral-400 space-y-2">
+                    <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto">
+                      <Store className="w-6 h-6" />
+                    </div>
+                    <h4 className="font-extrabold text-sm text-neutral-700">কোনো দোকান পাওয়া যায়নি</h4>
+                    <p className="text-xs text-neutral-500 max-w-sm mx-auto">
+                      {shopDueSearch || shopDueRouteFilter !== 'ALL' || shopDueStatusFilter !== 'WITH_DUE'
+                        ? 'আপনার ফিল্টারের সাথে মিলে এমন কোনো দোকান নেই। ফিল্টার পরিবর্তন করে আবার চেষ্টা করুন।'
+                        : 'বর্তমানে সিস্টেমে কোনো দোকানে বকেয়া নেই। সকল দোকানের বকেয়া ৳০ রয়েছে।'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="bg-white rounded-3xl border border-neutral-200 overflow-hidden shadow-xs">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="bg-neutral-50 text-neutral-600 border-b border-neutral-200 font-extrabold">
+                            <th className="p-3 w-10 text-center">
+                              <button
+                                type="button"
+                                onClick={toggleSelectAllFilteredShopDues}
+                                className="cursor-pointer"
+                              >
+                                {selectedShopDueIds.size === filteredShopsForDue.length && filteredShopsForDue.length > 0 ? (
+                                  <CheckSquare className="w-4 h-4 text-amber-600" />
+                                ) : (
+                                  <Square className="w-4 h-4 text-neutral-400" />
+                                )}
+                              </button>
+                            </th>
+                            <th className="p-3 w-10">#</th>
+                            <th className="p-3">দোকানের নাম ও মালিক</th>
+                            <th className="p-3">রুট / বাজার এরিয়া</th>
+                            <th className="p-3">মোবাইল ও ঠিকানা</th>
+                            <th className="p-3 text-right">বর্তমান বকেয়া (৳)</th>
+                            <th className="p-3 text-right">অ্যাকশন</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-neutral-100 font-medium">
+                          {filteredShopsForDue.map((shop, index) => {
+                            const isChecked = selectedShopDueIds.has(shop.id);
+                            const hasDue = (shop.previousDue || 0) > 0;
+                            return (
+                              <tr
+                                key={shop.id}
+                                className={`transition-colors ${
+                                  isChecked ? 'bg-amber-50/70' : 'hover:bg-neutral-50/80'
+                                }`}
+                              >
+                                <td className="p-3 text-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleSelectShopDue(shop.id)}
+                                    className="cursor-pointer"
+                                  >
+                                    {isChecked ? (
+                                      <CheckSquare className="w-4 h-4 text-amber-600" />
+                                    ) : (
+                                      <Square className="w-4 h-4 text-neutral-400 hover:text-neutral-600" />
+                                    )}
+                                  </button>
+                                </td>
+                                <td className="p-3 font-mono text-neutral-400 font-bold">
+                                  #{index + 1}
+                                </td>
+                                <td className="p-3">
+                                  <div className="font-extrabold text-neutral-900 text-xs sm:text-sm">
+                                    {shop.name}
+                                  </div>
+                                  <div className="text-[11px] text-neutral-500 font-medium">
+                                    মালিক: {shop.ownerName || '—'}
+                                  </div>
+                                </td>
+                                <td className="p-3">
+                                  <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                                    {shop.routeArea || 'রুটহীন'}
+                                  </span>
+                                </td>
+                                <td className="p-3 text-neutral-600">
+                                  <div>{shop.phone || '—'}</div>
+                                  <div className="text-[10px] text-neutral-400 truncate max-w-xs">{shop.address || '—'}</div>
+                                </td>
+                                <td className="p-3 text-right">
+                                  {hasDue ? (
+                                    <span className="font-mono font-black text-sm text-rose-600 bg-rose-50 px-2.5 py-1 rounded-xl border border-rose-200 inline-block">
+                                      ৳{(shop.previousDue || 0).toLocaleString()}
+                                    </span>
+                                  ) : (
+                                    <span className="px-2.5 py-1 rounded-xl bg-emerald-50 text-emerald-800 font-bold text-[11px] border border-emerald-200 inline-block">
+                                      পরিশোধিত (৳০)
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="p-3 text-right">
+                                  {hasDue ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => onResetShopDue ? onResetShopDue(shop.id) : undefined}
+                                      className="px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-600 text-amber-900 hover:text-white border border-amber-300 font-extrabold text-xs inline-flex items-center gap-1 transition-all active:scale-95 cursor-pointer shadow-2xs"
+                                      title="এই দোকানের বকেয়া মুছে ৳০ (শূন্য) করুন"
+                                    >
+                                      <RotateCcw className="w-3.5 h-3.5" />
+                                      <span>বকেয়া ৳০ করুন</span>
+                                    </button>
+                                  ) : (
+                                    <span className="text-[11px] text-neutral-400 font-bold">বকেয়া নেই</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 2: DUE COLLECTION HISTORY (PAYMENT LOGS) */}
+            {dueTabMode === 'collections_log' && (
+              <div className="space-y-4 animate-fadeIn">
+                {/* Filter and Search Bar */}
+                <div className="bg-white rounded-2xl border border-neutral-200 p-4 shadow-xs space-y-3.5">
+                  {/* Quick Date Pills */}
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                      <span className="text-xs font-bold text-neutral-500 mr-1 flex items-center gap-1">
+                        <Calendar className="w-3.5 h-3.5 text-amber-600" />
+                        <span>তারিখ:</span>
+                      </span>
+                      {[
+                        { id: 'ALL', label: 'সব রেকর্ড' },
+                        { id: 'TODAY', label: 'আজকের' },
+                        { id: 'YESTERDAY', label: 'গতকালের' },
+                        { id: 'WEEK', label: 'বিগত ৭ দিন' },
+                        { id: 'MONTH', label: 'এই মাস' },
+                      ].map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => {
+                            setDueDateFilter(p.id as any);
+                            setSelectedDueIds(new Set());
+                          }}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                            dueDateFilter === p.id
+                              ? 'bg-amber-600 text-white shadow-xs'
+                              : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                          }`}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Sort Order */}
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <span className="text-neutral-500 font-bold">সর্ট:</span>
+                      <select
+                        value={dueSortOrder}
+                        onChange={(e) => setDueSortOrder(e.target.value as any)}
+                        className="px-2.5 py-1.5 rounded-xl border border-neutral-300 bg-white font-bold text-neutral-800 text-xs"
+                      >
+                        <option value="NEWEST">নতুন এন্ট্রি আগে</option>
+                        <option value="OLDEST">পুরাতন এন্ট্রি আগে</option>
+                        <option value="AMOUNT_DESC">টাকার পরিমাণ বেশি আগে</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Search, Route & Payment Method Dropdowns */}
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+                    <div className="sm:col-span-6 relative">
+                      <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={dueSearchQuery}
+                        onChange={(e) => {
+                          setDueSearchQuery(e.target.value);
+                          setSelectedDueIds(new Set());
+                        }}
+                        placeholder="দোকানের নাম, মেমো, নোট বা টাকার অঙ্ক দিয়ে খুঁজুন..."
+                        className="w-full pl-9 pr-4 py-2 rounded-xl border border-neutral-300 text-xs font-medium text-neutral-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      />
+                      {dueSearchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => setDueSearchQuery('')}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-700 text-xs font-bold"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="sm:col-span-3">
+                      <select
+                        value={dueMethodFilter}
+                        onChange={(e) => {
+                          setDueMethodFilter(e.target.value);
+                          setSelectedDueIds(new Set());
+                        }}
+                        className="w-full py-2 px-3 rounded-xl border border-neutral-300 bg-white text-xs font-semibold text-neutral-800"
+                      >
+                        <option value="ALL">সকল মাধ্যম (CASH / bKash / Etc.)</option>
+                        <option value="CASH">নগদ (CASH)</option>
+                        <option value="BKASH">বিকাশ (bKash)</option>
+                        <option value="NAGAD">নগদ (Nagad)</option>
+                        <option value="ROCKET">রকেট (Rocket)</option>
+                        <option value="BANK">ব্যাংক ট্রান্সফার (Bank)</option>
+                      </select>
+                    </div>
+
+                    <div className="sm:col-span-3">
+                      <select
+                        value={dueRouteFilter}
+                        onChange={(e) => {
+                          setDueRouteFilter(e.target.value);
+                          setSelectedDueIds(new Set());
+                        }}
+                        className="w-full py-2 px-3 rounded-xl border border-neutral-300 bg-white text-xs font-semibold text-neutral-800"
+                      >
+                        {allAvailableRouteNames.map((r) => (
+                          <option key={r} value={r === 'সব রুট (All Routes)' ? 'ALL' : r}>
+                            {r}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bulk Action Header Toolbar */}
+                <div className="bg-neutral-900 text-white px-4 sm:px-5 py-3.5 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={toggleSelectAllFilteredDues}
+                      className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-extrabold text-xs flex items-center gap-1.5 cursor-pointer transition-colors"
+                    >
+                      {selectedDueIds.size === filteredDueCollections.length && filteredDueCollections.length > 0 ? (
+                        <CheckSquare className="w-4 h-4 text-amber-400" />
+                      ) : (
+                        <Square className="w-4 h-4 text-neutral-400" />
+                      )}
+                      <span>
+                        {selectedDueIds.size === filteredDueCollections.length && filteredDueCollections.length > 0
+                          ? 'সব আন-সিলেক্ট করুন'
+                          : `সব মার্ক করুন (${filteredDueCollections.length}টি)`}
+                      </span>
+                    </button>
+
+                    <div className="text-xs text-neutral-300 font-semibold">
+                      প্রদর্শিত: <strong className="text-white font-mono">{filteredDueCollections.length}</strong> টি রেকর্ড
+                    </div>
+                  </div>
+
+                  {/* Bulk Delete Button when items selected */}
+                  <div className="flex items-center gap-2">
+                    {selectedDueIds.size > 0 && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-amber-300 hidden md:inline">
+                          নির্বাচিত: {selectedDueIds.size}টি (৳{selectedAmount.toLocaleString()})
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleBulkDeleteSelectedDues}
+                          className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-neutral-950 font-black text-xs flex items-center gap-1.5 shadow-md cursor-pointer animate-in zoom-in-95"
+                        >
+                          <Trash2 className="w-4 h-4 text-neutral-950" />
+                          <span>টিক দেওয়া ({selectedDueIds.size}টি) বাল্ক ডিলিট করুন</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Collections Table / Cards */}
+                {filteredDueCollections.length === 0 ? (
+                  <div className="bg-white rounded-3xl border border-neutral-200 p-12 text-center text-neutral-400 space-y-2">
+                    <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto">
+                      <DollarSign className="w-6 h-6" />
+                    </div>
+                    <h4 className="font-extrabold text-sm text-neutral-700">কোনো বকেয়া আদায় রেকর্ড পাওয়া যায়নি</h4>
+                    <p className="text-xs text-neutral-500 max-w-sm mx-auto">
+                      {dueSearchQuery || dueDateFilter !== 'ALL' || dueMethodFilter !== 'ALL' || dueRouteFilter !== 'ALL'
+                        ? 'আপনার ফিল্টারের সাথে মিলে এমন কোনো রেকর্ড নেই। ফিল্টার ক্লিয়ার করে আবার দেখুন।'
+                        : 'এখনো পর্যন্ত কোনো দোকানের বকেয়া আদায় বা জমা এন্ট্রি করা হয়নি।'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="bg-white rounded-3xl border border-neutral-200 overflow-hidden shadow-xs">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="bg-neutral-50 text-neutral-600 border-b border-neutral-200 font-extrabold">
+                            <th className="p-3 w-10 text-center">
+                              <button
+                                type="button"
+                                onClick={toggleSelectAllFilteredDues}
+                                className="cursor-pointer"
+                              >
+                                {selectedDueIds.size === filteredDueCollections.length && filteredDueCollections.length > 0 ? (
+                                  <CheckSquare className="w-4 h-4 text-amber-600" />
+                                ) : (
+                                  <Square className="w-4 h-4 text-neutral-400" />
+                                )}
+                              </button>
+                            </th>
+                            <th className="p-3 w-10">#</th>
+                            <th className="p-3">দোকানের নাম ও তথ্য</th>
+                            <th className="p-3">তারিখ ও সময়</th>
+                            <th className="p-3">পেমেন্ট মাধ্যম</th>
+                            <th className="p-3">নোট / বিবরণ</th>
+                            <th className="p-3 text-right">আদায়ের পরিমাণ</th>
+                            <th className="p-3 text-right">অ্যাকশন</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-neutral-100 font-medium">
+                          {filteredDueCollections.map((c, index) => {
+                            const isChecked = selectedDueIds.has(c.id);
+                            return (
+                              <tr
+                                key={c.id}
+                                className={`transition-colors ${
+                                  isChecked ? 'bg-amber-50/70' : 'hover:bg-neutral-50/80'
+                                }`}
+                              >
+                                <td className="p-3 text-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleSelectDueItem(c.id)}
+                                    className="cursor-pointer"
+                                  >
+                                    {isChecked ? (
+                                      <CheckSquare className="w-4 h-4 text-amber-600" />
+                                    ) : (
+                                      <Square className="w-4 h-4 text-neutral-400 hover:text-neutral-600" />
+                                    )}
+                                  </button>
+                                </td>
+                                <td className="p-3 font-mono text-neutral-400 font-bold">
+                                  #{index + 1}
+                                </td>
+                                <td className="p-3">
+                                  <div className="font-extrabold text-neutral-900 text-xs sm:text-sm">
+                                    {c.shopName}
+                                  </div>
+                                  <div className="text-[10px] text-neutral-500">
+                                    আইডি: {c.shopId}
+                                  </div>
+                                </td>
+                                <td className="p-3">
+                                  <span className="font-mono text-neutral-800 font-bold block">
+                                    {new Date(c.date).toLocaleDateString('en-GB')}
+                                  </span>
+                                  <span className="text-[10px] text-neutral-500 font-mono">
+                                    {new Date(c.date).toLocaleTimeString('en-US', {
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                      hour12: true,
+                                    })}
+                                  </span>
+                                </td>
+                                <td className="p-3">
+                                  <span
+                                    className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider inline-flex items-center gap-1 ${
+                                      c.paymentMethod === 'CASH'
+                                        ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                                        : c.paymentMethod === 'BKASH'
+                                        ? 'bg-pink-100 text-pink-900 border border-pink-300'
+                                        : c.paymentMethod === 'NAGAD'
+                                        ? 'bg-orange-100 text-orange-900 border border-orange-300'
+                                        : 'bg-blue-100 text-blue-900 border border-blue-300'
+                                    }`}
+                                  >
+                                    {c.paymentMethod}
+                                  </span>
+                                </td>
+                                <td className="p-3 text-neutral-600 max-w-xs truncate">
+                                  {c.notes || '—'}
+                                </td>
+                                <td className="p-3 text-right">
+                                  <span className="font-mono font-black text-sm text-emerald-800">
+                                    ৳{(c.amount || 0).toLocaleString()}
+                                  </span>
+                                </td>
+                                <td className="p-3 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => onDeleteDueCollection?.(c.id)}
+                                    className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 font-bold text-xs inline-flex items-center gap-1 transition-all active:scale-95 cursor-pointer"
+                                    title="এই বকেয়া আদায় রেকর্ডটি ডিলিট করুন"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    <span>ডিলিট</span>
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* SUB-TAB PRINT CENTER: 1-CLICK & INDIVIDUAL SELECT BULK PRINT */}
       {subTab === 'print_center' && (
         <AdminPrintCenter
@@ -3558,6 +4467,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           onDeleteRoute={onDeleteRoute}
           onDeleteDailyExpense={(id, skip) => onDeleteDailyExpense && onDeleteDailyExpense(id, skip)}
           onDeleteDueCollection={(id, skip) => onDeleteDueCollection && onDeleteDueCollection(id, skip)}
+          onDeleteBatchDueCollections={onDeleteBatchDueCollections}
           onDeleteAuthorizedEmail={onDeleteAuthorizedEmail}
           onDeleteAllProducts={() => onDeleteAllProducts && onDeleteAllProducts()}
           onDeleteAllShops={() => onDeleteAllShops && onDeleteAllShops()}
@@ -3567,6 +4477,8 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           onDeleteAllDailyExpenses={() => onDeleteAllDailyExpenses && onDeleteAllDailyExpenses()}
           onDeleteAllDueCollections={() => onDeleteAllDueCollections && onDeleteAllDueCollections()}
           onResetAllShopDues={() => onResetAllShopDues && onResetAllShopDues()}
+          onResetShopDue={(id, skip) => onResetShopDue && onResetShopDue(id, skip)}
+          onResetBatchShopDues={onResetBatchShopDues}
           onDeleteAllStaffEmails={() => onDeleteAllStaffEmails && onDeleteAllStaffEmails()}
           onCleanAllMockData={() => onCleanAllMockData && onCleanAllMockData()}
           onDeleteEverythingAllAtOnce={() => onDeleteEverythingAllAtOnce && onDeleteEverythingAllAtOnce()}

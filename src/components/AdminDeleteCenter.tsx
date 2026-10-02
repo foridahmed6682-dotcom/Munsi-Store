@@ -33,6 +33,7 @@ import { isMainSuperAdmin } from '../lib/firebase';
 type DeleteCategoryKey =
   | 'products'
   | 'shops'
+  | 'shop_dues'
   | 'orders'
   | 'categories'
   | 'routes'
@@ -57,6 +58,9 @@ interface AdminDeleteCenterProps {
   onDeleteRoute: (id: string, skipConfirm?: boolean) => void;
   onDeleteDailyExpense: (id: string, skipConfirm?: boolean) => void;
   onDeleteDueCollection: (id: string, skipConfirm?: boolean) => void;
+  onDeleteBatchDueCollections?: (ids: string[]) => void;
+  onResetShopDue?: (id: string, skipConfirm?: boolean) => void;
+  onResetBatchShopDues?: (ids: string[]) => void;
   onDeleteAuthorizedEmail: (email: string, skipConfirm?: boolean) => void;
   // 1-Click Bulk Delete Handlers
   onDeleteAllProducts: () => void;
@@ -89,6 +93,9 @@ export const AdminDeleteCenter: React.FC<AdminDeleteCenterProps> = ({
   onDeleteRoute,
   onDeleteDailyExpense,
   onDeleteDueCollection,
+  onDeleteBatchDueCollections,
+  onResetShopDue,
+  onResetBatchShopDues,
   onDeleteAuthorizedEmail,
   onDeleteAllProducts,
   onDeleteAllShops,
@@ -154,6 +161,23 @@ export const AdminDeleteCenter: React.FC<AdminDeleteCenterProps> = ({
             subtitle: `মালিক: ${s.ownerName} • ফোন: ${s.phone} • বকেয়া: ৳${(s.previousDue || 0).toLocaleString()}`,
             badge: s.routeArea || 'রুট নেই',
           }));
+      case 'shop_dues':
+        return shops
+          .filter((s) => (s.previousDue || 0) > 0)
+          .filter(
+            (s) =>
+              !q ||
+              s.name.toLowerCase().includes(q) ||
+              s.ownerName.toLowerCase().includes(q) ||
+              s.phone.toLowerCase().includes(q) ||
+              (s.routeArea || '').toLowerCase().includes(q)
+          )
+          .map((s) => ({
+            id: s.id,
+            title: `${s.name} — বকেয়া: ৳${(s.previousDue || 0).toLocaleString()}`,
+            subtitle: `মালিক: ${s.ownerName} • ফোন: ${s.phone} • রুট: ${s.routeArea || 'রুটহীন'}`,
+            badge: `বকেয়া: ৳${(s.previousDue || 0).toLocaleString()}`,
+          }));
       case 'orders':
         return orders
           .filter(
@@ -218,13 +242,16 @@ export const AdminDeleteCenter: React.FC<AdminDeleteCenterProps> = ({
             (c) =>
               !q ||
               c.shopName.toLowerCase().includes(q) ||
-              (c.notes || '').toLowerCase().includes(q)
+              (c.notes || '').toLowerCase().includes(q) ||
+              c.paymentMethod.toLowerCase().includes(q) ||
+              c.date.includes(q) ||
+              String(c.amount).includes(q)
           )
           .map((c) => ({
             id: c.id,
             title: `${c.shopName} — জমা: ৳${c.amount.toLocaleString()}`,
-            subtitle: `তারিখ: ${new Date(c.date).toLocaleDateString('en-GB')} • মাধ্যম: ${c.paymentMethod}`,
-            badge: 'বকেয়া আদায়',
+            subtitle: `তারিখ: ${new Date(c.date).toLocaleDateString('en-GB')} • মাধ্যম: ${c.paymentMethod}${c.notes ? ` • বিবরণ: ${c.notes}` : ''}`,
+            badge: `${c.paymentMethod} (৳${c.amount.toLocaleString()})`,
           }));
       case 'staff':
         return removableStaff
@@ -284,6 +311,9 @@ export const AdminDeleteCenter: React.FC<AdminDeleteCenterProps> = ({
       case 'shops':
         onDeleteShop(id, false);
         break;
+      case 'shop_dues':
+        if (onResetShopDue) onResetShopDue(id, false);
+        break;
       case 'orders':
         onDeleteOrder(id, false);
         break;
@@ -314,9 +344,22 @@ export const AdminDeleteCenter: React.FC<AdminDeleteCenterProps> = ({
     const idsToDelete = Array.from(selectedIds);
     if (idsToDelete.length === 0) return;
 
+    if (activeListType === 'collections' && onDeleteBatchDueCollections) {
+      onDeleteBatchDueCollections(idsToDelete);
+      setSelectedIds(new Set());
+      return;
+    }
+
+    if (activeListType === 'shop_dues' && onResetBatchShopDues) {
+      onResetBatchShopDues(idsToDelete);
+      setSelectedIds(new Set());
+      return;
+    }
+
     const categoryNames: Record<DeleteCategoryKey, string> = {
       products: 'পণ্য (Products)',
       shops: 'দোকান (Shops)',
+      shop_dues: 'দোকানের বকেয়া (Dues)',
       orders: 'অর্ডার/মেমো (Orders)',
       categories: 'ক্যাটাগরি (Categories)',
       routes: 'রুট/এরিয়া (Routes)',
@@ -420,6 +463,15 @@ export const AdminDeleteCenter: React.FC<AdminDeleteCenterProps> = ({
       icon: <Store className="w-5 h-5 text-rose-600" />,
       onBulkDelete: onDeleteAllShops,
       bulkBtnText: '১-ক্লিকে সব দোকান ডিলিট',
+    },
+    {
+      key: 'shop_dues',
+      title: 'দোকানের বকেয়া (Dues)',
+      count: shops.filter((s) => (s.previousDue || 0) > 0).length,
+      unitLabel: `টি দোকানে বকেয়া (মোট: ৳${shops.reduce((sum, s) => sum + (s.previousDue || 0), 0).toLocaleString()})`,
+      icon: <DollarSign className="w-5 h-5 text-amber-600" />,
+      onBulkDelete: onResetAllShopDues,
+      bulkBtnText: '১-ক্লিকে সব বকেয়া ৳০ করুন',
     },
     {
       key: 'orders',

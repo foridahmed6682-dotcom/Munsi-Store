@@ -1220,6 +1220,14 @@ export function deleteDueCollection(id: string): void {
   saveDueCollections(list);
 }
 
+export function deleteDueCollectionsBatchLocal(ids: string[]): DueCollectionRecord[] {
+  const idsSet = new Set(ids);
+  const current = getDueCollections();
+  const remaining = current.filter((x) => !idsSet.has(x.id));
+  saveDueCollections(remaining);
+  return remaining;
+}
+
 // 1-Click Bulk Delete Local Helpers for Admin Panel
 export function deleteAllProductsLocal(): string[] {
   const current = getProducts();
@@ -1285,6 +1293,29 @@ export function resetAllShopDuesLocal(): Shop[] {
     ...s,
     previousDue: 0,
   }));
+  saveShops(shops);
+  return shops;
+}
+
+export function resetShopDueLocal(shopId: string): Shop[] {
+  const shops = getShops().map((s) => {
+    if (s.id === shopId) {
+      return { ...s, previousDue: 0 };
+    }
+    return s;
+  });
+  saveShops(shops);
+  return shops;
+}
+
+export function resetBatchShopDuesLocal(shopIds: string[]): Shop[] {
+  const idSet = new Set(shopIds);
+  const shops = getShops().map((s) => {
+    if (idSet.has(s.id)) {
+      return { ...s, previousDue: 0 };
+    }
+    return s;
+  });
   saveShops(shops);
   return shops;
 }

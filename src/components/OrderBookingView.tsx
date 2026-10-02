@@ -435,8 +435,8 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
           </div>
         </div>
       )}
-      {/* Top Shop Selector & Quick Info Bar */}
-      <div className="bg-white rounded-2xl shadow-xs border border-neutral-200/90 p-3 sm:p-4">
+      {/* Top Shop Selector & Quick Info Bar - Locked / Sticky Header up to Order Cut button */}
+      <div className="sticky top-[48px] sm:top-[53px] md:top-[98px] z-30 bg-white/98 backdrop-blur-md rounded-2xl shadow-md border border-neutral-200/90 p-3 sm:p-4 transition-all">
         <div className="flex flex-col md:flex-row gap-3 items-start md:items-center justify-between pb-3 border-b border-neutral-200">
           <div className="w-full md:w-auto flex-1">
             <div className="flex items-center justify-between mb-1.5">
@@ -450,9 +450,10 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                   type="button"
                   onClick={() => setIsCartDrawerOpen(true)}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-800 hover:bg-emerald-700 active:bg-emerald-900 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer"
+                  title="অর্ডার কাটুন / কার্ট দেখুন"
                 >
                   <ShoppingBag className="w-3.5 h-3.5 text-emerald-200" />
-                  <span>কার্ড</span>
+                  <span>অর্ডার কাটুন</span>
                   <span className="bg-emerald-950 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
                     {totalCartItemCount}
                   </span>
@@ -954,7 +955,7 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
               </span>
             )}
           </div>
-          <span>কার্ড ({totalCartItemCount} টি)</span>
+          <span>অর্ডার কাটুন ({totalCartItemCount} টি)</span>
           <span className="bg-emerald-950/90 text-emerald-200 px-2 py-0.5 rounded-lg text-xs font-mono font-bold">
             ৳{netTotal.toLocaleString()}
           </span>

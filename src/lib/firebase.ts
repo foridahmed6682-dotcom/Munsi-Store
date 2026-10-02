@@ -1911,6 +1911,63 @@ export async function deleteDueCollectionFromCloud(recordId: string) {
   });
 }
 
+export async function deleteDueCollectionsBatchFromCloud(recordIds: string[]) {
+  if (!recordIds || recordIds.length === 0) return;
+  const idsSet = new Set(recordIds);
+
+  try {
+    const mirror = await fetchServerDatabaseMirror();
+    const currentMirror: DueCollectionRecord[] = Array.isArray(mirror?.dueCollections) ? mirror.dueCollections : [];
+    const remaining = currentMirror.filter((c) => !idsSet.has(c.id));
+    await pushBulkDataToServerMirror({ replaceAll: true, dueCollections: remaining });
+  } catch {
+    // mirror error ignored
+  }
+
+  if (isFirestoreQuotaExhausted()) return;
+
+  try {
+    const catalog = await readFirestoreCatalogDirect<DueCollectionRecord>('dueCollections');
+    const remainingCatalog = catalog.filter((c) => !idsSet.has(c.id));
+    await writeFirestoreCatalogDirect('dueCollections', remainingCatalog);
+  } catch {
+    // catalog write error ignored
+  }
+
+  for (const id of recordIds) {
+    if (isFirestoreQuotaExhausted()) break;
+    deleteDoc(doc(db, 'dueCollections', id)).catch((e) => tripFirestoreQuotaCircuitBreaker(e));
+  }
+}
+
+export async function resetBatchShopDuesInCloud(shopIds: string[], allUpdatedShops: Shop[]) {
+  if (!shopIds || shopIds.length === 0) return;
+  const idSet = new Set(shopIds);
+
+  // 1. Update server mirror
+  try {
+    await pushBulkDataToServerMirror({ shops: allUpdatedShops });
+  } catch {
+    // mirror error ignored
+  }
+
+  // 2. Direct catalog update
+  if (!isFirestoreQuotaExhausted()) {
+    try {
+      await writeFirestoreCatalogDirect('shops', allUpdatedShops);
+    } catch {
+      // catalog write error ignored
+    }
+  }
+
+  // 3. Save each updated shop doc
+  const targetShops = allUpdatedShops.filter((s) => idSet.has(s.id));
+  for (const shop of targetShops) {
+    if (isFirestoreQuotaExhausted()) break;
+    saveShopToCloud(shop).catch(() => {});
+  }
+}
+
 export async function deleteAllProductsFromCloud(ids: string[]) {
   await clearCollectionFromServerMirror('products');
   if (isFirestoreQuotaExhausted()) return;

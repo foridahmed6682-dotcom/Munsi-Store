@@ -203,8 +203,8 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
         </div>
       </div>
 
-      {/* Filter & Search */}
-      <div className="bg-white rounded-2xl p-3 border border-neutral-200 shadow-xs flex flex-col lg:flex-row gap-2">
+      {/* Filter & Search - Sticky Header for easy searching while scrolling */}
+      <div className="sticky top-[48px] sm:top-[53px] md:top-[98px] z-20 bg-white/98 backdrop-blur-md rounded-2xl p-3 border border-neutral-200/90 shadow-md flex flex-col lg:flex-row gap-2 transition-all">
         <div className="relative flex-1">
           <Search className="w-4 h-4 absolute left-3 top-2.5 text-neutral-400" />
           <input

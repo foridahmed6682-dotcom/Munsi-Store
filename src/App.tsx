@@ -45,6 +45,7 @@ import {
   saveDailyExpense,
   deleteDailyExpense,
   deleteDueCollection,
+  deleteDueCollectionsBatchLocal,
   deleteAllProductsLocal,
   deleteAllShopsLocal,
   deleteAllOrdersLocal,
@@ -53,6 +54,8 @@ import {
   deleteAllDailyExpensesLocal,
   deleteAllDueCollectionsLocal,
   resetAllShopDuesLocal,
+  resetShopDueLocal,
+  resetBatchShopDuesLocal,
   deleteAllStaffAuthorizedEmailsLocal,
   recordDiagnosticEvent,
   prepareDeletedIdsForRestore
@@ -80,6 +83,7 @@ import {
   deleteRouteFromCloud,
   saveDueCollectionToCloud,
   deleteDueCollectionFromCloud,
+  deleteDueCollectionsBatchFromCloud,
   saveDailyExpenseToCloud,
   deleteDailyExpenseFromCloud,
   deleteAllProductsFromCloud,
@@ -89,6 +93,7 @@ import {
   deleteAllRoutesFromCloud,
   deleteAllDailyExpensesFromCloud,
   deleteAllDueCollectionsFromCloud,
+  resetBatchShopDuesInCloud,
   deleteAllStaffAuthorizedEmailsFromCloud,
   seedInitialCloudDataIfEmpty,
   clearAllCloudMockData,
@@ -411,7 +416,7 @@ export default function App() {
                 name: ord.shopName,
                 ownerName: ord.customerName || 'মালিক',
                 phone: ord.shopPhone || '',
-                routeArea: ord.deliveryZone || 'পলাশবাড়ী',
+                routeArea: ord.deliveryZoneName || (ord as any).deliveryZone || 'পলাশবাড়ী',
                 address: ord.shopAddress || 'পলাশবাড়ী',
                 previousDue: 0,
                 category: 'জেনারেল স্টোর / মুদি',
@@ -1259,6 +1264,28 @@ export default function App() {
     });
   };
 
+  const handleDeleteDueCollectionsBatch = (ids: string[]) => {
+    if (!ids || ids.length === 0) return;
+    const count = ids.length;
+    const targetCollections = dueCollections.filter((c) => ids.includes(c.id));
+    const totalAmount = targetCollections.reduce((sum, c) => sum + (c.amount || 0), 0);
+
+    requestDeletePermission({
+      title: `নির্বাচিত ${count}টি বকেয়া হিস্ট্রি বাল্ক ডিলিট পারমিশন`,
+      itemLabel: `মোট ${count} টি রেকর্ড (সর্বমোট আদায়ের পরিমাণ: ৳${totalAmount.toLocaleString()})`,
+      isBulk: true,
+      message: `আপনি কি নিশ্চিতভাবে নির্বাচিত ${count}টি বকেয়া আদায়ের রেকর্ড একসাথে ডিলিট করতে চান? ডিলিট করলে এগুলো ক্লাউড ও ডিভাইস থেকে স্থায়ীভাবে মুছে যাবে।`,
+      confirmButtonText: `হ্যাঁ, ${count}টি রেকর্ড বাল্ক ডিলিট করুন`,
+      onConfirm: async () => {
+        const remaining = deleteDueCollectionsBatchLocal(ids);
+        setDueCollections(remaining);
+        await deleteDueCollectionsBatchFromCloud(ids).catch(() => {});
+        reloadData();
+        showToast(`${count} টি বকেয়া হিস্ট্রি রেকর্ড সফলভাবে বাল্ক ডিলিট করা হয়েছে!`, 'info');
+      },
+    });
+  };
+
   // Next-Day Delivery & Cash/Due Settlement Handler
   const handleSettleOrderDelivery = (
     orderId: string,
@@ -1585,6 +1612,61 @@ export default function App() {
         reloadData();
         showToast('সকল দোকানের বকেয়া সফলভাবে ৳০ (রিসেট) করা হয়েছে!', 'success');
       },
+    });
+  };
+
+  const handleResetSingleShopDue = (shopId: string, skipConfirm = false) => {
+    const target = shops.find((s) => s.id === shopId);
+    if (!target) return;
+    const execute = () => {
+      const updated = resetShopDueLocal(shopId);
+      setShops(updated);
+      const updatedShop = updated.find((s) => s.id === shopId);
+      if (updatedShop) {
+        saveShopToCloud(updatedShop).catch(() => {});
+      }
+      showToast(`${target.name}-এর বকেয়া সফলভাবে ৳০ (শূন্য) করা হয়েছে!`, 'success');
+    };
+
+    if (skipConfirm) {
+      execute();
+      return;
+    }
+
+    requestDeletePermission({
+      title: 'দোকানের বকেয়া মুছে ৳০ (শূন্য) করার পারমিশন',
+      itemName: target.name,
+      itemLabel: `বর্তমান বকেয়া: ৳${(target.previousDue || 0).toLocaleString()}`,
+      message: `আপনি কি নিশ্চিতভাবে ${target.name}-এর বর্তমান বকেয়া ৳${(target.previousDue || 0).toLocaleString()} মুছে ৳০ (শূন্য) করতে চান? দোকানটি তালিকায় থাকবে, শুধু বকেয়ার অঙ্ক ০ হবে।`,
+      confirmButtonText: 'হ্যাঁ, বকেয়া ৳০ করুন',
+      onConfirm: execute,
+    });
+  };
+
+  const handleResetBatchShopDues = (shopIds: string[], skipConfirm = false) => {
+    if (!shopIds || shopIds.length === 0) return;
+    const targetShops = shops.filter((s) => shopIds.includes(s.id));
+    const totalDue = targetShops.reduce((sum, s) => sum + (s.previousDue || 0), 0);
+
+    const execute = async () => {
+      const updated = resetBatchShopDuesLocal(shopIds);
+      setShops(updated);
+      await resetBatchShopDuesInCloud(shopIds, updated).catch(() => {});
+      showToast(`বাছাইকৃত ${shopIds.length}টি দোকানের বকেয়া সফলভাবে ৳০ (শূন্য) করা হয়েছে!`, 'success');
+    };
+
+    if (skipConfirm) {
+      execute();
+      return;
+    }
+
+    requestDeletePermission({
+      title: 'বাছাইকৃত দোকানের বকেয়া বাল্ক ৳০ (শূন্য) করার পারমিশন',
+      itemLabel: `মোট ${shopIds.length}টি দোকান (সর্বমোট বকেয়া: ৳${totalDue.toLocaleString()})`,
+      isBulk: true,
+      message: `আপনি কি নিশ্চিতভাবে নির্বাচিত ${shopIds.length}টি দোকানের সকল বকেয়া (মোট ৳${totalDue.toLocaleString()}) একসাথে মুছে ৳০ (শূন্য) করতে চান? দোকানগুলো তালিকায় বহাল থাকবে, শুধু বকেয়ার অঙ্ক ০ হবে।`,
+      confirmButtonText: `হ্যাঁ, ${shopIds.length}টি দোকানের বকেয়া ৳০ করুন`,
+      onConfirm: execute,
     });
   };
 
@@ -2369,6 +2451,7 @@ export default function App() {
                 dailyExpenses={dailyExpenses}
                 onDeleteDailyExpense={handleDeleteDailyExpense}
                 onDeleteDueCollection={handleDeleteDueCollection}
+                onDeleteBatchDueCollections={handleDeleteDueCollectionsBatch}
                 onDeleteAllProducts={handleDeleteAllProducts}
                 onDeleteAllShops={handleDeleteAllShops}
                 onDeleteAllOrders={handleDeleteAllOrders}
@@ -2377,10 +2460,12 @@ export default function App() {
                 onDeleteAllDailyExpenses={handleDeleteAllDailyExpenses}
                 onDeleteAllDueCollections={handleDeleteAllDueCollections}
                 onResetAllShopDues={handleResetAllShopDues}
+                onResetShopDue={handleResetSingleShopDue}
+                onResetBatchShopDues={handleResetBatchShopDues}
                 onDeleteAllStaffEmails={handleDeleteAllStaffEmails}
                 onDeleteEverythingAllAtOnce={handleDeleteEverythingAllAtOnce}
                 onRequestDeletePermission={requestDeletePermission}
-                onForceCloudRecovery={handleForceCloudRecovery}
+                onForceDeepCloudRecovery={handleForceCloudRecovery}
               />
             )}
           </>

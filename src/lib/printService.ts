@@ -771,7 +771,7 @@ export function printCollectionsBatch(
           c.amount || 0
         ).toLocaleString()}</td>
         <td style="padding: 6px; text-align: right; font-weight: 700; color: #be123c;">৳${Number(
-          c.remainingDueAfter || 0
+          (c as any).remainingDueAfter || 0
         ).toLocaleString()}</td>
       </tr>
     `
