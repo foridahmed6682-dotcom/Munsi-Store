@@ -313,7 +313,23 @@ export default function App() {
         const key = item?.[idKey] ? String(item[idKey]) : '';
         if (key && !deletedIds.has(key)) {
           const prev = map.get(key);
-          map.set(key, prev ? { ...prev, ...item } : item);
+          if (prev) {
+            const validImage =
+              (item.imageUrl && item.imageUrl.startsWith('data:') ? item.imageUrl : null) ||
+              (prev.imageUrl && prev.imageUrl.startsWith('data:') ? prev.imageUrl : null) ||
+              (item.imageUrl && item.imageUrl.startsWith('http') ? item.imageUrl : null) ||
+              (prev.imageUrl && prev.imageUrl.startsWith('http') ? prev.imageUrl : null) ||
+              item.imageUrl ||
+              prev.imageUrl ||
+              '';
+            map.set(key, {
+              ...prev,
+              ...item,
+              ...('imageUrl' in prev || 'imageUrl' in item ? { imageUrl: validImage } : {}),
+            });
+          } else {
+            map.set(key, item);
+          }
         }
       });
       return Array.from(map.values());
@@ -1946,7 +1962,18 @@ export default function App() {
                   ? {
                       ...prev,
                       ...item,
-                      ...(prev.imageUrl && !item.imageUrl ? { imageUrl: prev.imageUrl } : {}),
+                      ...(k && 'imageUrl' in item
+                        ? {
+                            imageUrl:
+                              (item.imageUrl && item.imageUrl.startsWith('data:') ? item.imageUrl : null) ||
+                              (prev.imageUrl && prev.imageUrl.startsWith('data:') ? prev.imageUrl : null) ||
+                              (item.imageUrl && item.imageUrl.startsWith('http') ? item.imageUrl : null) ||
+                              (prev.imageUrl && prev.imageUrl.startsWith('http') ? prev.imageUrl : null) ||
+                              item.imageUrl ||
+                              prev.imageUrl ||
+                              '',
+                          }
+                        : {}),
                     }
                   : item
               );

@@ -482,11 +482,19 @@ export async function pushBulkDataToServerMirror(payload: {
 export async function fetchServerDatabaseMirror(): Promise<any | null> {
   try {
     const res = await fetch('/api/db/mirror');
-    if (!res.ok) return null;
-    return await res.json();
+    if (res.ok) return await res.json();
   } catch {
-    return null;
+    // try static fallback
   }
+
+  try {
+    const staticRes = await fetch('/database_seed_mirror.json');
+    if (staticRes.ok) return await staticRes.json();
+  } catch {
+    // fallback
+  }
+
+  return null;
 }
 
 // Standard Google Auth provider (clean login without Drive or Sheets scopes)

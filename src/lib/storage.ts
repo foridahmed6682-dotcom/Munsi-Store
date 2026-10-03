@@ -617,14 +617,22 @@ export function saveProducts(products: Product[]) {
   const deletedIds = getDeletedProductIds();
   const clean = products.filter((p) => !deletedIds.has(p.id));
   if (!safeSetLocalStorage(STORAGE_KEYS.PRODUCTS, JSON.stringify(clean))) {
-    try {
-      const compacted = clean.map((p) => ({
-        ...p,
-        imageUrl: p.imageUrl && p.imageUrl.length > 45000 ? '' : p.imageUrl,
-      }));
-      safeSetLocalStorage(STORAGE_KEYS.PRODUCTS, JSON.stringify(compacted));
-    } catch (innerErr) {
-      console.warn('Could not write products to localStorage:', innerErr);
+    // Proactively free heavy local snapshot backups first
+    compactLocalBackupSnapshotsToFreeSpace();
+    if (!safeSetLocalStorage(STORAGE_KEYS.PRODUCTS, JSON.stringify(clean))) {
+      try {
+        // Only if absolutely full and retry failed, truncate heavy base64 strings (never touch http/firebase/server urls!)
+        const compacted = clean.map((p) => ({
+          ...p,
+          imageUrl:
+            p.imageUrl && p.imageUrl.startsWith('data:image/') && p.imageUrl.length > 80000
+              ? ''
+              : p.imageUrl,
+        }));
+        safeSetLocalStorage(STORAGE_KEYS.PRODUCTS, JSON.stringify(compacted));
+      } catch (innerErr) {
+        console.warn('Could not write products to localStorage:', innerErr);
+      }
     }
   }
 }
