@@ -17,10 +17,13 @@
  * 5. Loads instantaneously across devices with HTTP caching.
  */
 
+import { ref, uploadString, getDownloadURL } from 'firebase/storage';
+import { storage } from './firebase';
+
 /**
- * Uploads a base64 Data URL to the backend permanent image server.
- * Returns the short relative URL (e.g. "/uploads/prod_1728000000_abc.webp").
- * If offline or server is unreachable, falls back to the dataUrl so work is never blocked!
+ * Uploads a base64 Data URL to permanent storage (Server or Firebase Cloud Storage).
+ * Returns the URL (e.g. "/uploads/prod_1728000000_abc.webp" or "https://firebasestorage.googleapis.com/...").
+ * If offline or storage is unreachable, falls back safely to the dataUrl so work is never blocked!
  */
 export async function uploadBase64ImageToServer(
   dataUrl: string,
@@ -30,6 +33,7 @@ export async function uploadBase64ImageToServer(
     return dataUrl;
   }
 
+  // 1. Try Node Express backend endpoint (/api/upload-image) if available
   try {
     const res = await fetch('/api/upload-image', {
       method: 'POST',
@@ -46,15 +50,34 @@ export async function uploadBase64ImageToServer(
         return data.url;
       }
     }
-  } catch (err) {
-    console.warn('⚠️ Server image upload unreachable, falling back to dataUrl:', err);
+  } catch {
+    // backend server unreachable (e.g. static hosting on Vercel)
+  }
+
+  // 2. Try Firebase Cloud Storage (Works 100% on Vercel, static domains, APK, everywhere!)
+  try {
+    if (storage) {
+      const cleanName = (preferredName || 'prod')
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '_')
+        .slice(0, 25);
+      const filename = `products/${cleanName || 'prod'}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.webp`;
+      const storageRef = ref(storage, filename);
+      await uploadString(storageRef, dataUrl, 'data_url');
+      const downloadUrl = await getDownloadURL(storageRef);
+      if (downloadUrl) {
+        return downloadUrl;
+      }
+    }
+  } catch (storageErr) {
+    console.warn('⚠️ Firebase Cloud Storage upload error:', storageErr);
   }
 
   return dataUrl;
 }
 
 /**
- * Converts all existing Base64 product images in bulk to permanent server files.
+ * Converts all existing Base64 product images in bulk to permanent server or Firebase files.
  */
 export async function migrateBulkProductImagesToServer(products: any[]): Promise<{
   updatedProducts: any[];
@@ -72,6 +95,7 @@ export async function migrateBulkProductImagesToServer(products: any[]): Promise
     return { updatedProducts: products, migratedCount: 0 };
   }
 
+  // 1. Try Node backend bulk endpoint first
   try {
     const res = await fetch('/api/upload-bulk-images', {
       method: 'POST',
@@ -81,7 +105,7 @@ export async function migrateBulkProductImagesToServer(products: any[]): Promise
 
     if (res.ok) {
       const data = await res.json();
-      if (Array.isArray(data?.updatedProducts)) {
+      if (Array.isArray(data?.updatedProducts) && (data?.migratedCount || 0) > 0) {
         const migratedMap = new Map<string, string>();
         for (const item of data.updatedProducts) {
           if (item?.id && item?.imageUrl) {
@@ -103,7 +127,33 @@ export async function migrateBulkProductImagesToServer(products: any[]): Promise
       }
     }
   } catch (err) {
-    console.warn('⚠️ Bulk image migration error:', err);
+    console.warn('⚠️ Backend bulk migration unreachable, attempting client/Firebase migration:', err);
+  }
+
+  // 2. Client-side migration fallback (via Firebase Cloud Storage or individual upload)
+  let migratedCount = 0;
+  const migratedMap = new Map<string, string>();
+
+  for (const prod of base64Prods) {
+    try {
+      const targetUrl = await uploadBase64ImageToServer(prod.imageUrl, prod.name || prod.banglaName);
+      if (targetUrl && !targetUrl.startsWith('data:image/')) {
+        migratedMap.set(prod.id, targetUrl);
+        migratedCount++;
+      }
+    } catch {
+      // keep existing image
+    }
+  }
+
+  if (migratedCount > 0) {
+    const nextProducts = products.map((p) => {
+      if (migratedMap.has(p.id)) {
+        return { ...p, imageUrl: migratedMap.get(p.id)! };
+      }
+      return p;
+    });
+    return { updatedProducts: nextProducts, migratedCount };
   }
 
   return { updatedProducts: products, migratedCount: 0 };

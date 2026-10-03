@@ -262,6 +262,18 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
       mirrorStats.shops > shopsCount ||
       mirrorStats.orders > ordersCount);
 
+  const currentProducts = React.useMemo(() => getProducts(), [storageStats]);
+  const cloudOrServerImagesCount = React.useMemo(() => {
+    return currentProducts.filter(
+      (p) => p && typeof p.imageUrl === 'string' && (p.imageUrl.startsWith('/uploads/') || p.imageUrl.startsWith('http'))
+    ).length;
+  }, [currentProducts]);
+  const base64ImagesCount = React.useMemo(() => {
+    return currentProducts.filter(
+      (p) => p && typeof p.imageUrl === 'string' && p.imageUrl.startsWith('data:')
+    ).length;
+  }, [currentProducts]);
+
   return (
     <div className="space-y-5 animate-fadeIn">
       {/* TOP HEADER BANNER */}
@@ -539,23 +551,27 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
           </div>
         </div>
 
-        {/* Card 5: Permanent Server Image Storage (Auto WebP Uploader) */}
+        {/* Card 5: Permanent Server / Cloud Image Storage */}
         <div className="bg-white p-4 rounded-2xl border border-neutral-200 shadow-xs space-y-2 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-neutral-500">পার্মানেন্ট সার্ভার ইমেজ ভল্ট</span>
+              <span className="text-xs font-bold text-neutral-500">পার্মানেন্ট ক্লাউড ও সার্ভার ইমেজ</span>
               <ImageIcon className="w-4 h-4 text-teal-600" />
             </div>
             <div className="flex items-baseline justify-between pt-1">
               <span className="text-lg font-black text-neutral-900">
-                {uploadsStats ? `${uploadsStats.count} টি ছবি` : isLoadingServer ? 'লোড হচ্ছে...' : '০ টি ছবি'}
+                {cloudOrServerImagesCount} টি পণ্য
               </span>
-              <span className="px-2 py-0.5 rounded font-bold text-[10px] bg-teal-100 text-teal-800">
-                {uploadsStats ? `${uploadsStats.totalSizeMB} MB` : '০.০০ MB'}
+              <span className={`px-2 py-0.5 rounded font-bold text-[10px] ${
+                base64ImagesCount > 0 ? 'bg-amber-100 text-amber-800' : 'bg-teal-100 text-teal-800'
+              }`}>
+                {base64ImagesCount > 0 ? `${base64ImagesCount}টি রূপান্তর বাকি` : '১০০% লিংকড'}
               </span>
             </div>
             <p className="text-[11px] text-neutral-600 font-medium pt-1">
-              ✓ ৫ এমবি সীমা বাইপাস সক্রিয়। ছবিগুলো সার্ভার ডিস্কে ওয়েবপি হিসেবে সংরক্ষিত।
+              {base64ImagesCount === 0
+                ? '✓ সকল পণ্যের ছবি পার্মানেন্ট লিংক হিসেবে সেভ আছে। ৫MB ব্রাউজার মেমোরি নিরাপদ।'
+                : `বাকি ${base64ImagesCount}টি ছবি ব্রাউজার মেমোরিতে আছে। বাটনে ক্লিক করে ক্লাউডে নিন।`}
             </p>
           </div>
 
@@ -564,10 +580,16 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
             onClick={handleMigrateOldImages}
             disabled={isMigratingImages}
             className="w-full mt-2 py-1.5 px-2 bg-teal-700 hover:bg-teal-600 text-white rounded-xl text-[10px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-2xs disabled:opacity-60"
-            title="ব্রাউজারে থাকা কোনো পুরাতন Base64 ছবি থাকলে সেগুলোকে সার্ভার ফোল্ডারে স্থানান্তর করুন"
+            title="ব্রাউজারে থাকা কোনো পুরাতন Base64 ছবি থাকলে সেগুলোকে ক্লাউড/সার্ভার লিংকে স্থানান্তর করুন"
           >
             <UploadCloud className={`w-3.5 h-3.5 ${isMigratingImages ? 'animate-bounce' : ''}`} />
-            <span>{isMigratingImages ? 'রূপান্তর হচ্ছে...' : 'সব ছবি সার্ভারে ট্রান্সফার করুন'}</span>
+            <span>
+              {isMigratingImages
+                ? 'রূপান্তর হচ্ছে...'
+                : base64ImagesCount > 0
+                ? `বাকি ${base64ImagesCount}টি ছবি লিংক করুন`
+                : 'সব ছবি লিংকে রূপান্তরিত আছে'}
+            </span>
           </button>
         </div>
       </div>

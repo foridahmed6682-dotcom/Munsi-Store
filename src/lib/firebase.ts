@@ -24,6 +24,7 @@ import {
   setLogLevel,
   disableNetwork
 } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { AppUser, UserRole, Shop, Product, Order, DueCollectionRecord, Category, AuthorizedUserEmail, Route, BusinessInfo, CustomerDeliveryAddress, DailyExpenseRecord, StaffTargetConfig } from '../types';
 import { compressDataUrlIfNeeded } from './imageUtils';
@@ -56,6 +57,7 @@ export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 /* CRITICAL: The app will break without this line */
 export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
 export const auth = getAuth(app);
+export const storage = getStorage(app);
 
 // Silence internal @firebase/firestore WebChannel backoff & quota console.error spam
 try {
