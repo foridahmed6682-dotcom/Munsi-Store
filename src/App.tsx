@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { Analytics } from '@vercel/analytics/react';
 import {
   initializeDefaultData,
   getProducts,
@@ -2545,6 +2546,7 @@ export default function App() {
         products={products}
         initialEditMode={isMemoEditMode}
       />
+      <Analytics />
     </div>
   );
 }
