@@ -331,6 +331,8 @@ function saveServerDbMirror() {
   try {
     serverDbMirror.updatedAt = new Date().toISOString();
     fs.writeFileSync(DB_MIRROR_FILE, JSON.stringify(serverDbMirror, null, 2));
+    const publicSeedPath = path.join(process.cwd(), 'public', 'database_seed_mirror.json');
+    fs.writeFileSync(publicSeedPath, JSON.stringify(serverDbMirror));
   } catch (err) {
     console.warn('Failed to write server DB mirror file:', err);
   }

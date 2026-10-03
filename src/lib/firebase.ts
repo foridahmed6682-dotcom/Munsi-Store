@@ -482,14 +482,24 @@ export async function pushBulkDataToServerMirror(payload: {
 export async function fetchServerDatabaseMirror(): Promise<any | null> {
   try {
     const res = await fetch('/api/db/mirror');
-    if (res.ok) return await res.json();
+    if (res.ok) {
+      const cType = res.headers.get('content-type') || '';
+      if (cType.includes('application/json')) {
+        return await res.json();
+      }
+    }
   } catch {
     // try static fallback
   }
 
   try {
     const staticRes = await fetch('/database_seed_mirror.json');
-    if (staticRes.ok) return await staticRes.json();
+    if (staticRes.ok) {
+      const cType = staticRes.headers.get('content-type') || '';
+      if (!cType.includes('text/html')) {
+        return await staticRes.json();
+      }
+    }
   } catch {
     // fallback
   }
@@ -1124,7 +1134,8 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
       deletedIds
     ).map((item) => {
       const mirrorMatch = mirrorProducts.find((m) => m.id === item.id);
-      if (!item.imageUrl && mirrorMatch?.imageUrl) {
+      const isBrokenUpload = typeof item.imageUrl === 'string' && item.imageUrl.startsWith('/uploads/');
+      if ((!item.imageUrl || isBrokenUpload) && mirrorMatch?.imageUrl) {
         return { ...item, imageUrl: mirrorMatch.imageUrl };
       }
       return item;
@@ -1133,10 +1144,23 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
     const merged = mergeLocalAndCloud(localProds, combinedRemote, deletedIds).map((item) => {
       const localMatch = localProds.find((l) => l.id === item.id);
       const mirrorMatch = mirrorProducts.find((m) => m.id === item.id);
-      if (!item.imageUrl && (localMatch?.imageUrl || mirrorMatch?.imageUrl)) {
-        return { ...item, imageUrl: localMatch?.imageUrl || mirrorMatch?.imageUrl || '' };
-      }
-      return item;
+
+      const bestImage =
+        (mirrorMatch?.imageUrl && mirrorMatch.imageUrl.startsWith('data:') ? mirrorMatch.imageUrl : null) ||
+        (item.imageUrl && item.imageUrl.startsWith('data:') ? item.imageUrl : null) ||
+        (localMatch?.imageUrl && localMatch.imageUrl.startsWith('data:') ? localMatch.imageUrl : null) ||
+        (item.imageUrl && item.imageUrl.startsWith('http') ? item.imageUrl : null) ||
+        (mirrorMatch?.imageUrl && mirrorMatch.imageUrl.startsWith('http') ? mirrorMatch.imageUrl : null) ||
+        (item.imageUrl && !item.imageUrl.startsWith('/uploads/') ? item.imageUrl : null) ||
+        (mirrorMatch?.imageUrl && !mirrorMatch.imageUrl.startsWith('/uploads/') ? mirrorMatch.imageUrl : null) ||
+        item.imageUrl ||
+        mirrorMatch?.imageUrl ||
+        '';
+
+      return {
+        ...item,
+        imageUrl: bestImage,
+      };
     });
     if (merged.length > 0) {
       onData(merged);

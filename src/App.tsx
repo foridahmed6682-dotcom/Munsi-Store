@@ -315,12 +315,12 @@ export default function App() {
           const prev = map.get(key);
           if (prev) {
             const validImage =
-              (item.imageUrl && item.imageUrl.startsWith('data:') ? item.imageUrl : null) ||
               (prev.imageUrl && prev.imageUrl.startsWith('data:') ? prev.imageUrl : null) ||
+              (item.imageUrl && item.imageUrl.startsWith('data:') ? item.imageUrl : null) ||
               (item.imageUrl && item.imageUrl.startsWith('http') ? item.imageUrl : null) ||
               (prev.imageUrl && prev.imageUrl.startsWith('http') ? prev.imageUrl : null) ||
-              item.imageUrl ||
-              prev.imageUrl ||
+              (item.imageUrl && !item.imageUrl.startsWith('/uploads/') ? item.imageUrl : null) ||
+              (prev.imageUrl && !prev.imageUrl.startsWith('/uploads/') ? prev.imageUrl : null) ||
               '';
             map.set(key, {
               ...prev,
@@ -1909,13 +1909,13 @@ export default function App() {
     };
   }, [orders, products, shops, categories, routes, dueCollections, dailyExpenses, authorizedEmails, businessInfo, activeSimulatedRole]);
 
-  // Auto-migrate any existing Base64 images to permanent server files to guarantee 0% 5MB storage usage
+  // Auto-heal any products that have broken local "/uploads/" URLs or oversized images
   useEffect(() => {
     if (products.length === 0) return;
-    const hasBase64 = products.some(
-      (p) => p && typeof p.imageUrl === 'string' && p.imageUrl.startsWith('data:image/')
+    const hasBrokenUploads = products.some(
+      (p) => p && typeof p.imageUrl === 'string' && p.imageUrl.startsWith('/uploads/')
     );
-    if (!hasBase64) return;
+    if (!hasBrokenUploads) return;
 
     const timer = setTimeout(() => {
       migrateBulkProductImagesToServer(products)
@@ -1924,11 +1924,11 @@ export default function App() {
             saveProducts(updatedProducts);
             setProducts(updatedProducts);
             pushBulkDataToServerMirror({ products: updatedProducts }).catch(() => {});
-            console.log(`📸 Auto-migrated ${migratedCount} base64 images to permanent server files!`);
+            console.log(`📸 Auto-healed ${migratedCount} product images to permanent WebP!`);
           }
         })
         .catch(() => {});
-    }, 3500);
+    }, 1200);
 
     return () => clearTimeout(timer);
   }, [products]);
