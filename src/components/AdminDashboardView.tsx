@@ -1251,7 +1251,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-600/90 hover:bg-amber-500 text-white font-semibold text-xs border border-amber-400/50 shadow-sm transition-all"
             >
               <DollarSign className="w-3.5 h-3.5 text-amber-200" />
-              <span>বকেয়া হিস্ট্রি</span>
+              <span>দোকানের বকেয়া (৳০ করুন)</span>
             </button>
             <button
               onClick={() => setSubTab('delete_center')}
@@ -1299,7 +1299,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           }`}
         >
           <DollarSign className="w-4 h-4 text-amber-500" />
-          <span>বকেয়া হিস্ট্রি ও বাল্ক ডিলিট ({dueCollections.length})</span>
+          <span>দোকানের বকেয়া ও বাল্ক ৳০ ({shops.filter((s) => (s.previousDue || 0) > 0).length} দোকানে বাকি)</span>
         </button>
 
         <button

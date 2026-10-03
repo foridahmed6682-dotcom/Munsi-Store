@@ -309,55 +309,104 @@ function mergeLocalAndCloud<T extends Record<string, any>>(
   return Array.from(map.values());
 }
 
-// Writes a collection catalog directly to Firebase Firestore (safe against 1MB limit and hanging WebChannel)
-export async function writeFirestoreCatalogDirect(catalogKey: string, items: any[]): Promise<void> {
+// Debounce map to strictly respect Google Cloud Firestore's single-document 1 write/second limit
+const catalogDebounceTimers = new Map<string, any>();
+
+function getLocalCatalogFallback(catalogKey: string): any[] {
+  switch (catalogKey) {
+    case 'products':
+      return getProducts();
+    case 'shops':
+      return getShops();
+    case 'orders':
+      return getOrders();
+    case 'categories':
+      return getCategories();
+    case 'routes':
+      return getRoutes();
+    case 'authorizedEmails':
+      return getAuthorizedEmails();
+    default:
+      return [];
+  }
+}
+
+// Writes a collection catalog directly to Firebase Firestore (safe against 1MB limit and throttled against 1 write/sec 429)
+export async function writeFirestoreCatalogDirect(catalogKey: string, items: any[], immediate = false): Promise<void> {
   if (isFirestoreWriteQuotaExhausted()) return;
-  let serialized = JSON.stringify(items);
-  // Protect against Firestore 1MB single-document limit when many products have base64 images
-  if (serialized.length > 650000 && catalogKey === 'products') {
-    const compacted = items.map((item) => {
-      if (item && typeof item.imageUrl === 'string' && item.imageUrl.startsWith('data:') && item.imageUrl.length > 35000) {
-        return { ...item, imageUrl: '' };
-      }
-      return item;
-    });
-    serialized = JSON.stringify(compacted);
-  }
+  if (!items || !Array.isArray(items)) return;
 
-  const nowIso = new Date().toISOString();
-
-  // Single REST PATCH (no duplicate SDK setDoc that queues infinite retries when quota is reached)
-  try {
-    const res = await fetch(`${FIRESTORE_BASE_URL}/settings/cloud_catalog_${catalogKey}?key=${FIRESTORE_API_KEY}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fields: {
-          itemsJson: { stringValue: serialized },
-          updatedAt: { stringValue: nowIso },
-        },
-      }),
-    });
-    if (res.status === 429) {
-      tripFirestoreQuotaCircuitBreaker({ status: 429 }, 'write');
-    } else if (res.status === 400) {
-      recordDiagnosticEvent({
-        source: 'firestore',
-        severity: 'warning',
-        category: 'payload_1mb',
-        titleBn: `ফায়ারবেজ ক্যাটালগ (${catalogKey}) ১ মেগাবাইট লিমিট সতর্কতা`,
-        detailsBn: 'ফায়ারবেজের ডকুমেন্ট সাইজ লিমিট অতিক্রম করায় বড় ছবিগুলো কম্প্যাক্ট করা হচ্ছে।',
-        technicalDetails: `PATCH settings/cloud_catalog_${catalogKey} returned HTTP 400`,
+  const performWrite = async (itemsToWrite: any[]) => {
+    let serialized = JSON.stringify(itemsToWrite);
+    // Protect against Firestore 1MB single-document limit when many products have base64 images
+    if (serialized.length > 650000 && catalogKey === 'products') {
+      const compacted = itemsToWrite.map((item) => {
+        if (item && typeof item.imageUrl === 'string' && item.imageUrl.startsWith('data:') && item.imageUrl.length > 35000) {
+          return { ...item, imageUrl: '' };
+        }
+        return item;
       });
+      serialized = JSON.stringify(compacted);
     }
-  } catch {
-    // ignore network error
+
+    const nowIso = new Date().toISOString();
+
+    // Single REST PATCH (no duplicate SDK setDoc that queues infinite retries when quota is reached)
+    try {
+      const res = await fetch(`${FIRESTORE_BASE_URL}/settings/cloud_catalog_${catalogKey}?key=${FIRESTORE_API_KEY}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fields: {
+            itemsJson: { stringValue: serialized },
+            updatedAt: { stringValue: nowIso },
+          },
+        }),
+      });
+      if (res.status === 429) {
+        tripFirestoreQuotaCircuitBreaker({ status: 429, message: `PATCH settings/cloud_catalog_${catalogKey} -> 429 Write rate limit` }, 'write');
+      } else if (res.status === 400) {
+        recordDiagnosticEvent({
+          source: 'firestore',
+          severity: 'warning',
+          category: 'payload_1mb',
+          titleBn: `ফায়ারবেজ ক্যাটালগ (${catalogKey}) ১ মেগাবাইট লিমিট সতর্কতা`,
+          detailsBn: 'ফায়ারবেজের ডকুমেন্ট সাইজ লিমিট অতিক্রম করায় বড় ছবিগুলো কম্প্যাক্ট করা হচ্ছে।',
+          technicalDetails: `PATCH settings/cloud_catalog_${catalogKey} returned HTTP 400`,
+        });
+      }
+    } catch {
+      // ignore network error
+    }
+  };
+
+  if (immediate) {
+    if (catalogDebounceTimers.has(catalogKey)) {
+      clearTimeout(catalogDebounceTimers.get(catalogKey));
+      catalogDebounceTimers.delete(catalogKey);
+    }
+    await performWrite(items);
+    return;
   }
+
+  // Trailing debounce prevents Firestore single-document 1 write/sec 429 errors
+  if (catalogDebounceTimers.has(catalogKey)) {
+    clearTimeout(catalogDebounceTimers.get(catalogKey));
+  }
+
+  catalogDebounceTimers.set(
+    catalogKey,
+    setTimeout(() => {
+      catalogDebounceTimers.delete(catalogKey);
+      performWrite(items).catch(() => {});
+    }, 1500)
+  );
 }
 
 export async function upsertItemInFirebaseCatalog(catalogKey: string, item: any, idField = 'id'): Promise<void> {
   if (!item || !item[idField] || isFirestoreWriteQuotaExhausted()) return;
-  const current = await readFirestoreCatalogDirect<any>(catalogKey);
+  const localList = getLocalCatalogFallback(catalogKey);
+  const current = localList.length > 0 ? [...localList] : await readFirestoreCatalogDirect<any>(catalogKey);
   const keyVal = String(item[idField]).toLowerCase();
   const idx = current.findIndex((x) => x && String(x[idField]).toLowerCase() === keyVal);
   if (idx >= 0) {
@@ -365,17 +414,18 @@ export async function upsertItemInFirebaseCatalog(catalogKey: string, item: any,
   } else {
     current.unshift(item);
   }
-  await writeFirestoreCatalogDirect(catalogKey, current);
+  await writeFirestoreCatalogDirect(catalogKey, current, false);
 }
 
 export async function removeItemFromFirebaseCatalog(catalogKey: string, idValue: string, idField = 'id'): Promise<void> {
   if (!idValue || isFirestoreWriteQuotaExhausted()) return;
-  const current = await readFirestoreCatalogDirect<any>(catalogKey);
+  const localList = getLocalCatalogFallback(catalogKey);
+  const current = localList.length > 0 ? [...localList] : await readFirestoreCatalogDirect<any>(catalogKey);
   const keyVal = String(idValue).toLowerCase();
   const filtered = current.filter(
     (x) => x && String(x[idField]).toLowerCase() !== keyVal && String(x.id || '').toLowerCase() !== keyVal
   );
-  await writeFirestoreCatalogDirect(catalogKey, filtered);
+  await writeFirestoreCatalogDirect(catalogKey, filtered, false);
 }
 
 // Server Mirror Helpers (Protects data across devices even when Firebase Free Daily Read Quota is reached)

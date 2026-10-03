@@ -20,7 +20,8 @@ import {
   X,
   Printer,
   CheckSquare,
-  Square
+  Square,
+  RotateCcw
 } from 'lucide-react';
 import { Shop, PaymentMethod, Route, Order, DueCollectionRecord } from '../types';
 import { AddShopModal } from './AddShopModal';
@@ -40,6 +41,8 @@ interface ShopsListViewProps {
   isAdmin?: boolean;
   onUpdateShop?: (shop: Shop) => void;
   onDeleteShop?: (shopId: string) => void;
+  onResetShopDue?: (shopId: string, skipConfirm?: boolean) => void;
+  onResetBatchShopDues?: (shopIds: string[]) => void;
 }
 
 export const ShopsListView: React.FC<ShopsListViewProps> = ({
@@ -54,6 +57,8 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
   isAdmin = false,
   onUpdateShop,
   onDeleteShop,
+  onResetShopDue,
+  onResetBatchShopDues,
 }) => {
   const [search, setSearch] = useState('');
   const [selectedRoute, setSelectedRoute] = useState('all');
@@ -310,6 +315,26 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
               </button>
             )}
 
+            {isAdmin && selectedShopIds.size > 0 && onResetBatchShopDues && (
+              <button
+                type="button"
+                onClick={() => {
+                  const targetIds = Array.from(selectedShopIds).filter((id) => {
+                    const s = shops.find((shop) => shop.id === id);
+                    return s && (s.previousDue || 0) > 0;
+                  });
+                  if (targetIds.length > 0) {
+                    onResetBatchShopDues(targetIds);
+                  }
+                }}
+                className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-neutral-950 rounded-xl text-xs font-black flex items-center gap-1.5 shadow-sm cursor-pointer transition-all active:scale-95"
+                title="বাছাইকৃত দোকানগুলোর বকেয়া মুছে ৳০ (শূন্য) করুন"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>নির্বাচিত ({selectedShopIds.size}টি) বকেয়া ৳০ করুন</span>
+              </button>
+            )}
+
             <button
               type="button"
               onClick={() => printShopsBatch(filteredShops, `(${filteredShops.length} টি দোকান)`)}
@@ -458,6 +483,17 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
                       >
                         <Share2 className="w-3 h-3 text-emerald-700" />
                         <span>তাগাদা</span>
+                      </button>
+                    )}
+                    {isAdmin && shop.previousDue > 0 && onResetShopDue && (
+                      <button
+                        type="button"
+                        onClick={() => onResetShopDue(shop.id)}
+                        className="px-2 py-0.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/30 text-amber-950 border border-amber-300 text-[10px] font-black flex items-center gap-1 cursor-pointer transition-colors active:scale-95"
+                        title="এডমিন: এই দোকানের বকেয়া মুছে ৳০ (শূন্য) করুন"
+                      >
+                        <RotateCcw className="w-3 h-3 text-amber-700" />
+                        <span>বকেয়া ৳০</span>
                       </button>
                     )}
                   </div>

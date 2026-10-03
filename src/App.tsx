@@ -1635,8 +1635,7 @@ export default function App() {
 
     requestDeletePermission({
       title: 'দোকানের বকেয়া মুছে ৳০ (শূন্য) করার পারমিশন',
-      itemName: target.name,
-      itemLabel: `বর্তমান বকেয়া: ৳${(target.previousDue || 0).toLocaleString()}`,
+      itemLabel: `${target.name} • বর্তমান বকেয়া: ৳${(target.previousDue || 0).toLocaleString()}`,
       message: `আপনি কি নিশ্চিতভাবে ${target.name}-এর বর্তমান বকেয়া ৳${(target.previousDue || 0).toLocaleString()} মুছে ৳০ (শূন্য) করতে চান? দোকানটি তালিকায় থাকবে, শুধু বকেয়ার অঙ্ক ০ হবে।`,
       confirmButtonText: 'হ্যাঁ, বকেয়া ৳০ করুন',
       onConfirm: execute,
@@ -2359,6 +2358,8 @@ export default function App() {
                 isAdmin={activeSimulatedRole === 'admin'}
                 onUpdateShop={handleUpdateShop}
                 onDeleteShop={handleDeleteShop}
+                onResetShopDue={handleResetSingleShopDue}
+                onResetBatchShopDues={handleResetBatchShopDues}
               />
             )}
 

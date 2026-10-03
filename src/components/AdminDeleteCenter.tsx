@@ -401,6 +401,9 @@ export const AdminDeleteCenter: React.FC<AdminDeleteCenterProps> = ({
             case 'staff':
               onDeleteAuthorizedEmail(id, true);
               break;
+            case 'shop_dues':
+              if (onResetShopDue) onResetShopDue(id, true);
+              break;
           }
         });
         setSelectedIds(new Set());
@@ -415,6 +418,9 @@ export const AdminDeleteCenter: React.FC<AdminDeleteCenterProps> = ({
         break;
       case 'shops':
         onDeleteAllShops();
+        break;
+      case 'shop_dues':
+        onResetAllShopDues();
         break;
       case 'orders':
         onDeleteAllOrders();

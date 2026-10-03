@@ -435,8 +435,8 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
           </div>
         </div>
       )}
-      {/* Top Shop Selector & Quick Info Bar - Locked / Sticky Header up to Order Cut button */}
-      <div className="sticky top-[48px] sm:top-[53px] md:top-[98px] z-30 bg-white/98 backdrop-blur-md rounded-2xl shadow-md border border-neutral-200/90 p-3 sm:p-4 transition-all">
+      {/* Top Shop Selector & Quick Info Bar - Unlocked (Normal flow) */}
+      <div className="bg-white rounded-2xl shadow-sm border border-neutral-200/90 p-3 sm:p-4 transition-all">
         <div className="flex flex-col md:flex-row gap-3 items-start md:items-center justify-between pb-3 border-b border-neutral-200">
           <div className="w-full md:w-auto flex-1">
             <div className="flex items-center justify-between mb-1.5">
@@ -596,32 +596,52 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* Left: Product Catalog */}
         <div className="lg:col-span-7 xl:col-span-8 space-y-3">
-          {/* Catalog Controls */}
-          <div className="bg-white p-3 rounded-2xl shadow-xs border border-neutral-200/90 space-y-2">
-            <div className="relative">
-              <Search className="w-4 h-4 absolute left-3 top-3 text-neutral-400" />
-              <input
-                type="text"
-                value={productSearch}
-                onChange={(e) => setProductSearch(e.target.value)}
-                placeholder="পণ্য বা ব্র্যান্ড খুঁজুন... (তেল, চিনি, আটা, সাবান, ইত্যাদি)"
-                className="w-full text-xs pl-9 pr-3 py-2 rounded-xl border border-neutral-300 focus:outline-hidden focus:ring-2 focus:ring-emerald-600 text-neutral-900"
-              />
-              {productSearch && (
-                <button
-                  onClick={() => setProductSearch('')}
-                  className="absolute right-3 top-2.5 text-xs text-neutral-400 hover:text-neutral-600"
-                >
-                  ক্লিয়ার
-                </button>
-              )}
+          {/* Catalog Controls - Sticky Locked Search & Categories */}
+          <div className="sticky top-[52px] sm:top-[56px] md:top-[98px] z-20 bg-white/98 backdrop-blur-md p-3 rounded-2xl shadow-sm border border-neutral-200/90 space-y-2 transition-all">
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 absolute left-3 top-3 text-neutral-400" />
+                <input
+                  type="text"
+                  value={productSearch}
+                  onChange={(e) => setProductSearch(e.target.value)}
+                  placeholder="পণ্য বা ব্র্যান্ড খুঁজুন... (তেল, চিনি, আটা, সাবান, ইত্যাদি)"
+                  className="w-full text-xs pl-9 pr-3 py-2 rounded-xl border border-neutral-300 focus:outline-hidden focus:ring-2 focus:ring-emerald-600 text-neutral-900 bg-white"
+                />
+                {productSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setProductSearch('')}
+                    className="absolute right-3 top-2.5 text-xs text-neutral-400 hover:text-neutral-600 cursor-pointer"
+                  >
+                    ক্লিয়ার
+                  </button>
+                )}
+              </div>
+              {/* Quick Compact Cart Button on Mobile/Tablet when sticky */}
+              <button
+                type="button"
+                onClick={() => setIsCartDrawerOpen(true)}
+                className="lg:hidden flex items-center gap-1.5 px-3 py-2 bg-emerald-800 hover:bg-emerald-700 active:bg-emerald-900 text-white rounded-xl text-xs font-bold shrink-0 shadow-xs cursor-pointer"
+                title="অর্ডার কাটুন / কার্ট দেখুন"
+              >
+                <ShoppingBag className="w-3.5 h-3.5 text-emerald-200" />
+                <span className="hidden sm:inline">অর্ডার কাটুন</span>
+                <span className="bg-emerald-950 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
+                  {totalCartItemCount}
+                </span>
+                <span className="font-extrabold border-l border-emerald-600 pl-1 text-[11px]">
+                  ৳{netTotal.toLocaleString()}
+                </span>
+              </button>
             </div>
 
             {/* Category Chips */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
               <button
+                type="button"
                 onClick={() => setSelectedCategory('all')}
-                className={`px-3 py-1 rounded-lg shrink-0 font-medium transition-colors ${
+                className={`px-3 py-1 rounded-lg shrink-0 font-medium transition-colors cursor-pointer ${
                   selectedCategory === 'all'
                     ? 'bg-emerald-800 text-white font-bold'
                     : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
@@ -631,9 +651,10 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
               </button>
               {categories.map((cat) => (
                 <button
+                  type="button"
                   key={cat}
                   onClick={() => setSelectedCategory(cat)}
-                  className={`px-3 py-1 rounded-lg shrink-0 font-medium transition-colors ${
+                  className={`px-3 py-1 rounded-lg shrink-0 font-medium transition-colors cursor-pointer ${
                     selectedCategory === cat
                       ? 'bg-emerald-800 text-white font-bold'
                       : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
