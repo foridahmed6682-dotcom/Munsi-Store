@@ -140,6 +140,13 @@ export async function migrateBulkProductImagesToServer(products: any[]): Promise
       if (targetUrl && !targetUrl.startsWith('data:image/')) {
         migratedMap.set(prod.id, targetUrl);
         migratedCount++;
+      } else if (prod.imageUrl && prod.imageUrl.length > 25000) {
+        // Compress bloated base64 to ultra-lightweight WebP / JPEG
+        const slim = await compressDataUrlIfNeeded(prod.imageUrl, 240, 20 * 1024);
+        if (slim && slim.length < prod.imageUrl.length) {
+          migratedMap.set(prod.id, slim);
+          migratedCount++;
+        }
       }
     } catch {
       // keep existing image
