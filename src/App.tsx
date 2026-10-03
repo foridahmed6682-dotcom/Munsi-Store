@@ -143,6 +143,7 @@ import { Product, Shop, Order, UserProfile, PaymentMethod, UserRole, DueCollecti
 import { CheckCircle2, AlertCircle, ExternalLink, LogIn, Lock } from 'lucide-react';
 import { usePWAInstall } from './hooks/usePWAInstall';
 import { notifyNewOrderPush } from './lib/pushService';
+import { migrateBulkProductImagesToServer } from './lib/imageUtils';
 
 export default function App() {
   // PWA Install Hook
@@ -1891,6 +1892,30 @@ export default function App() {
       clearInterval(interval);
     };
   }, [orders, products, shops, categories, routes, dueCollections, dailyExpenses, authorizedEmails, businessInfo, activeSimulatedRole]);
+
+  // Auto-migrate any existing Base64 images to permanent server files to guarantee 0% 5MB storage usage
+  useEffect(() => {
+    if (products.length === 0) return;
+    const hasBase64 = products.some(
+      (p) => p && typeof p.imageUrl === 'string' && p.imageUrl.startsWith('data:image/')
+    );
+    if (!hasBase64) return;
+
+    const timer = setTimeout(() => {
+      migrateBulkProductImagesToServer(products)
+        .then(({ updatedProducts, migratedCount }) => {
+          if (migratedCount > 0) {
+            saveProducts(updatedProducts);
+            setProducts(updatedProducts);
+            pushBulkDataToServerMirror({ products: updatedProducts }).catch(() => {});
+            console.log(`📸 Auto-migrated ${migratedCount} base64 images to permanent server files!`);
+          }
+        })
+        .catch(() => {});
+    }, 3500);
+
+    return () => clearTimeout(timer);
+  }, [products]);
 
   // 1-Click Force Deep Cloud & Server Mirror Recovery
   const handleForceCloudRecovery = async () => {

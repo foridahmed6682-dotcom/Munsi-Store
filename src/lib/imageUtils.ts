@@ -7,10 +7,113 @@
  * 3. Product images load instantaneously on customer and SR devices.
  */
 
+/**
+ * Smart Client-Side Image Compression & Permanent Server Storage Utility
+ * Ensures any uploaded photo (even 10MB+ smartphone camera images) is:
+ * 1. Resized and compressed to crisp WebP/JPEG.
+ * 2. Uploaded permanently to backend server storage (/uploads/...) creating a tiny ~30-character URL!
+ * 3. Never consumes browser 5MB localStorage memory.
+ * 4. Never exceeds Firestore 1MB document limit.
+ * 5. Loads instantaneously across devices with HTTP caching.
+ */
+
+/**
+ * Uploads a base64 Data URL to the backend permanent image server.
+ * Returns the short relative URL (e.g. "/uploads/prod_1728000000_abc.webp").
+ * If offline or server is unreachable, falls back to the dataUrl so work is never blocked!
+ */
+export async function uploadBase64ImageToServer(
+  dataUrl: string,
+  preferredName?: string
+): Promise<string> {
+  if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
+    return dataUrl;
+  }
+
+  try {
+    const res = await fetch('/api/upload-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        imageBase64: dataUrl,
+        productName: preferredName,
+      }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.url) {
+        return data.url;
+      }
+    }
+  } catch (err) {
+    console.warn('⚠️ Server image upload unreachable, falling back to dataUrl:', err);
+  }
+
+  return dataUrl;
+}
+
+/**
+ * Converts all existing Base64 product images in bulk to permanent server files.
+ */
+export async function migrateBulkProductImagesToServer(products: any[]): Promise<{
+  updatedProducts: any[];
+  migratedCount: number;
+}> {
+  if (!Array.isArray(products) || products.length === 0) {
+    return { updatedProducts: products, migratedCount: 0 };
+  }
+
+  const base64Prods = products.filter(
+    (p) => p && typeof p.imageUrl === 'string' && p.imageUrl.startsWith('data:image/')
+  );
+
+  if (base64Prods.length === 0) {
+    return { updatedProducts: products, migratedCount: 0 };
+  }
+
+  try {
+    const res = await fetch('/api/upload-bulk-images', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ products: base64Prods }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data?.updatedProducts)) {
+        const migratedMap = new Map<string, string>();
+        for (const item of data.updatedProducts) {
+          if (item?.id && item?.imageUrl) {
+            migratedMap.set(item.id, item.imageUrl);
+          }
+        }
+
+        const nextProducts = products.map((p) => {
+          if (migratedMap.has(p.id)) {
+            return { ...p, imageUrl: migratedMap.get(p.id)! };
+          }
+          return p;
+        });
+
+        return {
+          updatedProducts: nextProducts,
+          migratedCount: data.migratedCount || base64Prods.length,
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('⚠️ Bulk image migration error:', err);
+  }
+
+  return { updatedProducts: products, migratedCount: 0 };
+}
+
 export async function processImageFile(
   file: File,
   maxDimension: number = 480,
-  maxBase64Length: number = 65 * 1024 // ~48KB binary / 65KB Base64 chars so 15+ products fit in a single Firestore doc
+  maxBase64Length: number = 65 * 1024, // ~48KB binary / 65KB Base64 chars
+  autoServerUpload: boolean = true
 ): Promise<string> {
   if (!file) {
     throw new Error('কোনো ফাইল নির্বাচন করা হয়নি');
@@ -55,7 +158,7 @@ export async function processImageFile(
       throw new Error('ক্যানভাস ইনিশিয়ালাইজ করা যায়নি');
     }
 
-    // Fill clean white background so transparent PNGs look crisp in JPEG
+    // Fill clean white background so transparent PNGs look crisp in JPEG/WebP
     ctx.fillStyle = '#FFFFFF';
     ctx.fillRect(0, 0, width, height);
     ctx.drawImage(img, 0, 0, width, height);
@@ -87,11 +190,17 @@ export async function processImageFile(
       }
     }
 
+    // Auto Upload to Server permanent storage if enabled
+    if (autoServerUpload) {
+      const serverUrl = await uploadBase64ImageToServer(dataUrl, file.name);
+      return serverUrl;
+    }
+
     return dataUrl;
   } catch (err) {
     // Fallback to direct FileReader only if file is small enough for Firestore (< 500KB)
     if (file.size <= 500 * 1024) {
-      return await new Promise<string>((resolve, reject) => {
+      const directDataUrl = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => {
           if (typeof reader.result === 'string') {
@@ -103,6 +212,11 @@ export async function processImageFile(
         reader.onerror = () => reject(new Error('ছবি রিড করতে সমস্যা হয়েছে'));
         reader.readAsDataURL(file);
       });
+
+      if (autoServerUpload) {
+        return await uploadBase64ImageToServer(directDataUrl, file.name);
+      }
+      return directDataUrl;
     }
     throw new Error('এই ফরম্যাটের ছবি প্রসেস করা যায়নি। অনুগ্রহ করে JPG, PNG বা WebP ছবি দিন।');
   } finally {

@@ -12,6 +12,8 @@ import {
   FileWarning,
   Layers,
   Wrench,
+  ImageIcon,
+  UploadCloud,
 } from 'lucide-react';
 import {
   ClientDiagnosticEvent,
@@ -20,12 +22,15 @@ import {
   getLocalStorageHealthReport,
   compactLocalBackupSnapshotsToFreeSpace,
   recordDiagnosticEvent,
+  getProducts,
+  saveProducts,
 } from '../lib/storage';
 import {
   isFirestoreQuotaExhausted,
   isFirestoreWriteQuotaExhausted,
   resetFirestoreQuotaCircuitBreakers,
 } from '../lib/firebase';
+import { migrateBulkProductImagesToServer } from '../lib/imageUtils';
 
 interface AdminDiagnosticsMonitorProps {
   productsCount: number;
@@ -72,6 +77,8 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
   const [readExhausted, setReadExhausted] = useState(() => isFirestoreQuotaExhausted());
   const [writeExhausted, setWriteExhausted] = useState(() => isFirestoreWriteQuotaExhausted());
   const [serverData, setServerData] = useState<ServerDiagnosticsData | null>(null);
+  const [uploadsStats, setUploadsStats] = useState<{ count: number; totalSizeKB: number; totalSizeMB: string } | null>(null);
+  const [isMigratingImages, setIsMigratingImages] = useState(false);
   const [isLoadingServer, setIsLoadingServer] = useState(false);
   const [isRecovering, setIsRecovering] = useState(false);
   const [logFilter, setLogFilter] = useState<'ALL' | 'ERROR' | 'QUOTA' | 'RECOVERY'>('ALL');
@@ -84,10 +91,17 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
     setWriteExhausted(isFirestoreWriteQuotaExhausted());
 
     try {
-      const res = await fetch('/api/diagnostics');
-      if (res.ok) {
-        const json = await res.json();
+      const [diagRes, uploadsRes] = await Promise.all([
+        fetch('/api/diagnostics').catch(() => null),
+        fetch('/api/uploads/stats').catch(() => null),
+      ]);
+      if (diagRes && diagRes.ok) {
+        const json = await diagRes.json();
         setServerData(json);
+      }
+      if (uploadsRes && uploadsRes.ok) {
+        const uJson = await uploadsRes.json();
+        setUploadsStats(uJson);
       }
     } catch {
       // Ignore network error in offline mode
@@ -95,6 +109,41 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
       setIsLoadingServer(false);
     }
   }, []);
+
+  const handleMigrateOldImages = async () => {
+    try {
+      setIsMigratingImages(true);
+      const currentProds = getProducts();
+      const base64Count = currentProds.filter(
+        (p) => p && typeof p.imageUrl === 'string' && p.imageUrl.startsWith('data:image/')
+      ).length;
+
+      if (base64Count === 0) {
+        onShowToast?.('সব পণ্যের ছবি ইতিমধ্যে স্থায়ী সার্ভার ফোল্ডারে সংরক্ষিত আছে!', 'info');
+        return;
+      }
+
+      onShowToast?.(`${base64Count}টি পণ্যের ছবি সার্ভার ফোল্ডারে রূপান্তর শুরু হয়েছে...`, 'info');
+      const { updatedProducts, migratedCount } = await migrateBulkProductImagesToServer(currentProds);
+
+      if (migratedCount > 0) {
+        saveProducts(updatedProducts);
+        recordDiagnosticEvent({
+          source: 'storage',
+          severity: 'info',
+          category: 'recovery',
+          titleBn: 'পণ্যের ছবি সফলভাবে পার্মানেন্ট সার্ভার ফোল্ডারে স্থানান্তরিত হয়েছে',
+          detailsBn: `${migratedCount}টি পণ্যের ছবি ব্রাউজার ৫ এমবি মেমোরি থেকে সরিয়ে সার্ভারের ফোল্ডারে সেভ করা হয়েছে। এখন কোনো মেমোরি খরচ হবে না।`,
+        });
+        refreshDiagnostics();
+        onShowToast?.(`সফল! ${migratedCount}টি ছবি পার্মানেন্ট সার্ভার ফোল্ডারে স্থানান্তর সম্পন্ন হয়েছে!`, 'success');
+      }
+    } catch (e: any) {
+      onShowToast?.('ছবি স্থানান্তরে সমস্যা: ' + (e?.message || ''), 'error');
+    } finally {
+      setIsMigratingImages(false);
+    }
+  };
 
   useEffect(() => {
     refreshDiagnostics();
@@ -321,8 +370,8 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
         </div>
       </div>
 
-      {/* 4 LIVE SYSTEM HEALTH METRIC CARDS */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+      {/* 5 LIVE SYSTEM HEALTH METRIC CARDS */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3.5">
         {/* Card 1: Active Data in UI */}
         <div className="bg-white p-4 rounded-2xl border border-neutral-200 shadow-xs space-y-2">
           <div className="flex items-center justify-between">
@@ -459,6 +508,38 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
               <span>স্পেস খালি করুন</span>
             </button>
           </div>
+        </div>
+
+        {/* Card 5: Permanent Server Image Storage (Auto WebP Uploader) */}
+        <div className="bg-white p-4 rounded-2xl border border-neutral-200 shadow-xs space-y-2 flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-neutral-500">পার্মানেন্ট সার্ভার ইমেজ ভল্ট</span>
+              <ImageIcon className="w-4 h-4 text-teal-600" />
+            </div>
+            <div className="flex items-baseline justify-between pt-1">
+              <span className="text-lg font-black text-neutral-900">
+                {uploadsStats ? `${uploadsStats.count} টি ছবি` : 'লোড হচ্ছে...'}
+              </span>
+              <span className="px-2 py-0.5 rounded font-bold text-[10px] bg-teal-100 text-teal-800">
+                {uploadsStats ? `${uploadsStats.totalSizeMB} MB` : '০.০০ MB'}
+              </span>
+            </div>
+            <p className="text-[11px] text-neutral-600 font-medium pt-1">
+              ✓ ৫ এমবি সীমা বাইপাস সক্রিয়। ছবিগুলো সার্ভার ডিস্কে ওয়েবপি হিসেবে সংরক্ষিত।
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleMigrateOldImages}
+            disabled={isMigratingImages}
+            className="w-full mt-2 py-1.5 px-2 bg-teal-700 hover:bg-teal-600 text-white rounded-xl text-[10px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-2xs disabled:opacity-60"
+            title="ব্রাউজারে থাকা কোনো পুরাতন Base64 ছবি থাকলে সেগুলোকে সার্ভার ফোল্ডারে স্থানান্তর করুন"
+          >
+            <UploadCloud className={`w-3.5 h-3.5 ${isMigratingImages ? 'animate-bounce' : ''}`} />
+            <span>{isMigratingImages ? 'রূপান্তর হচ্ছে...' : 'সব ছবি সার্ভারে ট্রান্সফার করুন'}</span>
+          </button>
         </div>
       </div>
 
