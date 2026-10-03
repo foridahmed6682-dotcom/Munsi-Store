@@ -91,10 +91,15 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
     setWriteExhausted(isFirestoreWriteQuotaExhausted());
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+
       const [diagRes, uploadsRes] = await Promise.all([
-        fetch('/api/diagnostics').catch(() => null),
-        fetch('/api/uploads/stats').catch(() => null),
+        fetch('/api/diagnostics', { signal: controller.signal }).catch(() => null),
+        fetch('/api/uploads/stats', { signal: controller.signal }).catch(() => null),
       ]);
+      clearTimeout(timeoutId);
+
       if (diagRes && diagRes.ok) {
         const json = await diagRes.json();
         setServerData(json);
@@ -119,7 +124,16 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
       ).length;
 
       if (base64Count === 0) {
-        onShowToast?.('সব পণ্যের ছবি ইতিমধ্যে স্থায়ী সার্ভার ফোল্ডারে সংরক্ষিত আছে!', 'info');
+        const freedKB = compactLocalBackupSnapshotsToFreeSpace();
+        setStorageStats(getLocalStorageHealthReport());
+        if (freedKB > 0) {
+          onShowToast?.(
+            `সব পণ্য সার্ভারে আছে! মেমোরি অপ্টিমাইজ করে ${freedKB} KB ব্রাউজার স্পেস খালি করা হয়েছে।`,
+            'success'
+          );
+        } else {
+          onShowToast?.('সব পণ্যের ছবি ইতিমধ্যে স্থায়ী সার্ভার ফোল্ডারে সংরক্ষিত আছে!', 'info');
+        }
         return;
       }
 
@@ -128,15 +142,20 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
 
       if (migratedCount > 0) {
         saveProducts(updatedProducts);
+        const freedKB = compactLocalBackupSnapshotsToFreeSpace();
+        setStorageStats(getLocalStorageHealthReport());
         recordDiagnosticEvent({
           source: 'storage',
           severity: 'info',
           category: 'recovery',
           titleBn: 'পণ্যের ছবি সফলভাবে পার্মানেন্ট সার্ভার ফোল্ডারে স্থানান্তরিত হয়েছে',
-          detailsBn: `${migratedCount}টি পণ্যের ছবি ব্রাউজার ৫ এমবি মেমোরি থেকে সরিয়ে সার্ভারের ফোল্ডারে সেভ করা হয়েছে। এখন কোনো মেমোরি খরচ হবে না।`,
+          detailsBn: `${migratedCount}টি পণ্যের ছবি ব্রাউজার ৫ এমবি মেমোরি থেকে সরিয়ে সার্ভারের ফোল্ডারে সেভ করা হয়েছে। অতিরিক্ত ${freedKB} KB মেমোরি খালি হয়েছে।`,
         });
         refreshDiagnostics();
-        onShowToast?.(`সফল! ${migratedCount}টি ছবি পার্মানেন্ট সার্ভার ফোল্ডারে স্থানান্তর সম্পন্ন হয়েছে!`, 'success');
+        onShowToast?.(
+          `সফল! ${migratedCount}টি ছবি সার্ভারে সেভ হয়েছে এবং ব্রাউজারের মেমোরি সম্পূর্ণ খালি করা হয়েছে!`,
+          'success'
+        );
       }
     } catch (e: any) {
       onShowToast?.('ছবি স্থানান্তরে সমস্যা: ' + (e?.message || ''), 'error');
@@ -459,7 +478,17 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
               </div>
             </>
           ) : (
-            <div className="text-xs text-neutral-400 py-4 text-center">সার্ভার মিরর তথ্য লোড হচ্ছে...</div>
+            <div className="text-xs text-neutral-500 py-2.5 text-center space-y-1">
+              <div>{isLoadingServer ? 'সার্ভার মিরর তথ্য লোড হচ্ছে...' : 'সার্ভার কানেকশন চেক করা হচ্ছে'}</div>
+              <button
+                type="button"
+                onClick={refreshDiagnostics}
+                className="text-[10px] text-blue-600 font-bold hover:underline cursor-pointer inline-flex items-center gap-1"
+              >
+                <RefreshCw className="w-2.5 h-2.5" />
+                <span>তথ্য রিফ্রেশ করুন</span>
+              </button>
+            </div>
           )}
         </div>
 
@@ -519,7 +548,7 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
             </div>
             <div className="flex items-baseline justify-between pt-1">
               <span className="text-lg font-black text-neutral-900">
-                {uploadsStats ? `${uploadsStats.count} টি ছবি` : 'লোড হচ্ছে...'}
+                {uploadsStats ? `${uploadsStats.count} টি ছবি` : isLoadingServer ? 'লোড হচ্ছে...' : '০ টি ছবি'}
               </span>
               <span className="px-2 py-0.5 rounded font-bold text-[10px] bg-teal-100 text-teal-800">
                 {uploadsStats ? `${uploadsStats.totalSizeMB} MB` : '০.০০ MB'}
