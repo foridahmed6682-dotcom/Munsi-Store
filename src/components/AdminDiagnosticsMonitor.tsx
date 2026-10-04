@@ -30,7 +30,6 @@ import {
   isFirestoreWriteQuotaExhausted,
   resetFirestoreQuotaCircuitBreakers,
 } from '../lib/firebase';
-import { migrateBulkProductImagesToServer } from '../lib/imageUtils';
 
 interface AdminDiagnosticsMonitorProps {
   productsCount: number;
@@ -77,8 +76,6 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
   const [readExhausted, setReadExhausted] = useState(() => isFirestoreQuotaExhausted());
   const [writeExhausted, setWriteExhausted] = useState(() => isFirestoreWriteQuotaExhausted());
   const [serverData, setServerData] = useState<ServerDiagnosticsData | null>(null);
-  const [uploadsStats, setUploadsStats] = useState<{ count: number; totalSizeKB: number; totalSizeMB: string } | null>(null);
-  const [isMigratingImages, setIsMigratingImages] = useState(false);
   const [isLoadingServer, setIsLoadingServer] = useState(false);
   const [isRecovering, setIsRecovering] = useState(false);
   const [logFilter, setLogFilter] = useState<'ALL' | 'ERROR' | 'QUOTA' | 'RECOVERY'>('ALL');
@@ -94,10 +91,7 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-      const [diagRes, uploadsRes] = await Promise.all([
-        fetch('/api/diagnostics', { signal: controller.signal }).catch(() => null),
-        fetch('/api/uploads/stats', { signal: controller.signal }).catch(() => null),
-      ]);
+      const diagRes = await fetch('/api/diagnostics', { signal: controller.signal }).catch(() => null);
       clearTimeout(timeoutId);
 
       let parsedDiag = false;
@@ -142,79 +136,12 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
           // ignore
         }
       }
-      let parsedUploads = false;
-      if (uploadsRes && uploadsRes.ok) {
-        const cType = uploadsRes.headers.get('content-type') || '';
-        if (cType.includes('application/json')) {
-          try {
-            const uJson = await uploadsRes.json();
-            setUploadsStats(uJson);
-            parsedUploads = true;
-          } catch {}
-        }
-      }
-      if (!parsedUploads) {
-        setUploadsStats({
-          count: 24,
-          totalSizeKB: 617,
-          totalSizeMB: '0.60',
-        });
-      }
     } catch {
       // Ignore network error in offline mode
     } finally {
       setIsLoadingServer(false);
     }
   }, []);
-
-  const handleMigrateOldImages = async () => {
-    try {
-      setIsMigratingImages(true);
-      const currentProds = getProducts();
-      const base64Count = currentProds.filter(
-        (p) => p && typeof p.imageUrl === 'string' && p.imageUrl.startsWith('data:image/')
-      ).length;
-
-      if (base64Count === 0) {
-        const freedKB = compactLocalBackupSnapshotsToFreeSpace();
-        setStorageStats(getLocalStorageHealthReport());
-        if (freedKB > 0) {
-          onShowToast?.(
-            `সব পণ্য সার্ভারে আছে! মেমোরি অপ্টিমাইজ করে ${freedKB} KB ব্রাউজার স্পেস খালি করা হয়েছে।`,
-            'success'
-          );
-        } else {
-          onShowToast?.('সব পণ্যের ছবি ইতিমধ্যে স্থায়ী সার্ভার ফোল্ডারে সংরক্ষিত আছে!', 'info');
-        }
-        return;
-      }
-
-      onShowToast?.(`${base64Count}টি পণ্যের ছবি সার্ভার ফোল্ডারে রূপান্তর শুরু হয়েছে...`, 'info');
-      const { updatedProducts, migratedCount } = await migrateBulkProductImagesToServer(currentProds);
-
-      if (migratedCount > 0) {
-        saveProducts(updatedProducts);
-        const freedKB = compactLocalBackupSnapshotsToFreeSpace();
-        setStorageStats(getLocalStorageHealthReport());
-        recordDiagnosticEvent({
-          source: 'storage',
-          severity: 'info',
-          category: 'recovery',
-          titleBn: 'পণ্যের ছবি সফলভাবে পার্মানেন্ট সার্ভার ফোল্ডারে স্থানান্তরিত হয়েছে',
-          detailsBn: `${migratedCount}টি পণ্যের ছবি ব্রাউজার ৫ এমবি মেমোরি থেকে সরিয়ে সার্ভারের ফোল্ডারে সেভ করা হয়েছে। অতিরিক্ত ${freedKB} KB মেমোরি খালি হয়েছে।`,
-        });
-        refreshDiagnostics();
-        onShowToast?.(
-          `সফল! ${migratedCount}টি ছবি সার্ভারে সেভ হয়েছে এবং ব্রাউজারের মেমোরি সম্পূর্ণ খালি করা হয়েছে!`,
-          'success'
-        );
-      }
-    } catch (e: any) {
-      onShowToast?.('ছবি স্থানান্তরে সমস্যা: ' + (e?.message || ''), 'error');
-    } finally {
-      setIsMigratingImages(false);
-    }
-  };
 
   useEffect(() => {
     refreshDiagnostics();
@@ -315,14 +242,9 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
       mirrorStats.orders > ordersCount);
 
   const currentProducts = React.useMemo(() => getProducts(), [storageStats]);
-  const cloudOrServerImagesCount = React.useMemo(() => {
+  const productsWithImageCount = React.useMemo(() => {
     return currentProducts.filter(
-      (p) => p && typeof p.imageUrl === 'string' && (p.imageUrl.startsWith('/uploads/') || p.imageUrl.startsWith('http'))
-    ).length;
-  }, [currentProducts]);
-  const base64ImagesCount = React.useMemo(() => {
-    return currentProducts.filter(
-      (p) => p && typeof p.imageUrl === 'string' && p.imageUrl.startsWith('data:')
+      (p) => p && typeof p.imageUrl === 'string' && p.imageUrl.trim().length > 0
     ).length;
   }, [currentProducts]);
 
@@ -603,46 +525,25 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
           </div>
         </div>
 
-        {/* Card 5: Permanent Server / Cloud Image Storage */}
+        {/* Card 5: Product Catalog Image Health */}
         <div className="bg-white p-4 rounded-2xl border border-neutral-200 shadow-xs space-y-2 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-neutral-500">পার্মানেন্ট ক্লাউড ও সার্ভার ইমেজ</span>
+              <span className="text-xs font-bold text-neutral-500">ক্যাটালগ পণ্যের ছবি</span>
               <ImageIcon className="w-4 h-4 text-teal-600" />
             </div>
             <div className="flex items-baseline justify-between pt-1">
               <span className="text-lg font-black text-neutral-900">
-                {cloudOrServerImagesCount} টি পণ্য
+                {productsWithImageCount} টি পণ্য
               </span>
-              <span className={`px-2 py-0.5 rounded font-bold text-[10px] ${
-                base64ImagesCount > 0 ? 'bg-amber-100 text-amber-800' : 'bg-teal-100 text-teal-800'
-              }`}>
-                {base64ImagesCount > 0 ? `${base64ImagesCount}টি রূপান্তর বাকি` : '১০০% লিংকড'}
+              <span className="px-2 py-0.5 rounded font-bold text-[10px] bg-teal-100 text-teal-800">
+                সংরক্ষিত
               </span>
             </div>
             <p className="text-[11px] text-neutral-600 font-medium pt-1">
-              {base64ImagesCount === 0
-                ? '✓ সকল পণ্যের ছবি পার্মানেন্ট লিংক হিসেবে সেভ আছে। ৫MB ব্রাউজার মেমোরি নিরাপদ।'
-                : `বাকি ${base64ImagesCount}টি ছবি ব্রাউজার মেমোরিতে আছে। বাটনে ক্লিক করে ক্লাউডে নিন।`}
+              মোট {currentProducts.length}টি পণ্যের মধ্যে {productsWithImageCount}টি পণ্যের ছবি যুক্ত আছে।
             </p>
           </div>
-
-          <button
-            type="button"
-            onClick={handleMigrateOldImages}
-            disabled={isMigratingImages}
-            className="w-full mt-2 py-1.5 px-2 bg-teal-700 hover:bg-teal-600 text-white rounded-xl text-[10px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-2xs disabled:opacity-60"
-            title="ব্রাউজারে থাকা কোনো পুরাতন Base64 ছবি থাকলে সেগুলোকে ক্লাউড/সার্ভার লিংকে স্থানান্তর করুন"
-          >
-            <UploadCloud className={`w-3.5 h-3.5 ${isMigratingImages ? 'animate-bounce' : ''}`} />
-            <span>
-              {isMigratingImages
-                ? 'রূপান্তর হচ্ছে...'
-                : base64ImagesCount > 0
-                ? `বাকি ${base64ImagesCount}টি ছবি লিংক করুন`
-                : 'সব ছবি লিংকে রূপান্তরিত আছে'}
-            </span>
-          </button>
         </div>
       </div>
 

@@ -1164,36 +1164,9 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
       mergeLocalAndCloud(mirrorProducts, directProducts, deletedIds),
       extraProducts,
       deletedIds
-    ).map((item) => {
-      const mirrorMatch = mirrorProducts.find((m) => m.id === item.id);
-      const isBrokenUpload = typeof item.imageUrl === 'string' && item.imageUrl.startsWith('/uploads/');
-      if ((!item.imageUrl || isBrokenUpload) && mirrorMatch?.imageUrl) {
-        return { ...item, imageUrl: mirrorMatch.imageUrl };
-      }
-      return item;
-    });
+    );
     const localProds = getProducts();
-    const merged = mergeLocalAndCloud(localProds, combinedRemote, deletedIds).map((item) => {
-      const localMatch = localProds.find((l) => l.id === item.id);
-      const mirrorMatch = mirrorProducts.find((m) => m.id === item.id);
-
-      const bestImage =
-        (mirrorMatch?.imageUrl && mirrorMatch.imageUrl.startsWith('data:') ? mirrorMatch.imageUrl : null) ||
-        (item.imageUrl && item.imageUrl.startsWith('data:') ? item.imageUrl : null) ||
-        (localMatch?.imageUrl && localMatch.imageUrl.startsWith('data:') ? localMatch.imageUrl : null) ||
-        (item.imageUrl && item.imageUrl.startsWith('http') ? item.imageUrl : null) ||
-        (mirrorMatch?.imageUrl && mirrorMatch.imageUrl.startsWith('http') ? mirrorMatch.imageUrl : null) ||
-        (item.imageUrl && !item.imageUrl.startsWith('/uploads/') ? item.imageUrl : null) ||
-        (mirrorMatch?.imageUrl && !mirrorMatch.imageUrl.startsWith('/uploads/') ? mirrorMatch.imageUrl : null) ||
-        item.imageUrl ||
-        mirrorMatch?.imageUrl ||
-        '';
-
-      return {
-        ...item,
-        imageUrl: bestImage,
-      };
-    });
+    const merged = mergeLocalAndCloud(localProds, combinedRemote, deletedIds);
     if (merged.length > 0) {
       onData(merged);
     }
