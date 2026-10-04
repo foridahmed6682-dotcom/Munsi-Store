@@ -1,26 +1,49 @@
 /**
- * Smart Client-Side Image Compression & Resizing Utility
- * Ensures any uploaded photo (even 10MB+ smartphone camera images) is automatically
- * resized and compressed to a crisp, lightweight Data URL (< 65KB) so that:
- * 1. Firestore's 1MB document limit is NEVER exceeded.
- * 2. Browser localStorage's 5MB quota is NEVER exhausted.
- * 3. Product images load instantaneously on customer and SR devices.
- * 4. 100% self-contained without relying on local server /uploads/ files or broken links.
+ * Ultra-Lightweight Client-Side Image Compression & Resizing Utility
+ * 
+ * Ensures any uploaded photo (even 10MB+ high-res smartphone camera shots)
+ * is automatically compressed to an ultra-lightweight, crisp Data URL (15 KB - 28 KB) so that:
+ * 1. Mobile data (কেবি/ইন্টারনেট) usage is minimized to the extreme for users and customers.
+ * 2. Firestore document size stays far below limits (< 30 KB per product).
+ * 3. Browser localStorage quota (5MB) never gets filled up.
+ * 4. Product images load instantaneously even on slow 2G/3G mobile networks.
+ * 5. Self-contained data URL format: zero server uploads dependency, works 100% on Vercel & Firebase.
  */
+
+// Helper to determine if browser canvas natively supports webp export
+let cachedWebPSupport: boolean | null = null;
+function checkWebPSupport(): boolean {
+  if (cachedWebPSupport !== null) return cachedWebPSupport;
+  try {
+    const testCanvas = document.createElement('canvas');
+    testCanvas.width = 1;
+    testCanvas.height = 1;
+    cachedWebPSupport = testCanvas.toDataURL('image/webp').indexOf('data:image/webp') === 0;
+  } catch {
+    cachedWebPSupport = false;
+  }
+  return cachedWebPSupport;
+}
+
+export function getApproxKbFromDataUrl(dataUrl: string): number {
+  if (!dataUrl || !dataUrl.startsWith('data:')) return 0;
+  // Base64 overhead is 4/3 of binary
+  return Math.round((dataUrl.length * 0.75) / 1024);
+}
 
 export async function processImageFile(
   file: File,
-  maxDimension: number = 480,
-  maxBase64Length: number = 65 * 1024
+  maxDimension: number = 400,
+  maxBase64Length: number = 32 * 1024 // ~24 KB binary payload
 ): Promise<string> {
   if (!file) {
     throw new Error('কোনো ফাইল নির্বাচন করা হয়নি');
   }
 
-  // Allow up to 25MB raw camera photos
-  const MAX_RAW_SIZE = 25 * 1024 * 1024;
+  // Allow up to 30MB camera photos
+  const MAX_RAW_SIZE = 30 * 1024 * 1024;
   if (file.size > MAX_RAW_SIZE) {
-    throw new Error('ছবির সাইজ ২৫ মেগাবাইটের (25MB) নিচে হতে হবে');
+    throw new Error('ছবির সাইজ ৩০ মেগাবাইটের (30MB) নিচে হতে হবে');
   }
 
   // Load image via Object URL for fast, low-memory decoding
@@ -30,13 +53,14 @@ export async function processImageFile(
     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
       const image = new Image();
       image.onload = () => resolve(image);
-      image.onerror = () => reject(new Error('ছবিটি লোড করা যায়নি'));
+      image.onerror = () => reject(new Error('ছবিটি লোড করা যায়নি। ফাইলটি ক্ষতিগ্রস্থ হতে পারে।'));
       image.src = objectUrl;
     });
 
-    let width = img.naturalWidth || img.width || 600;
-    let height = img.naturalHeight || img.height || 600;
+    let width = img.naturalWidth || img.width || 400;
+    let height = img.naturalHeight || img.height || 400;
 
+    // Constrain aspect ratio to fit inside maxDimension
     if (width > maxDimension || height > maxDimension) {
       if (width >= height) {
         height = Math.max(1, Math.round((height * maxDimension) / width));
@@ -56,45 +80,60 @@ export async function processImageFile(
       throw new Error('ক্যানভাস ইনিশিয়ালাইজ করা যায়নি');
     }
 
-    // Fill clean white background
+    // High quality rendering
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+
+    // Fill clean white background (prevents dark backgrounds on transparent PNGs)
     ctx.fillStyle = '#FFFFFF';
     ctx.fillRect(0, 0, width, height);
     ctx.drawImage(img, 0, 0, width, height);
 
-    let quality = 0.82;
-    let dataUrl = canvas.toDataURL('image/jpeg', quality);
+    const isWebP = checkWebPSupport();
+    const mimeType = isWebP ? 'image/webp' : 'image/jpeg';
 
-    // Step down quality if still above target size
+    // Start with balanced quality for high compression & clarity
+    let quality = isWebP ? 0.70 : 0.68;
+    let dataUrl = canvas.toDataURL(mimeType, quality);
+
+    // Step down quality if exceeding the target low-KB size
     while (dataUrl.length > maxBase64Length && quality > 0.35) {
-      quality -= 0.12;
-      dataUrl = canvas.toDataURL('image/jpeg', Math.max(0.3, quality));
+      quality -= 0.08;
+      dataUrl = canvas.toDataURL(mimeType, Math.max(0.32, quality));
     }
 
-    // If still large, scale down canvas slightly
+    // If still large, scale down canvas resolution slightly
     if (dataUrl.length > maxBase64Length) {
+      const scaleFactor = 0.75;
       const smallerCanvas = document.createElement('canvas');
-      smallerCanvas.width = Math.max(240, Math.round(width * 0.7));
-      smallerCanvas.height = Math.max(240, Math.round(height * 0.7));
+      smallerCanvas.width = Math.max(180, Math.round(width * scaleFactor));
+      smallerCanvas.height = Math.max(180, Math.round(height * scaleFactor));
       const sCtx = smallerCanvas.getContext('2d');
       if (sCtx) {
+        sCtx.imageSmoothingEnabled = true;
+        sCtx.imageSmoothingQuality = 'high';
         sCtx.fillStyle = '#FFFFFF';
         sCtx.fillRect(0, 0, smallerCanvas.width, smallerCanvas.height);
         sCtx.drawImage(canvas, 0, 0, smallerCanvas.width, smallerCanvas.height);
-        dataUrl = smallerCanvas.toDataURL('image/jpeg', 0.65);
+        dataUrl = smallerCanvas.toDataURL(mimeType, 0.58);
+
+        if (dataUrl.length > maxBase64Length) {
+          dataUrl = smallerCanvas.toDataURL(mimeType, 0.42);
+        }
       }
     }
 
     return dataUrl;
-  } catch (err) {
-    // Fallback to direct FileReader only if file is small enough (< 500KB)
-    if (file.size <= 500 * 1024) {
+  } catch (err: any) {
+    // Fallback only if file is small enough (< 100KB)
+    if (file.size <= 100 * 1024) {
       const directDataUrl = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => {
           if (typeof reader.result === 'string') {
             resolve(reader.result);
           } else {
-            reject(new Error('ছবি রিড করা যায়নি'));
+            reject(new Error('ছবি পড়তে সমস্যা হয়েছে'));
           }
         };
         reader.onerror = () => reject(new Error('ছবি রিড করতে সমস্যা হয়েছে'));
@@ -102,19 +141,19 @@ export async function processImageFile(
       });
       return directDataUrl;
     }
-    throw new Error('এই ফরম্যাটের ছবি প্রসেস করা যায়নি। অনুগ্রহ করে JPG বা PNG ছবি দিন।');
+    throw new Error(err?.message || 'এই ফরম্যাটের ছবি প্রসেস করা যায়নি। অনুগ্রহ করে JPG বা PNG ছবি দিন।');
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
 }
 
 /**
- * Compresses an existing Base64 data URL if it exceeds safe size limits.
+ * Compresses an existing Base64 data URL if it exceeds safe size limits (> 32KB).
  */
 export async function compressDataUrlIfNeeded(
   imageUrl: string,
-  maxDimension: number = 480,
-  maxBase64Length: number = 65 * 1024
+  maxDimension: number = 400,
+  maxBase64Length: number = 32 * 1024
 ): Promise<string> {
   if (!imageUrl || !imageUrl.startsWith('data:image/') || imageUrl.length <= maxBase64Length) {
     return imageUrl;
@@ -128,8 +167,8 @@ export async function compressDataUrlIfNeeded(
       image.src = imageUrl;
     });
 
-    let width = img.naturalWidth || img.width || 600;
-    let height = img.naturalHeight || img.height || 600;
+    let width = img.naturalWidth || img.width || 400;
+    let height = img.naturalHeight || img.height || 400;
 
     if (width > maxDimension || height > maxDimension) {
       if (width >= height) {
@@ -151,11 +190,14 @@ export async function compressDataUrlIfNeeded(
     ctx.fillRect(0, 0, width, height);
     ctx.drawImage(img, 0, 0, width, height);
 
-    let quality = 0.78;
-    let result = canvas.toDataURL('image/jpeg', quality);
-    while (result.length > maxBase64Length && quality > 0.35) {
-      quality -= 0.15;
-      result = canvas.toDataURL('image/jpeg', Math.max(0.3, quality));
+    const isWebP = checkWebPSupport();
+    const mimeType = isWebP ? 'image/webp' : 'image/jpeg';
+
+    let quality = isWebP ? 0.68 : 0.65;
+    let result = canvas.toDataURL(mimeType, quality);
+    while (result.length > maxBase64Length && quality > 0.32) {
+      quality -= 0.10;
+      result = canvas.toDataURL(mimeType, Math.max(0.30, quality));
     }
     return result;
   } catch {

@@ -529,9 +529,10 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
     setIsUploadingImage(true);
     try {
-      const compressedDataUrl = await processImageFile(file);
+      const compressedDataUrl = await processImageFile(file, 400, 30 * 1024);
+      const kb = Math.max(1, Math.round((compressedDataUrl.length * 0.75) / 1024));
       setProdImageUrl(compressedDataUrl);
-      showToast('ছবি সফলভাবে অপ্টিমাইজ ও যুক্ত হয়েছে!', 'success');
+      showToast(`ছবি সফলভাবে যুক্ত হয়েছে! সাইজ মাত্র ${kb} KB (ডাটা সাশ্রয়ী)`, 'success');
     } catch (err: any) {
       showToast(err?.message || 'ছবি আপলোড করতে সমস্যা হয়েছে', 'error');
     } finally {

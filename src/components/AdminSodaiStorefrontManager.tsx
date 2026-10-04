@@ -800,9 +800,10 @@ export const AdminSodaiStorefrontManager: React.FC<AdminSodaiStorefrontManagerPr
                     e.target.value = '';
                     if (!file) return;
                     try {
-                      const dataUrl = await processImageFile(file, 900, 180 * 1024);
+                      const dataUrl = await processImageFile(file, 700, 50 * 1024);
+                      const kb = Math.max(1, Math.round((dataUrl.length * 0.75) / 1024));
                       setBanImage(dataUrl);
-                      onShowToast('ব্যানার ছবি সফলভাবে লোড হয়েছে!', 'success');
+                      onShowToast(`ব্যানার ছবি সফলভাবে লোড হয়েছে! (${kb} KB)`, 'success');
                     } catch (err: any) {
                       onShowToast(err?.message || 'ছবি লোড করা যায়নি', 'error');
                     }
@@ -933,9 +934,10 @@ export const AdminSodaiStorefrontManager: React.FC<AdminSodaiStorefrontManagerPr
                     e.target.value = '';
                     if (!file) return;
                     try {
-                      const dataUrl = await processImageFile(file, 500, 140 * 1024);
+                      const dataUrl = await processImageFile(file, 400, 28 * 1024);
+                      const kb = Math.max(1, Math.round((dataUrl.length * 0.75) / 1024));
                       setStoryImage(dataUrl);
-                      onShowToast('স্টোরি ছবি সফলভাবে লোড হয়েছে!', 'success');
+                      onShowToast(`স্টোরি ছবি সফলভাবে লোড হয়েছে! (${kb} KB)`, 'success');
                     } catch (err: any) {
                       onShowToast(err?.message || 'ছবি লোড করা যায়নি', 'error');
                     }

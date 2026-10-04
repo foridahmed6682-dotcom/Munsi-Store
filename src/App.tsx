@@ -314,8 +314,12 @@ export default function App() {
           const prev = map.get(key);
           if (prev) {
             const validImage =
-              item.imageUrl ||
-              prev.imageUrl ||
+              (item.imageUrl && item.imageUrl.startsWith('data:') ? item.imageUrl : null) ||
+              (prev.imageUrl && prev.imageUrl.startsWith('data:') ? prev.imageUrl : null) ||
+              (item.imageUrl && item.imageUrl.startsWith('http') ? item.imageUrl : null) ||
+              (prev.imageUrl && prev.imageUrl.startsWith('http') ? prev.imageUrl : null) ||
+              (item.imageUrl && !item.imageUrl.startsWith('/uploads/') ? item.imageUrl : null) ||
+              (prev.imageUrl && !prev.imageUrl.startsWith('/uploads/') ? prev.imageUrl : null) ||
               '';
             map.set(key, {
               ...prev,
