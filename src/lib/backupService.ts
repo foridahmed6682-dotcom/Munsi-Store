@@ -203,6 +203,10 @@ export async function fetchAllAutoBackupSnapshots(): Promise<AutoBackupSnapshot[
   try {
     const res = await fetch('/api/db/snapshots');
     if (res.ok) {
+      const cType = res.headers.get('content-type') || '';
+      if (!cType.includes('application/json')) {
+        return local;
+      }
       const data = await res.json();
       if (Array.isArray(data.snapshots)) {
         const map = new Map<string, AutoBackupSnapshot>();

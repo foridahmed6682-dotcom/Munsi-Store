@@ -431,27 +431,44 @@ export async function removeItemFromFirebaseCatalog(catalogKey: string, idValue:
 }
 
 // Server Mirror Helpers (Protects data across devices even when Firebase Free Daily Read Quota is reached)
+let isServerBackendAvailable: boolean | null = null;
+
 export async function syncItemToServerMirror(upsertCollection: string, item: any) {
+  if (isServerBackendAvailable === false) return;
   try {
-    await fetch('/api/db/mirror', {
+    const res = await fetch('/api/db/mirror', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ upsertCollection, item }),
     });
+    if (res.ok) {
+      const cType = res.headers.get('content-type') || '';
+      if (!cType.includes('application/json')) {
+        isServerBackendAvailable = false;
+      } else {
+        isServerBackendAvailable = true;
+      }
+    } else {
+      isServerBackendAvailable = false;
+    }
   } catch {
-    // ignore mirror error
+    isServerBackendAvailable = false;
   }
 }
 
 export async function deleteItemFromServerMirror(deleteCollection: string, deleteId: string) {
+  if (isServerBackendAvailable === false) return;
   try {
-    await fetch('/api/db/mirror', {
+    const res = await fetch('/api/db/mirror', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ deleteCollection, deleteId }),
     });
+    if (!res.ok) {
+      isServerBackendAvailable = false;
+    }
   } catch {
-    // ignore mirror error
+    isServerBackendAvailable = false;
   }
 }
 
@@ -468,28 +485,43 @@ export async function pushBulkDataToServerMirror(payload: {
   authorizedEmails?: AuthorizedUserEmail[];
   businessInfo?: BusinessInfo;
 }) {
+  if (isServerBackendAvailable === false) return;
   try {
-    await fetch('/api/db/mirror', {
+    const res = await fetch('/api/db/mirror', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
+    if (res.ok) {
+      const cType = res.headers.get('content-type') || '';
+      if (!cType.includes('application/json')) {
+        isServerBackendAvailable = false;
+      } else {
+        isServerBackendAvailable = true;
+      }
+    } else {
+      isServerBackendAvailable = false;
+    }
   } catch {
-    // ignore mirror error
+    isServerBackendAvailable = false;
   }
 }
 
 export async function fetchServerDatabaseMirror(): Promise<any | null> {
-  try {
-    const res = await fetch('/api/db/mirror');
-    if (res.ok) {
-      const cType = res.headers.get('content-type') || '';
-      if (cType.includes('application/json')) {
-        return await res.json();
+  if (isServerBackendAvailable !== false) {
+    try {
+      const res = await fetch('/api/db/mirror');
+      if (res.ok) {
+        const cType = res.headers.get('content-type') || '';
+        if (cType.includes('application/json')) {
+          isServerBackendAvailable = true;
+          return await res.json();
+        }
       }
+      isServerBackendAvailable = false;
+    } catch {
+      isServerBackendAvailable = false;
     }
-  } catch {
-    // try static fallback
   }
 
   try {

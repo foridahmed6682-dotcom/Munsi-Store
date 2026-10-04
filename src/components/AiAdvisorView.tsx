@@ -120,6 +120,11 @@ export const AiAdvisorView: React.FC<AiAdvisorViewProps> = ({
         }),
       });
 
+      const cType = res.headers.get('content-type') || '';
+      if (!cType.includes('application/json')) {
+        throw new Error('সার্ভার থেকে সঠিক রেসপন্স পাওয়া যায়নি। ব্যাকএন্ড সংযোগ চেক করুন।');
+      }
+
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || 'এআই অ্যাডভাইজার উত্তর দিতে পারেনি');

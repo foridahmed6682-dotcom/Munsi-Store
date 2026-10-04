@@ -100,10 +100,18 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
       ]);
       clearTimeout(timeoutId);
 
+      let parsedDiag = false;
       if (diagRes && diagRes.ok) {
-        const json = await diagRes.json();
-        setServerData(json);
-      } else {
+        const cType = diagRes.headers.get('content-type') || '';
+        if (cType.includes('application/json')) {
+          try {
+            const json = await diagRes.json();
+            setServerData(json);
+            parsedDiag = true;
+          } catch {}
+        }
+      }
+      if (!parsedDiag) {
         // Fallback for static hosts like Vercel (farmerfield.pro.bd) where Express backend is not running
         try {
           const staticRes = await fetch('/database_seed_mirror.json', { signal: controller.signal }).catch(() => null);
@@ -134,10 +142,18 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
           // ignore
         }
       }
+      let parsedUploads = false;
       if (uploadsRes && uploadsRes.ok) {
-        const uJson = await uploadsRes.json();
-        setUploadsStats(uJson);
-      } else {
+        const cType = uploadsRes.headers.get('content-type') || '';
+        if (cType.includes('application/json')) {
+          try {
+            const uJson = await uploadsRes.json();
+            setUploadsStats(uJson);
+            parsedUploads = true;
+          } catch {}
+        }
+      }
+      if (!parsedUploads) {
         setUploadsStats({
           count: 24,
           totalSizeKB: 617,

@@ -1939,7 +1939,7 @@ export default function App() {
       showToast('ফায়ারবেজ Write-Channel ও সার্ভার মিরর থেকে সকল ডাটা রিকভারি হচ্ছে...', 'info');
       const [recoverRes, catProds, catShops, catOrders, catCats, catRoutes] = await Promise.all([
         fetch('/api/diagnostics/recover', { method: 'POST' })
-          .then((r) => (r.ok ? r.json() : null))
+          .then((r) => (r.ok && (r.headers.get('content-type') || '').includes('application/json') ? r.json() : null))
           .catch(() => null),
         readFirestoreCatalogDirect<Product>('products'),
         readFirestoreCatalogDirect<Shop>('shops'),

@@ -245,9 +245,12 @@ export const PushNotificationManager: React.FC<PushNotificationManagerProps> = (
       try {
         const res = await fetch('/api/push/latest-alert').catch(() => null);
         if (res && res.ok) {
-          const json = await res.json().catch(() => null);
-          if (json?.alert?.id) {
-            handleAlertData(json.alert.id, json.alert);
+          const contentType = res.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const json = await res.json().catch(() => null);
+            if (json?.alert?.id) {
+              handleAlertData(json.alert.id, json.alert);
+            }
           }
         }
       } catch {

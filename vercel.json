@@ -1,8 +1,13 @@
 {
   "version": 2,
+  "cleanUrls": true,
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/api/db/mirror",
+      "destination": "/database_seed_mirror.json"
+    },
+    {
+      "source": "/((?!api/|assets/|database_seed_mirror.json).*)",
       "destination": "/index.html"
     }
   ]
