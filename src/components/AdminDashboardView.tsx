@@ -72,6 +72,7 @@ import { processImageFile } from '../lib/imageUtils';
 import { fetchAllUsers, updateUserRoleAndRoute, getBusinessInfo, saveBusinessInfoToCloud, subscribeToCloudBusinessInfo } from '../lib/firebase';
 import { saveBusinessInfoLocal, DEFAULT_BUSINESS_INFO, parseBanglaNumber } from '../lib/storage';
 import { AddShopModal } from './AddShopModal';
+import { ProductImageLightboxModal } from './ProductImageLightboxModal';
 import {
   FullBackupData,
   parseAndValidateBackupJSON,
@@ -520,6 +521,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [prodIsFlashSale, setProdIsFlashSale] = useState(false);
   const [prodImageUrl, setProdImageUrl] = useState('');
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [lightboxProduct, setLightboxProduct] = useState<Product | null>(null);
 
   const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -2399,12 +2401,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                       <tr key={p.id} className="hover:bg-neutral-50/80 transition-colors">
                         <td className="p-3">
                           <div className="flex items-center gap-2.5">
-                            <img
-                              src={p.imageUrl || 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500&auto=format&fit=crop&q=80'}
-                              alt={p.name}
-                              className="w-10 h-10 rounded-xl object-cover border border-neutral-200 shrink-0"
-                              referrerPolicy="no-referrer"
-                            />
+                            <div
+                              onClick={() => p.imageUrl && setLightboxProduct(p)}
+                              title="ফুল ছবি বড় করে দেখুন"
+                              className="w-11 h-11 rounded-xl bg-gradient-to-b from-[#FAFBFD] via-[#F4F5F8] to-[#EAEDF2] border border-neutral-200 shrink-0 overflow-hidden flex items-center justify-center p-0.5 cursor-pointer hover:border-[#E21E26] hover:shadow-xs transition-all"
+                            >
+                              <img
+                                src={p.imageUrl || 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500&auto=format&fit=crop&q=80'}
+                                alt={p.name}
+                                className="w-full h-full object-contain"
+                                referrerPolicy="no-referrer"
+                              />
+                            </div>
                             <div>
                               <div className="font-bold text-neutral-900">{p.banglaName}</div>
                               <div className="text-[11px] text-neutral-500 font-mono">
@@ -5511,7 +5519,29 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   {/* Live Base64 Preview */}
                   {prodImageUrl && (
                     <div className="mt-2 p-2 bg-emerald-50/60 rounded-xl border border-emerald-200 flex items-center gap-2.5">
-                      <img src={prodImageUrl} alt="Preview" className="w-12 h-12 object-cover rounded-lg border border-emerald-300 bg-white shrink-0" />
+                      <div
+                        onClick={() => {
+                          if (prodImageUrl) {
+                            setLightboxProduct({
+                              id: editingProduct?.id || 'preview',
+                              name: prodName || prodBanglaName || 'Preview',
+                              banglaName: prodBanglaName || 'প্রিভিউ ছবি',
+                              sku: prodSku || 'PREV-01',
+                              category: prodCategory,
+                              unitPrice: parseFloat(prodUnitPrice) || 0,
+                              costPrice: parseFloat(prodCostPrice) || 0,
+                              stock: parseFloat(prodStock) || 0,
+                              minStockAlert: 5,
+                              unit: prodUnit,
+                              imageUrl: prodImageUrl
+                            });
+                          }
+                        }}
+                        title="ফুল ছবি বড় করে দেখতে ক্লিক করুন"
+                        className="w-13 h-13 rounded-xl border border-emerald-300 bg-gradient-to-b from-[#FAFBFD] via-[#F4F5F8] to-[#EAEDF2] p-1 shrink-0 cursor-pointer hover:border-[#E21E26] flex items-center justify-center transition-all"
+                      >
+                        <img src={prodImageUrl} alt="Preview" className="w-full h-full object-contain" />
+                      </div>
                       <div className="min-w-0 flex-1">
                         <span className="text-[11px] text-emerald-800 font-bold block truncate">
                           ✅ ছবি প্রস্তুত রয়েছে
@@ -5772,6 +5802,13 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         }}
         existingShops={shops}
         routes={routes}
+      />
+
+      {/* Fullscreen Product Image Lightbox Modal for Admin */}
+      <ProductImageLightboxModal
+        isOpen={!!lightboxProduct}
+        product={lightboxProduct}
+        onClose={() => setLightboxProduct(null)}
       />
     </div>
   );

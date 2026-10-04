@@ -17,11 +17,13 @@ import {
   Package,
   X,
   Send,
-  RotateCcw
+  RotateCcw,
+  Maximize2
 } from 'lucide-react';
 import { Product, Shop, OrderItem, PaymentMethod, Route, Order } from '../types';
 import { AddShopModal } from './AddShopModal';
 import { getBusinessInfo } from '../lib/firebase';
+import { ProductImageLightboxModal } from './ProductImageLightboxModal';
 
 interface OrderBookingViewProps {
   products: Product[];
@@ -70,6 +72,7 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
   const [isAddShopModalOpen, setIsAddShopModalOpen] = useState(false);
   const [isCartDrawerOpen, setIsCartDrawerOpen] = useState(false);
   const [lastBookedOrder, setLastBookedOrder] = useState<any | null>(null);
+  const [lightboxProduct, setLightboxProduct] = useState<Product | null>(null);
 
   const handleOneClickWhatsAppLastOrder = (ord: any) => {
     if (!ord) return;
@@ -684,18 +687,30 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                 >
                   <div>
                     <div className="flex gap-3 items-start">
-                      {/* Product Image */}
-                      <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-xl bg-neutral-100 border border-neutral-200/90 overflow-hidden shrink-0 flex items-center justify-center relative">
+                      {/* Product Image Stage (Studio Contrast & Clickable Full Image) */}
+                      <div
+                        onClick={() => prod.imageUrl && setLightboxProduct(prod)}
+                        title="ফুল ছবি বড় করে দেখতে ক্লিক করুন"
+                        className="w-18 h-18 sm:w-20 sm:h-20 rounded-2xl bg-gradient-to-b from-[#FAFBFD] via-[#F4F5F8] to-[#EAEDF2] border border-[#E2E8F0] shadow-[inset_0_1px_3px_rgba(0,0,0,0.03)] overflow-hidden shrink-0 flex items-center justify-center p-1.5 cursor-pointer hover:border-emerald-500 hover:shadow-xs group/img relative transition-all"
+                      >
                         {prod.imageUrl ? (
-                          <img
-                            src={prod.imageUrl}
-                            alt={prod.banglaName}
-                            className="w-full h-full object-cover"
-                            loading="lazy"
-                            referrerPolicy="no-referrer"
-                          />
+                          <>
+                            <img
+                              src={prod.imageUrl}
+                              alt={prod.banglaName}
+                              className="w-full h-full object-contain group-hover/img:scale-106 transition-transform duration-300"
+                              loading="lazy"
+                              referrerPolicy="no-referrer"
+                            />
+                            <div className="absolute inset-0 bg-black/20 opacity-0 group-hover/img:opacity-100 flex items-center justify-center transition-opacity rounded-2xl">
+                              <span className="px-1.5 py-0.5 rounded-md bg-black/70 text-white text-[9px] font-bold flex items-center gap-0.5">
+                                <Maximize2 className="w-2.5 h-2.5" />
+                                <span>বড় ছবি</span>
+                              </span>
+                            </div>
+                          </>
                         ) : (
-                          <Package className="w-6 h-6 text-neutral-400" />
+                          <Package className="w-7 h-7 text-neutral-400" />
                         )}
                       </div>
 
@@ -1219,6 +1234,20 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
         existingShops={shops}
         routes={routes}
         initialRoute={routeFilter !== 'all' ? routeFilter : undefined}
+      />
+
+      {/* Fullscreen Product Image Lightbox Modal for SR, DSR, Admin */}
+      <ProductImageLightboxModal
+        isOpen={!!lightboxProduct}
+        product={lightboxProduct}
+        onClose={() => setLightboxProduct(null)}
+        onAddToCart={(qty) => {
+          if (lightboxProduct) {
+            const currentQty = cart[lightboxProduct.id]?.quantity || 0;
+            handleQuantityChange(lightboxProduct.id, qty - currentQty);
+          }
+        }}
+        cartQty={lightboxProduct ? cart[lightboxProduct.id]?.quantity || 0 : 0}
       />
     </div>
   );

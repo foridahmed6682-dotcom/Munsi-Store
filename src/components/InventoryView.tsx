@@ -22,6 +22,7 @@ import { Product, Category } from '../types';
 import { DEMO_PRODUCT_IDS, parseBanglaNumber } from '../lib/storage';
 import { processImageFile } from '../lib/imageUtils';
 import { printProductsBatch } from '../lib/printService';
+import { ProductImageLightboxModal } from './ProductImageLightboxModal';
 
 interface InventoryViewProps {
   products: Product[];
@@ -44,6 +45,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 }) => {
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
+  const [lightboxProduct, setLightboxProduct] = useState<Product | null>(null);
   const [onlyLowStock, setOnlyLowStock] = useState(false);
   const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set());
 
@@ -460,12 +462,16 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                             <Square className="w-4 h-4" />
                           )}
                         </button>
-                        <div className="w-12 h-12 rounded-xl bg-neutral-100 border border-neutral-200 overflow-hidden shrink-0 flex items-center justify-center">
+                        <div
+                          onClick={() => prod.imageUrl && setLightboxProduct(prod)}
+                          title="ফুল ছবি দেখতে ক্লিক করুন"
+                          className="w-12 h-12 rounded-xl bg-gradient-to-b from-[#FAFBFD] via-[#F4F5F8] to-[#EAEDF2] border border-neutral-200 overflow-hidden shrink-0 flex items-center justify-center p-1 cursor-pointer hover:border-[#E21E26] hover:shadow-xs transition-all"
+                        >
                           {prod.imageUrl ? (
                             <img
                               src={prod.imageUrl}
                               alt={prod.banglaName}
-                              className="w-full h-full object-cover"
+                              className="w-full h-full object-contain"
                               loading="lazy"
                               referrerPolicy="no-referrer"
                             />
@@ -913,6 +919,13 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Fullscreen Lightbox Modal */}
+      <ProductImageLightboxModal
+        isOpen={!!lightboxProduct}
+        product={lightboxProduct}
+        onClose={() => setLightboxProduct(null)}
+      />
     </div>
   );
 };

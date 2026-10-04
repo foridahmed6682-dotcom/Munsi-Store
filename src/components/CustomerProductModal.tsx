@@ -17,9 +17,11 @@ import {
   X,
   CheckCircle2,
   Clock,
-  FileText
+  FileText,
+  Maximize2
 } from 'lucide-react';
 import { Product, ProductReview, Order, StoreStory, BusinessInfo } from '../types';
+import { ProductImageLightboxModal } from './ProductImageLightboxModal';
 
 // 1. Product Details Sheet / Page (Ove from sodaibhai.vercel.app)
 interface ProductDetailsProps {
@@ -66,6 +68,7 @@ export const CustomerProductDetailsView: React.FC<ProductDetailsProps> = ({
 }) => {
   const [ratingInput, setRatingInput] = useState(5);
   const [commentInput, setCommentInput] = useState('');
+  const [isLightboxOpen, setIsLightboxOpen] = useState(false);
 
   const weightOptions = product.allowedWeights
     ? product.allowedWeights.split(',').map((w) => w.trim()).filter(Boolean)
@@ -86,34 +89,61 @@ export const CustomerProductDetailsView: React.FC<ProductDetailsProps> = ({
 
   return (
     <div className="max-w-2xl mx-auto min-h-screen bg-white rounded-3xl overflow-hidden shadow-sm border border-[#ECECEC] mb-24 animate-in fade-in">
-      {/* Top Hero Image with rounded bottom */}
-      <div className="relative h-[360px] sm:h-[440px] bg-[#F9FAFB]">
+      {/* Top Hero Image Stage with rounded bottom & studio contrast */}
+      <div
+        onClick={() => {
+          if (product.imageUrl) setIsLightboxOpen(true);
+        }}
+        title="ফুল ছবি দেখতে ক্লিক করুন"
+        className="relative h-[340px] sm:h-[420px] bg-gradient-to-b from-[#FDFDFE] via-[#F4F6F9] to-[#EAEFF5] cursor-pointer flex items-center justify-center p-6 sm:p-8"
+      >
         {product.imageUrl ? (
           <img
             src={product.imageUrl}
             alt={product.banglaName}
             referrerPolicy="no-referrer"
-            className="w-full h-full object-cover rounded-b-[3.5rem] shadow-xl"
+            className="max-h-full max-w-full object-contain drop-shadow-xl hover:scale-104 transition-transform duration-300"
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center rounded-b-[3.5rem] bg-gradient-to-br from-red-50 to-neutral-100 text-[#E21E26] font-black text-6xl">
             {product.banglaName[0]}
           </div>
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-white/50 via-transparent to-black/25 rounded-b-[3.5rem]" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/15 via-transparent to-black/15 pointer-events-none rounded-b-[3rem]" />
+
+        {/* Full Image Zoom Badge Button */}
+        {product.imageUrl && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsLightboxOpen(true);
+            }}
+            className="absolute bottom-20 right-5 z-10 px-3 py-1.5 rounded-full bg-black/65 hover:bg-[#E21E26] text-white text-[11px] font-black flex items-center gap-1.5 backdrop-blur-md shadow-lg transition-all"
+          >
+            <Maximize2 className="w-3.5 h-3.5" />
+            <span>ফুল ছবি বড় করে দেখুন</span>
+          </button>
+        )}
 
         <button
           type="button"
-          onClick={onClose}
-          className="absolute top-6 left-5 w-11 h-11 bg-white/90 backdrop-blur-md rounded-full flex items-center justify-center text-[#111111] hover:bg-[#E21E26] hover:text-white transition-all border border-[#ECECEC] shadow-md"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose();
+          }}
+          className="absolute top-6 left-5 z-10 w-11 h-11 bg-white/90 backdrop-blur-md rounded-full flex items-center justify-center text-[#111111] hover:bg-[#E21E26] hover:text-white transition-all border border-[#ECECEC] shadow-md"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
 
         <button
           type="button"
-          onClick={onToggleWishlist}
-          className={`absolute top-6 right-5 w-11 h-11 rounded-full flex items-center justify-center transition-all border shadow-md ${
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleWishlist();
+          }}
+          className={`absolute top-6 right-5 z-10 w-11 h-11 rounded-full flex items-center justify-center transition-all border shadow-md ${
             isWishlisted
               ? 'bg-[#E21E26] text-white border-[#E21E26]'
               : 'bg-white/90 text-[#111111] hover:text-[#E21E26] border-[#ECECEC]'
@@ -430,11 +460,11 @@ export const CustomerProductDetailsView: React.FC<ProductDetailsProps> = ({
                   key={rp.id}
                   type="button"
                   onClick={() => onSelectProduct(rp)}
-                  className="bg-white p-2.5 rounded-2xl border border-[#ECECEC] hover:border-[#E21E26]/40 text-left transition-all shadow-xs"
+                  className="bg-white p-2.5 rounded-2xl border border-[#ECECEC] hover:border-[#E21E26]/40 text-left transition-all shadow-xs group"
                 >
-                  <div className="aspect-square rounded-xl overflow-hidden bg-[#F9FAFB] mb-2">
+                  <div className="aspect-square rounded-xl overflow-hidden bg-gradient-to-b from-[#FAFBFD] via-[#F4F5F8] to-[#EAEDF2] border border-[#E5E7EB]/80 p-1.5 flex items-center justify-center mb-2">
                     {rp.imageUrl ? (
-                      <img src={rp.imageUrl} alt={rp.banglaName} className="w-full h-full object-cover" />
+                      <img src={rp.imageUrl} alt={rp.banglaName} className="w-full h-full object-contain group-hover:scale-105 transition-transform" />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center font-black text-xl text-[#E21E26]">
                         {rp.banglaName[0]}
@@ -451,6 +481,15 @@ export const CustomerProductDetailsView: React.FC<ProductDetailsProps> = ({
           </div>
         )}
       </div>
+
+      {/* Fullscreen Lightbox Modal for Hero Image */}
+      <ProductImageLightboxModal
+        isOpen={isLightboxOpen}
+        product={product}
+        onClose={() => setIsLightboxOpen(false)}
+        onAddToCart={(qty) => onUpdateQty(qty)}
+        cartQty={quantity}
+      />
     </div>
   );
 };

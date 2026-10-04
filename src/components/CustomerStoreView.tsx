@@ -65,6 +65,7 @@ import {
   CustomerProductDetailsView,
   CustomerOfficialMemoModal
 } from './CustomerProductModal';
+import { ProductImageLightboxModal } from './ProductImageLightboxModal';
 import {
   SodaiProductCard,
   SodaiBottomNav,
@@ -183,6 +184,7 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
 
   // Product Details & Official Memo Modals
   const [selectedProductForDetails, setSelectedProductForDetails] = useState<Product | null>(null);
+  const [lightboxProduct, setLightboxProduct] = useState<Product | null>(null);
   const [officialMemoOrder, setOfficialMemoOrder] = useState<Order | null>(null);
   const [placedOrder, setPlacedOrder] = useState<Order | null>(null);
 
@@ -948,6 +950,7 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
                           onToggleWishlist={() => toggleWishlist(prod.id)}
                           onUpdateQty={(q) => updateQuantity(prod.id, q)}
                           onOpenDetails={() => setSelectedProductForDetails(prod)}
+                          onOpenFullImage={() => setLightboxProduct(prod)}
                         />
                       );
                     })}
@@ -1013,6 +1016,7 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
                             onToggleWishlist={() => toggleWishlist(prod.id)}
                             onUpdateQty={(q) => updateQuantity(prod.id, q)}
                             onOpenDetails={() => setSelectedProductForDetails(prod)}
+                            onOpenFullImage={() => setLightboxProduct(prod)}
                           />
                         );
                       })}
@@ -1746,6 +1750,25 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
 
       {/* SodaiBhai Footer */}
       <SodaiFooter businessInfo={activeBizInfo} />
+
+      {/* Fullscreen Product Image Lightbox Modal */}
+      <ProductImageLightboxModal
+        isOpen={!!lightboxProduct}
+        product={lightboxProduct}
+        onClose={() => setLightboxProduct(null)}
+        onAddToCart={(qty) => {
+          if (lightboxProduct) {
+            updateQuantity(lightboxProduct.id, qty);
+          }
+        }}
+        cartQty={lightboxProduct ? cart[lightboxProduct.id] || 0 : 0}
+        onOpenDetails={() => {
+          if (lightboxProduct) {
+            setSelectedProductForDetails(lightboxProduct);
+            setLightboxProduct(null);
+          }
+        }}
+      />
     </div>
   );
 };

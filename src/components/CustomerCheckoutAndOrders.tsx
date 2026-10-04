@@ -27,7 +27,8 @@ import {
   ClipboardList,
   Edit3,
   AlertCircle,
-  Sparkles
+  Sparkles,
+  Maximize2
 } from 'lucide-react';
 import {
   Product,
@@ -54,6 +55,7 @@ interface SodaiProductCardProps {
   onToggleWishlist: () => void;
   onUpdateQty: (qty: number) => void;
   onOpenDetails: () => void;
+  onOpenFullImage?: () => void;
 }
 
 export const SodaiProductCard: React.FC<SodaiProductCardProps> = ({
@@ -68,18 +70,29 @@ export const SodaiProductCard: React.FC<SodaiProductCardProps> = ({
   onToggleWishlist,
   onUpdateQty,
   onOpenDetails,
+  onOpenFullImage,
 }) => {
   const weights = product.allowedWeights
     ? product.allowedWeights.split(',').map((w) => w.trim()).filter(Boolean)
     : [];
   const saveAmount = Math.max(0, regularPrice - effectivePrice);
 
+  const handleImageClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onOpenFullImage) {
+      onOpenFullImage();
+    } else {
+      onOpenDetails();
+    }
+  };
+
   return (
-    <div className="bg-white border border-[#ECECEC] shadow-xs p-2.5 sm:p-3 rounded-2xl relative group flex flex-col h-full hover:shadow-lg hover:border-[#E21E26]/30 transition-all">
-      {/* Product Image Square */}
+    <div className="bg-white border border-[#ECECEC] shadow-xs p-2 sm:p-3 rounded-2xl relative group flex flex-col h-full hover:shadow-lg hover:border-[#E21E26]/40 transition-all">
+      {/* Product Image Stage - Studio Neutral Background with Soft Framing */}
       <div
-        onClick={onOpenDetails}
-        className="relative aspect-square rounded-xl overflow-hidden mb-2 cursor-pointer bg-[#F9FAFB]"
+        onClick={handleImageClick}
+        title="ফুল ছবি দেখতে ক্লিক করুন"
+        className="relative aspect-[1/0.95] sm:aspect-square rounded-2xl overflow-hidden mb-2 cursor-pointer bg-gradient-to-b from-[#FAFBFD] via-[#F4F5F8] to-[#EAEDF2] border border-[#E5E7EB]/80 shadow-[inset_0_1px_3px_rgba(0,0,0,0.03)] flex items-center justify-center p-1.5 sm:p-2"
       >
         {product.imageUrl ? (
           <img
@@ -87,7 +100,7 @@ export const SodaiProductCard: React.FC<SodaiProductCardProps> = ({
             alt={product.banglaName}
             loading="lazy"
             referrerPolicy="no-referrer"
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+            className="w-full h-full object-contain drop-shadow-xs group-hover:scale-106 transition-transform duration-300"
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-red-50 to-neutral-100 text-[#E21E26] font-black text-3xl">
@@ -97,7 +110,7 @@ export const SodaiProductCard: React.FC<SodaiProductCardProps> = ({
 
         {/* Top-Right Flash / Deal Badge */}
         {(product.isFlashSale || product.tradeOfferDesc) && (
-          <div className="absolute top-1.5 right-1.5 z-10">
+          <div className="absolute top-1.5 right-1.5 z-10 pointer-events-none">
             <div className="bg-[#E21E26] text-white rounded-lg px-2 py-0.5 flex items-center gap-1 shadow-md animate-pulse">
               <Zap className="w-2.5 h-2.5 fill-current" />
               <span className="text-[8px] font-black uppercase tracking-tight">
@@ -109,10 +122,21 @@ export const SodaiProductCard: React.FC<SodaiProductCardProps> = ({
 
         {/* Top-Left SAVE Ribbon */}
         {hasDiscount && saveAmount > 0 && (
-          <div className="absolute top-1.5 left-0 bg-[#E21E26] text-white text-[8px] font-black px-2 py-0.5 rounded-r-md shadow-md">
+          <div className="absolute top-1.5 left-0 bg-[#E21E26] text-white text-[8px] font-black px-2 py-0.5 rounded-r-md shadow-md pointer-events-none z-10">
             SAVE ৳{saveAmount.toLocaleString('en-IN')}
           </div>
         )}
+
+        {/* Bottom-Left Quick Full View Zoom Indicator */}
+        <button
+          type="button"
+          onClick={handleImageClick}
+          title="ফুল ছবি বড় করে দেখুন"
+          className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-lg bg-black/65 hover:bg-[#E21E26] text-white text-[9px] font-bold flex items-center gap-1 backdrop-blur-xs transition-all shadow-xs z-10 opacity-90 group-hover:opacity-100"
+        >
+          <Maximize2 className="w-2.5 h-2.5" />
+          <span className="text-[9px]">ফুল ছবি</span>
+        </button>
 
         {/* Wishlist Heart */}
         <button
@@ -121,10 +145,10 @@ export const SodaiProductCard: React.FC<SodaiProductCardProps> = ({
             e.stopPropagation();
             onToggleWishlist();
           }}
-          className={`absolute bottom-1.5 right-1.5 w-7 h-7 rounded-full flex items-center justify-center transition-all shadow-xs ${
+          className={`absolute bottom-1.5 right-1.5 w-7 h-7 rounded-full flex items-center justify-center transition-all shadow-xs z-10 ${
             isWishlisted
               ? 'bg-[#E21E26] text-white'
-              : 'bg-white/90 text-[#6B7280] hover:text-[#E21E26]'
+              : 'bg-white/95 text-[#6B7280] hover:text-[#E21E26] hover:bg-white'
           }`}
         >
           <Heart className="w-3.5 h-3.5" fill={isWishlisted ? 'currentColor' : 'none'} />
