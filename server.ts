@@ -330,8 +330,30 @@ try {
 function saveServerDbMirror() {
   try {
     serverDbMirror.updatedAt = new Date().toISOString();
-    fs.writeFileSync(DB_MIRROR_FILE, JSON.stringify(serverDbMirror, null, 2));
     const publicSeedPath = path.join(process.cwd(), 'public', 'database_seed_mirror.json');
+    if (fs.existsSync(publicSeedPath)) {
+      try {
+        const existing = JSON.parse(fs.readFileSync(publicSeedPath, 'utf-8'));
+        if (Array.isArray(existing?.products)) {
+          const imgMap = new Map<string, string>();
+          for (const ep of existing.products) {
+            if (ep?.id && ep?.imageUrl && (ep.imageUrl.startsWith('data:image') || ep.imageUrl.startsWith('http'))) {
+              imgMap.set(ep.id, ep.imageUrl);
+            }
+          }
+          if (imgMap.size > 0 && Array.isArray(serverDbMirror.products)) {
+            for (const sp of serverDbMirror.products) {
+              if ((!sp.imageUrl || sp.imageUrl.startsWith('/uploads/')) && imgMap.has(sp.id)) {
+                sp.imageUrl = imgMap.get(sp.id);
+              }
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+    fs.writeFileSync(DB_MIRROR_FILE, JSON.stringify(serverDbMirror, null, 2));
     fs.writeFileSync(publicSeedPath, JSON.stringify(serverDbMirror));
   } catch (err) {
     console.warn('Failed to write server DB mirror file:', err);
