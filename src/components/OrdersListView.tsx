@@ -28,15 +28,19 @@ import {
   Plus,
   ClipboardList,
   CheckSquare,
-  Square
+  Square,
+  Building2
 } from 'lucide-react';
-import { Order, Shop, PaymentMethod, DueCollectionRecord, DailyExpenseRecord } from '../types';
+import { Order, Shop, PaymentMethod, DueCollectionRecord, DailyExpenseRecord, Product, Supplier } from '../types';
 import { getBusinessInfo } from '../lib/firebase';
+import { getProducts } from '../lib/storage';
 import { OrderPrintMode, printOrdersBatch } from '../lib/printService';
 
 interface OrdersListViewProps {
   orders: Order[];
   shops?: Shop[];
+  products?: Product[];
+  suppliers?: Supplier[];
   dueCollections?: DueCollectionRecord[];
   dailyExpenses?: DailyExpenseRecord[];
   onAddDailyExpense?: (expense: Omit<DailyExpenseRecord, 'id' | 'createdAt'>) => void;
@@ -66,6 +70,8 @@ interface OrdersListViewProps {
 export const OrdersListView: React.FC<OrdersListViewProps> = ({
   orders,
   shops = [],
+  products = [],
+  suppliers = [],
   dueCollections = [],
   dailyExpenses = [],
   onAddDailyExpense,
@@ -173,6 +179,8 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
   const [isLoadSheetOpen, setIsLoadSheetOpen] = useState(false);
   const [loadSheetScope, setLoadSheetScope] = useState<'PENDING' | 'TODAY' | 'YESTERDAY' | 'FILTERED'>('PENDING');
   const [loadSheetRoute, setLoadSheetRoute] = useState<string>('ALL');
+  const [loadSheetSupplier, setLoadSheetSupplier] = useState<string>('ALL');
+  const [loadSheetGroupBySupplier, setLoadSheetGroupBySupplier] = useState<boolean>(false);
 
   // Tool #3: Daily Cash Closing & Expense Ledger Modal State
   const [isCashClosingOpen, setIsCashClosingOpen] = useState(false);
@@ -283,11 +291,21 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
       return filteredOrders.some((fo) => fo.id === o.id);
     });
 
+    const allProds = products.length > 0 ? products : getProducts();
+    const prodMap = new Map<string, Product>();
+    const prodNameMap = new Map<string, Product>();
+    allProds.forEach((p) => {
+      if (p.id) prodMap.set(p.id, p);
+      if (p.banglaName) prodNameMap.set(p.banglaName.trim().toLowerCase(), p);
+      if (p.name) prodNameMap.set(p.name.trim().toLowerCase(), p);
+    });
+
     const itemMap = new Map<
       string,
       {
         productId: string;
         productName: string;
+        supplier: string;
         unit: string;
         unitPrice: number;
         totalQty: number;
@@ -298,14 +316,14 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
       }
     >();
 
-    const uniqueShops = new Set<string>();
-    let grandTotalValue = 0;
+    const allSuppliersCountMap = new Map<string, number>();
 
     targetOrders.forEach((ord) => {
-      uniqueShops.add(ord.shopId || ord.shopName);
-      grandTotalValue += ord.netTotal;
       ord.items.forEach((it) => {
-        const key = `${it.productId}__${it.unit}`;
+        const matchedProd = prodMap.get(it.productId) || prodNameMap.get((it.productName || '').trim().toLowerCase());
+        const supplier = (it.supplier || matchedProd?.supplier || 'অন্যান্য / অনির্দিষ্ট').trim();
+
+        const key = `${it.productId || it.productName}__${it.unit}`;
         const prev = itemMap.get(key);
         const freeQty = it.tradeOfferQty || 0;
         if (prev) {
@@ -318,6 +336,7 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
           itemMap.set(key, {
             productId: it.productId,
             productName: it.productName,
+            supplier,
             unit: it.unit,
             unitPrice: it.unitPrice,
             totalQty: it.quantity,
@@ -330,15 +349,69 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
       });
     });
 
-    const items = Array.from(itemMap.values()).sort((a, b) => b.totalLoadQty - a.totalLoadQty);
+    const allUnfilteredItems = Array.from(itemMap.values());
+    allUnfilteredItems.forEach((it) => {
+      const sup = it.supplier;
+      allSuppliersCountMap.set(sup, (allSuppliersCountMap.get(sup) || 0) + 1);
+    });
+
+    const allSuppliersList = Array.from(allSuppliersCountMap.entries())
+      .map(([name, itemCount]) => ({ name, itemCount }))
+      .sort((a, b) => b.itemCount - a.itemCount);
+
+    // Apply supplier filter if selected
+    const items = (
+      loadSheetSupplier !== 'ALL'
+        ? allUnfilteredItems.filter((it) => it.supplier === loadSheetSupplier)
+        : allUnfilteredItems
+    ).sort((a, b) => b.totalLoadQty - a.totalLoadQty);
+
+    const filteredShopsSet = new Set<string>();
+    items.forEach((it) => {
+      it.shopsSet.forEach((sh) => filteredShopsSet.add(sh));
+    });
+
+    const grandTotalValue = items.reduce((sum, it) => sum + it.totalValue, 0);
+    const totalFilteredLoadQty = items.reduce((sum, it) => sum + it.totalLoadQty, 0);
+
+    // Group items by supplier for grouped view
+    const groupsMap = new Map<string, typeof items>();
+    items.forEach((it) => {
+      const sup = it.supplier || 'অন্যান্য / অনির্দিষ্ট';
+      if (!groupsMap.has(sup)) groupsMap.set(sup, []);
+      groupsMap.get(sup)!.push(it);
+    });
+
+    const supplierGroups = Array.from(groupsMap.entries()).map(([supName, groupItems]) => ({
+      supplierName: supName,
+      items: groupItems,
+      totalQty: groupItems.reduce((s, x) => s + x.totalQty, 0),
+      totalFreeQty: groupItems.reduce((s, x) => s + x.totalFreeQty, 0),
+      totalLoadQty: groupItems.reduce((s, x) => s + x.totalLoadQty, 0),
+      totalValue: groupItems.reduce((s, x) => s + x.totalValue, 0),
+      shopsCount: new Set(groupItems.flatMap((x) => Array.from(x.shopsSet))).size,
+    }));
+
     return {
       ordersCount: targetOrders.length,
-      shopsCount: uniqueShops.size,
+      shopsCount: filteredShopsSet.size,
       grandTotalValue,
+      totalFilteredLoadQty,
       items,
       targetOrders,
+      allSuppliersList,
+      supplierGroups,
     };
-  }, [orders, filteredOrders, loadSheetScope, loadSheetRoute, todayStr, yesterdayStr]);
+  }, [
+    orders,
+    filteredOrders,
+    loadSheetScope,
+    loadSheetRoute,
+    loadSheetSupplier,
+    todayStr,
+    yesterdayStr,
+    products,
+  ]);
 
   // Tool #3: Daily Cash Closing & Expense Summary for cashClosingDate
   const cashClosingSummary = useMemo(() => {
@@ -1459,38 +1532,66 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
       {/* Tool #1 Modal: DSR Delivery Load Sheet / Chalan Generator */}
       {isLoadSheetOpen && (() => {
         const biz = getBusinessInfo();
-        const whatsappLoadSheetText = encodeURIComponent(
-          [
-            `*${biz.banglaName} - ডিএসআর ডেলিভারি লোডশিট (Chalan)*`,
-            `তারিখ: ${new Date().toLocaleDateString('en-GB')}`,
-            `রুট: ${loadSheetRoute === 'ALL' ? 'সকল রুট' : loadSheetRoute}`,
-            `মোট মেমো: ${loadSheetData.ordersCount}টি | মোট দোকান: ${loadSheetData.shopsCount}টি`,
-            `---------------------------------`,
+        const isSupplierFiltered = loadSheetSupplier !== 'ALL';
+
+        let whatsappContentLines: string[] = [
+          `*${biz.banglaName} - ডিএসআর ডেলিভারি লোডশিট ও চালান সামারি*`,
+          isSupplierFiltered ? `*সাপ্লায়ার: ${loadSheetSupplier}*` : '',
+          `তারিখ: ${new Date().toLocaleDateString('en-GB')}`,
+          `রুট: ${loadSheetRoute === 'ALL' ? 'সকল রুট' : loadSheetRoute}`,
+          `মোট মেমো: ${loadSheetData.ordersCount}টি | মোট দোকান: ${loadSheetData.shopsCount}টি | মোট পণ্য: ${loadSheetData.items.length}টি`,
+          `---------------------------------`,
+        ].filter(Boolean);
+
+        if (loadSheetGroupBySupplier && !isSupplierFiltered) {
+          loadSheetData.supplierGroups.forEach((group) => {
+            whatsappContentLines.push(`\n*🏢 [${group.supplierName}]* (${group.items.length}টি পণ্য, মোট লোড: ${group.totalLoadQty}):`);
+            group.items.forEach((it, i) => {
+              whatsappContentLines.push(
+                `  ${i + 1}. ${it.productName} — *${it.totalLoadQty} ${it.unit}*${
+                  it.totalFreeQty > 0 ? ` (অর্ডার ${it.totalQty} + ফ্রি ${it.totalFreeQty})` : ''
+                } [${it.shopsSet.size} দোকান, ৳${it.totalValue.toLocaleString()}]`
+              );
+            });
+            whatsappContentLines.push(`  ↳ সাবটোটাল: ৳${group.totalValue.toLocaleString()}`);
+          });
+        } else {
+          whatsappContentLines.push(
             ...loadSheetData.items.map(
               (it, i) =>
-                `${i + 1}. ${it.productName} — *${it.totalLoadQty} ${it.unit}*${
+                `${i + 1}. ${it.productName}${!isSupplierFiltered ? ` [🏢 ${it.supplier}]` : ''} — *${it.totalLoadQty} ${it.unit}*${
                   it.totalFreeQty > 0 ? ` (অর্ডার ${it.totalQty} + ফ্রি ${it.totalFreeQty})` : ''
                 } [${it.shopsSet.size} দোকান]`
-            ),
-            `---------------------------------`,
-            `*সর্বমোট মালের মূল্য: ৳${loadSheetData.grandTotalValue.toLocaleString()}*`,
-          ].join('\n')
+            )
+          );
+        }
+
+        whatsappContentLines.push(
+          `---------------------------------`,
+          `*সর্বমোট ${isSupplierFiltered ? `${loadSheetSupplier}-এর ` : ''}মালের মূল্য: ৳${loadSheetData.grandTotalValue.toLocaleString()}*`
         );
+
+        const whatsappLoadSheetText = encodeURIComponent(whatsappContentLines.join('\n'));
 
         return (
           <div className="fixed inset-0 z-50 bg-neutral-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in overflow-y-auto">
-            <div className="bg-white rounded-3xl max-w-3xl w-full shadow-2xl border border-neutral-200 overflow-hidden my-auto">
+            <div className="bg-white rounded-3xl max-w-4xl w-full shadow-2xl border border-neutral-200 overflow-hidden my-auto">
               <div className="bg-teal-900 text-white px-5 py-4 flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
                   <div className="w-9 h-9 rounded-xl bg-teal-700 flex items-center justify-center">
                     <PackageCheck className="w-5 h-5 text-teal-200" />
                   </div>
                   <div>
-                    <h3 className="font-extrabold text-sm sm:text-base">
-                      ডিএসআর ডেলিভারি লোডশিট ও চালান সামারি
+                    <h3 className="font-extrabold text-sm sm:text-base flex items-center gap-2">
+                      <span>ডিএসআর ডেলিভারি লোডশিট ও পণ্যের সামারি</span>
+                      {isSupplierFiltered && (
+                        <span className="text-[11px] bg-teal-800 text-teal-200 px-2 py-0.5 rounded-full border border-teal-600">
+                          {loadSheetSupplier}
+                        </span>
+                      )}
                     </h3>
                     <p className="text-[11px] text-teal-200">
-                      গোডাউন থেকে গাড়ি বা ভ্যানে মাল তোলার একীভূত তালিকা
+                      গোডাউন থেকে গাড়ি বা ভ্যানে মাল তোলার জন্য সাপ্লায়ার ও রুট অনুযায়ী একীভূত তালিকা
                     </p>
                   </div>
                 </div>
@@ -1505,41 +1606,100 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
 
               <div className="p-4 sm:p-5 space-y-4 text-xs max-h-[84vh] overflow-y-auto">
                 {/* Filter Bar inside Load Sheet */}
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 bg-neutral-50 p-3 rounded-2xl border border-neutral-200">
-                  <div className="flex flex-wrap items-center gap-1">
-                    {[
-                      { id: 'PENDING', label: `অপেক্ষমান ডেলিভারি (${totalPendingOrdersCount})` },
-                      { id: 'YESTERDAY', label: 'গতকালের অর্ডার' },
-                      { id: 'TODAY', label: 'আজকের অর্ডার' },
-                      { id: 'FILTERED', label: `বর্তমান ফিল্টার (${filteredOrders.length})` },
-                    ].map((tab) => (
-                      <button
-                        key={tab.id}
-                        type="button"
-                        onClick={() => setLoadSheetScope(tab.id as any)}
-                        className={`px-3 py-1.5 rounded-xl font-bold text-xs cursor-pointer transition-colors ${
-                          loadSheetScope === tab.id
-                            ? 'bg-teal-700 text-white'
-                            : 'bg-white text-neutral-700 border border-neutral-200 hover:bg-neutral-100'
+                <div className="space-y-2.5 bg-neutral-50 p-3 rounded-2xl border border-neutral-200">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-1">
+                      {[
+                        { id: 'PENDING', label: `অপেক্ষমান ডেলিভারি (${totalPendingOrdersCount})` },
+                        { id: 'YESTERDAY', label: 'গতকালের অর্ডার' },
+                        { id: 'TODAY', label: 'আজকের অর্ডার' },
+                        { id: 'FILTERED', label: `বর্তমান ফিল্টার (${filteredOrders.length})` },
+                      ].map((tab) => (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => setLoadSheetScope(tab.id as any)}
+                          className={`px-3 py-1.5 rounded-xl font-bold text-xs cursor-pointer transition-colors ${
+                            loadSheetScope === tab.id
+                              ? 'bg-teal-700 text-white'
+                              : 'bg-white text-neutral-700 border border-neutral-200 hover:bg-neutral-100'
+                          }`}
+                        >
+                          {tab.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* Route Filter */}
+                      <select
+                        value={loadSheetRoute}
+                        onChange={(e) => setLoadSheetRoute(e.target.value)}
+                        className="px-3 py-1.5 rounded-xl border border-neutral-300 bg-white font-bold text-neutral-800 text-xs focus:outline-none focus:border-teal-600"
+                      >
+                        <option value="ALL">সকল রুট ({orderRoutes.length}টি)</option>
+                        {orderRoutes.map((r) => (
+                          <option key={r} value={r}>
+                            {r}
+                          </option>
+                        ))}
+                      </select>
+
+                      {/* Supplier Filter */}
+                      <select
+                        value={loadSheetSupplier}
+                        onChange={(e) => setLoadSheetSupplier(e.target.value)}
+                        className={`px-3 py-1.5 rounded-xl border font-bold text-xs focus:outline-none ${
+                          isSupplierFiltered
+                            ? 'bg-indigo-50 border-indigo-300 text-indigo-900 ring-2 ring-indigo-200'
+                            : 'border-neutral-300 bg-white text-neutral-800'
                         }`}
                       >
-                        {tab.label}
-                      </button>
-                    ))}
+                        <option value="ALL">🏢 সকল সাপ্লায়ার ({loadSheetData.allSuppliersList.length}টি)</option>
+                        {loadSheetData.allSuppliersList.map((sup) => (
+                          <option key={sup.name} value={sup.name}>
+                            🏢 {sup.name} ({sup.itemCount}টি পণ্য)
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
 
-                  <select
-                    value={loadSheetRoute}
-                    onChange={(e) => setLoadSheetRoute(e.target.value)}
-                    className="px-3 py-1.5 rounded-xl border border-neutral-300 bg-white font-bold text-neutral-800 text-xs"
-                  >
-                    <option value="ALL">সকল রুট ({orderRoutes.length}টি)</option>
-                    {orderRoutes.map((r) => (
-                      <option key={r} value={r}>
-                        {r}
-                      </option>
-                    ))}
-                  </select>
+                  {/* Secondary control row: Group by toggle & filter reset */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-neutral-200">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setLoadSheetGroupBySupplier(!loadSheetGroupBySupplier)}
+                        className={`px-3 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-colors ${
+                          loadSheetGroupBySupplier
+                            ? 'bg-indigo-600 text-white shadow-xs'
+                            : 'bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-50'
+                        }`}
+                        title="সাপ্লায়ার অনুযায়ী গ্রুপ ও সাবটোটাল সামারি দেখতে ক্লিক করুন"
+                      >
+                        <Building2 className="w-3.5 h-3.5" />
+                        <span>{loadSheetGroupBySupplier ? '✓ সাপ্লায়ার গ্রুপ সক্রিয়' : 'সাপ্লায়ার অনুযায়ী আলাদা দেখুন'}</span>
+                      </button>
+
+                      {isSupplierFiltered && (
+                        <button
+                          type="button"
+                          onClick={() => setLoadSheetSupplier('ALL')}
+                          className="px-2.5 py-1 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 rounded-xl font-bold text-[11px] cursor-pointer flex items-center gap-1"
+                        >
+                          <X className="w-3 h-3" />
+                          <span>ফিল্টার মুছুন</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {isSupplierFiltered && (
+                      <span className="text-[11px] font-bold text-indigo-800">
+                        🏷️ নির্বাচিত সাপ্লায়ার: <strong>{loadSheetSupplier}</strong> ({loadSheetData.items.length}টি পণ্য)
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Summary Stat Row */}
@@ -1553,11 +1713,20 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                     <span className="text-lg font-black text-teal-700">{loadSheetData.shopsCount}টি</span>
                   </div>
                   <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-3">
-                    <span className="text-[11px] text-neutral-500 block">মোট পণ্যের আইটেম</span>
-                    <span className="text-lg font-black text-neutral-900">{loadSheetData.items.length}টি</span>
+                    <span className="text-[11px] text-neutral-500 block">
+                      {isSupplierFiltered ? `${loadSheetSupplier} পণ্য` : 'মোট পণ্যের আইটেম'}
+                    </span>
+                    <span className="text-lg font-black text-neutral-900">
+                      {loadSheetData.items.length}টি
+                      <span className="text-xs font-normal text-neutral-500 ml-1">
+                        ({loadSheetData.totalFilteredLoadQty} একক)
+                      </span>
+                    </span>
                   </div>
                   <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-3">
-                    <span className="text-[11px] text-neutral-500 block">সর্বমোট মালের মূল্য</span>
+                    <span className="text-[11px] text-neutral-500 block">
+                      {isSupplierFiltered ? `${loadSheetSupplier} মালের মূল্য` : 'সর্বমোট মালের মূল্য'}
+                    </span>
                     <span className="text-lg font-black text-emerald-700 font-mono">
                       ৳{loadSheetData.grandTotalValue.toLocaleString()}
                     </span>
@@ -1566,78 +1735,176 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
 
                 {/* Product Aggregation Table */}
                 {loadSheetData.items.length === 0 ? (
-                  <div className="p-8 text-center bg-neutral-50 rounded-2xl border border-neutral-200 text-neutral-500">
-                    এই ফিল্টারে লোডশিট তৈরির মতো কোনো অর্ডার পাওয়া যায়নি।
+                  <div className="p-8 text-center bg-neutral-50 rounded-2xl border border-neutral-200 text-neutral-500 space-y-2">
+                    <p className="font-bold">এই ফিল্টারে লোডশিট তৈরির মতো কোনো অর্ডার পাওয়া যায়নি।</p>
+                    {isSupplierFiltered && (
+                      <button
+                        type="button"
+                        onClick={() => setLoadSheetSupplier('ALL')}
+                        className="px-3 py-1.5 bg-teal-700 text-white rounded-xl text-xs font-bold cursor-pointer"
+                      >
+                        সকল সাপ্লায়ার দেখুন
+                      </button>
+                    )}
                   </div>
                 ) : (
-                  <div className="border border-neutral-200 rounded-2xl overflow-hidden">
+                  <div className="border border-neutral-200 rounded-2xl overflow-hidden shadow-xs">
                     <table className="w-full text-left border-collapse text-xs">
                       <thead>
                         <tr className="bg-neutral-100 border-b border-neutral-200 font-extrabold text-neutral-700">
                           <th className="py-2.5 px-3">ক্রমিক</th>
-                          <th className="py-2.5 px-3">পণ্যের নাম</th>
+                          <th className="py-2.5 px-3">পণ্যের নাম ও সাপ্লায়ার</th>
                           <th className="py-2.5 px-3 text-center">অর্ডার পরিমাণ</th>
                           <th className="py-2.5 px-3 text-center">ফ্রি/অফার</th>
-                          <th className="py-2.5 px-3 text-center bg-teal-50 text-teal-900">মোট লোড পরিমাণ</th>
+                          <th className="py-2.5 px-3 text-center bg-teal-50 text-teal-900 font-black">মোট লোড পরিমাণ</th>
                           <th className="py-2.5 px-3 text-center">দোকান সংখ্যা</th>
                           <th className="py-2.5 px-3 text-right">মোট মূল্য (৳)</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {loadSheetData.items.map((item, idx) => (
-                          <tr key={idx} className="border-b border-neutral-100 hover:bg-neutral-50">
-                            <td className="py-2.5 px-3 font-mono text-neutral-500">{idx + 1}</td>
-                            <td className="py-2.5 px-3 font-bold text-neutral-900">{item.productName}</td>
-                            <td className="py-2.5 px-3 text-center font-medium">
-                              {item.totalQty} {item.unit}
-                            </td>
-                            <td className="py-2.5 px-3 text-center text-amber-700 font-bold">
-                              {item.totalFreeQty > 0 ? `+${item.totalFreeQty} ${item.unit}` : '-'}
-                            </td>
-                            <td className="py-2.5 px-3 text-center bg-teal-50/70 font-black text-teal-900 text-sm">
-                              {item.totalLoadQty} {item.unit}
-                            </td>
-                            <td className="py-2.5 px-3 text-center text-neutral-600">
-                              {item.shopsSet.size}টি দোকান
-                            </td>
-                            <td className="py-2.5 px-3 text-right font-mono font-bold text-neutral-900">
-                              ৳{item.totalValue.toLocaleString()}
-                            </td>
-                          </tr>
-                        ))}
+                        {loadSheetGroupBySupplier && !isSupplierFiltered ? (
+                          // Grouped by supplier rendering
+                          loadSheetData.supplierGroups.map((group, gIdx) => (
+                            <React.Fragment key={group.supplierName || gIdx}>
+                              <tr className="bg-indigo-50/90 border-t-2 border-indigo-200 border-b border-indigo-100">
+                                <td colSpan={7} className="py-2 px-3">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="flex items-center gap-2">
+                                      <Building2 className="w-4 h-4 text-indigo-700 shrink-0" />
+                                      <span className="font-extrabold text-indigo-950 text-xs sm:text-sm">
+                                        {group.supplierName}
+                                      </span>
+                                      <span className="text-[10px] font-bold text-indigo-700 bg-white px-2 py-0.5 rounded-full border border-indigo-200">
+                                        {group.items.length}টি পণ্য
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => setLoadSheetSupplier(group.supplierName)}
+                                        className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold underline cursor-pointer ml-1"
+                                      >
+                                        শুধুমাত্র এই সাপ্লায়ার ফিল্টার করুন
+                                      </button>
+                                    </div>
+                                    <div className="flex items-center gap-3 text-[11px] font-bold text-neutral-700">
+                                      <span>মোট লোড: <span className="text-teal-800 font-extrabold">{group.totalLoadQty}</span></span>
+                                      <span>দোকান: {group.shopsCount}টি</span>
+                                      <span className="text-emerald-700 font-mono font-extrabold">৳{group.totalValue.toLocaleString()}</span>
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                              {group.items.map((item, idx) => (
+                                <tr key={`${item.productId}__${item.unit}`} className="border-b border-neutral-100 hover:bg-neutral-50">
+                                  <td className="py-2 px-3 font-mono text-neutral-500 pl-5">{idx + 1}</td>
+                                  <td className="py-2 px-3 font-bold text-neutral-900">{item.productName}</td>
+                                  <td className="py-2 px-3 text-center font-medium">
+                                    {item.totalQty} {item.unit}
+                                  </td>
+                                  <td className="py-2 px-3 text-center text-amber-700 font-bold">
+                                    {item.totalFreeQty > 0 ? `+${item.totalFreeQty} ${item.unit}` : '-'}
+                                  </td>
+                                  <td className="py-2 px-3 text-center bg-teal-50/70 font-black text-teal-900 text-sm">
+                                    {item.totalLoadQty} {item.unit}
+                                  </td>
+                                  <td className="py-2 px-3 text-center text-neutral-600">
+                                    {item.shopsSet.size}টি দোকান
+                                  </td>
+                                  <td className="py-2 px-3 text-right font-mono font-bold text-neutral-900">
+                                    ৳{item.totalValue.toLocaleString()}
+                                  </td>
+                                </tr>
+                              ))}
+                            </React.Fragment>
+                          ))
+                        ) : (
+                          // Flat List rendering
+                          loadSheetData.items.map((item, idx) => (
+                            <tr key={idx} className="border-b border-neutral-100 hover:bg-neutral-50">
+                              <td className="py-2.5 px-3 font-mono text-neutral-500">{idx + 1}</td>
+                              <td className="py-2.5 px-3">
+                                <div className="font-bold text-neutral-900">{item.productName}</div>
+                                {!isSupplierFiltered && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setLoadSheetSupplier(item.supplier)}
+                                    title="এই সাপ্লায়ারের পণ্যের সামারি আলাদা দেখতে ক্লিক করুন"
+                                    className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 cursor-pointer mt-0.5"
+                                  >
+                                    <Building2 className="w-2.5 h-2.5" />
+                                    <span>{item.supplier}</span>
+                                  </button>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3 text-center font-medium">
+                                {item.totalQty} {item.unit}
+                              </td>
+                              <td className="py-2.5 px-3 text-center text-amber-700 font-bold">
+                                {item.totalFreeQty > 0 ? `+${item.totalFreeQty} ${item.unit}` : '-'}
+                              </td>
+                              <td className="py-2.5 px-3 text-center bg-teal-50/70 font-black text-teal-900 text-sm">
+                                {item.totalLoadQty} {item.unit}
+                              </td>
+                              <td className="py-2.5 px-3 text-center text-neutral-600">
+                                {item.shopsSet.size}টি দোকান
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-mono font-bold text-neutral-900">
+                                ৳{item.totalValue.toLocaleString()}
+                              </td>
+                            </tr>
+                          ))
+                        )}
                       </tbody>
                     </table>
                   </div>
                 )}
 
                 {/* Action Footer */}
-                <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
-                  <a
-                    href={`https://wa.me/?text=${whatsappLoadSheetText}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-extrabold text-xs flex items-center gap-1.5 shadow-sm"
-                  >
-                    <Share2 className="w-4 h-4" />
-                    <span>হোয়াটসঅ্যাপে লোডশিট পাঠান</span>
-                  </a>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      printOrdersBatch(
-                        loadSheetData.targetOrders,
-                        'product_summary',
-                        `(${
-                          loadSheetRoute === 'ALL' ? 'সকল রুট' : loadSheetRoute
-                        } • ${loadSheetData.ordersCount}টি মেমো)`
-                      )
-                    }
-                    disabled={loadSheetData.targetOrders.length === 0}
-                    className="px-4 py-2.5 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-40 text-white rounded-xl font-extrabold text-xs flex items-center gap-1.5 shadow-sm cursor-pointer"
-                  >
-                    <Printer className="w-4 h-4" />
-                    <span>লোডশিট / পণ্যের সামারি প্রিন্ট / PDF</span>
-                  </button>
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+                  <div className="text-[11px] text-neutral-500 font-medium">
+                    {isSupplierFiltered ? (
+                      <span>
+                        সাপ্লায়ার ফিল্টার: <strong>{loadSheetSupplier}</strong>
+                      </span>
+                    ) : loadSheetGroupBySupplier ? (
+                      <span>সাপ্লায়ার অনুযায়ী আলাদা গ্রুপ ভিউ সক্রিয়</span>
+                    ) : (
+                      <span>সকল পণ্যের একীভূত তালিকা</span>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <a
+                      href={`https://wa.me/?text=${whatsappLoadSheetText}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-extrabold text-xs flex items-center gap-1.5 shadow-sm"
+                    >
+                      <Share2 className="w-4 h-4" />
+                      <span>{isSupplierFiltered ? `${loadSheetSupplier} লোডশিট হোয়াটসঅ্যাপে পাঠান` : 'হোয়াটসঅ্যাপে লোডশিট পাঠান'}</span>
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        printOrdersBatch(
+                          loadSheetData.targetOrders,
+                          'product_summary',
+                          `(${
+                            loadSheetRoute === 'ALL' ? 'সকল রুট' : loadSheetRoute
+                          } • ${loadSheetData.ordersCount}টি মেমো)`,
+                          {
+                            supplierFilter: loadSheetSupplier,
+                            groupBySupplier: loadSheetGroupBySupplier,
+                            products: products,
+                          }
+                        )
+                      }
+                      disabled={loadSheetData.targetOrders.length === 0}
+                      className="px-4 py-2.5 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-40 text-white rounded-xl font-extrabold text-xs flex items-center gap-1.5 shadow-sm cursor-pointer"
+                    >
+                      <Printer className="w-4 h-4" />
+                      <span>{isSupplierFiltered ? `${loadSheetSupplier} সামারি প্রিন্ট / PDF` : 'লোডশিট / পণ্যের সামারি প্রিন্ট / PDF'}</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

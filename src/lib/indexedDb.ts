@@ -4,13 +4,14 @@
  */
 
 const DB_NAME = 'MunsiAppOfflineDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 export const INDEXED_DB_STORES = [
   'products',
   'shops',
   'orders',
   'categories',
+  'suppliers',
   'routes',
   'dueCollections',
   'dailyExpenses',
@@ -193,6 +194,7 @@ export async function syncAppDataToIndexedDB(data: {
   shops?: any[];
   orders?: any[];
   categories?: any[];
+  suppliers?: any[];
   routes?: any[];
   dueCollections?: any[];
   dailyExpenses?: any[];
@@ -211,6 +213,9 @@ export async function syncAppDataToIndexedDB(data: {
     }
     if (data.categories && Array.isArray(data.categories)) {
       await saveItemsToIndexedDB('categories', data.categories);
+    }
+    if (data.suppliers && Array.isArray(data.suppliers)) {
+      await saveItemsToIndexedDB('suppliers', data.suppliers);
     }
     if (data.routes && Array.isArray(data.routes)) {
       await saveItemsToIndexedDB('routes', data.routes);

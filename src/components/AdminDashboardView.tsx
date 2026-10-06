@@ -2422,9 +2422,16 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                           </div>
                         </td>
                         <td className="p-3">
-                          <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-neutral-100 text-neutral-700">
-                            {p.category}
-                          </span>
+                          <div className="flex flex-wrap items-center gap-1">
+                            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-neutral-100 text-neutral-700">
+                              {p.category}
+                            </span>
+                            {p.supplier && (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                {p.supplier}
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="p-3 font-bold text-neutral-900">
                           ৳{p.unitPrice.toLocaleString()}{' '}

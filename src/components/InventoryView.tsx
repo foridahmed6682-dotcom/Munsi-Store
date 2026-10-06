@@ -16,35 +16,44 @@ import {
   Upload,
   Printer,
   CheckSquare,
-  Square
+  Square,
+  Building2,
+  PieChart,
 } from 'lucide-react';
-import { Product, Category } from '../types';
-import { DEMO_PRODUCT_IDS, parseBanglaNumber } from '../lib/storage';
+import { Product, Category, Supplier } from '../types';
+import { DEMO_PRODUCT_IDS, parseBanglaNumber, getSuppliers, addOrUpdateSupplier } from '../lib/storage';
 import { processImageFile } from '../lib/imageUtils';
 import { printProductsBatch } from '../lib/printService';
 import { ProductImageLightboxModal } from './ProductImageLightboxModal';
+import { SupplierSummaryModal } from './SupplierSummaryModal';
 
 interface InventoryViewProps {
   products: Product[];
   categoriesList?: Category[];
+  suppliersList?: Supplier[];
   onAddProduct: (product: Product) => void;
   onUpdateProduct?: (product: Product) => void;
   onDeleteProduct?: (productId: string) => void;
   onAdjustStock: (productId: string, delta: number) => void;
   onCleanAllMockData?: () => void;
+  onAddSupplier?: (supplier: Supplier) => void;
 }
 
 export const InventoryView: React.FC<InventoryViewProps> = ({
   products,
   categoriesList,
+  suppliersList,
   onAddProduct,
   onUpdateProduct,
   onDeleteProduct,
   onAdjustStock,
   onCleanAllMockData,
+  onAddSupplier,
 }) => {
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
+  const [supplierFilter, setSupplierFilter] = useState('all');
+  const [isSupplierSummaryOpen, setIsSupplierSummaryOpen] = useState(false);
   const [lightboxProduct, setLightboxProduct] = useState<Product | null>(null);
   const [onlyLowStock, setOnlyLowStock] = useState(false);
   const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set());
@@ -72,6 +81,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [newBanglaName, setNewBanglaName] = useState('');
   const [newSku, setNewSku] = useState('');
   const [newCategory, setNewCategory] = useState('তেল ও ঘি');
+  const [newSupplier, setNewSupplier] = useState('');
+  const [showQuickAddSupplier, setShowQuickAddSupplier] = useState(false);
+  const [quickSupplierName, setQuickSupplierName] = useState('');
   const [newUnit, setNewUnit] = useState('কার্টুন');
   const [newUnitPrice, setNewUnitPrice] = useState('');
   const [newCostPrice, setNewCostPrice] = useState('');
@@ -94,17 +106,54 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     return Array.from(set);
   }, [products, categoriesList]);
 
+  const suppliers = useMemo(() => {
+    const set = new Set<string>();
+    if (suppliersList && suppliersList.length > 0) {
+      suppliersList.forEach((s) => set.add(s.banglaName || s.name));
+    }
+    const defaultSups = getSuppliers();
+    defaultSups.forEach((s) => set.add(s.banglaName || s.name));
+    products.forEach((p) => {
+      if (p.supplier && p.supplier.trim()) set.add(p.supplier.trim());
+    });
+    return Array.from(set);
+  }, [products, suppliersList]);
+
+  const handleSaveQuickSupplier = () => {
+    const trimmed = quickSupplierName.trim();
+    if (!trimmed) return;
+    const newSup: Supplier = {
+      id: `sup-${Date.now()}`,
+      name: trimmed,
+      banglaName: trimmed,
+    };
+    if (onAddSupplier) {
+      onAddSupplier(newSup);
+    } else {
+      addOrUpdateSupplier(newSup);
+    }
+    setNewSupplier(trimmed);
+    setQuickSupplierName('');
+    setShowQuickAddSupplier(false);
+  };
+
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
       const matchCat = categoryFilter === 'all' || p.category === categoryFilter;
+      const matchSup =
+        supplierFilter === 'all' ||
+        (supplierFilter === 'other'
+          ? !p.supplier || p.supplier === 'অন্যান্য'
+          : p.supplier === supplierFilter);
       const matchSearch =
         p.name.toLowerCase().includes(search.toLowerCase()) ||
         p.banglaName.toLowerCase().includes(search.toLowerCase()) ||
+        (p.supplier && p.supplier.toLowerCase().includes(search.toLowerCase())) ||
         p.sku.toLowerCase().includes(search.toLowerCase());
       const matchLowStock = onlyLowStock ? p.stock <= p.minStockAlert : true;
-      return matchCat && matchSearch && matchLowStock;
+      return matchCat && matchSup && matchSearch && matchLowStock;
     });
-  }, [products, categoryFilter, search, onlyLowStock]);
+  }, [products, categoryFilter, supplierFilter, search, onlyLowStock]);
 
   const metrics = useMemo(() => {
     const totalItems = products.length;
@@ -134,6 +183,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     setNewBanglaName('');
     setNewSku('');
     setNewCategory(categories[0] || 'তেল ও ঘি');
+    setNewSupplier(suppliers[0] || 'স্কয়ার কনজিউমার');
+    setShowQuickAddSupplier(false);
+    setQuickSupplierName('');
     setNewUnit('কার্টুন');
     setNewUnitPrice('');
     setNewCostPrice('');
@@ -150,6 +202,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     setNewBanglaName(prod.banglaName || '');
     setNewSku(prod.sku || '');
     setNewCategory(prod.category || (categories[0] || 'তেল ও ঘি'));
+    setNewSupplier(prod.supplier || (suppliers[0] || 'স্কয়ার কনজিউমার'));
+    setShowQuickAddSupplier(false);
+    setQuickSupplierName('');
     setNewUnit(prod.unit || 'কার্টুন');
     setNewUnitPrice(prod.unitPrice !== undefined && prod.unitPrice !== null ? prod.unitPrice.toString() : '');
     setNewCostPrice(prod.costPrice !== undefined && prod.costPrice !== null ? prod.costPrice.toString() : '');
@@ -206,6 +261,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         banglaName: newBanglaName.trim() || newProdName.trim(),
         sku: newSku.trim() || editingProduct.sku,
         category: newCategory || 'সাবান ও ডিটারজেন্ট',
+        supplier: newSupplier.trim() || undefined,
         unit: newUnit || 'পিস',
         unitPrice: unitPriceNum,
         costPrice: costPriceNum,
@@ -222,6 +278,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         banglaName: newBanglaName.trim() || newProdName.trim(),
         sku: newSku.trim() || `SKU-${Date.now().toString().slice(-4)}`,
         category: newCategory || 'সাবান ও ডিটারজেন্ট',
+        supplier: newSupplier.trim() || undefined,
         unit: newUnit || 'পিস',
         unitPrice: unitPriceNum,
         costPrice: costPriceNum,
@@ -235,6 +292,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       onAddProduct(created);
       setSearch('');
       setCategoryFilter('all');
+      setSupplierFilter('all');
     }
 
     setIsAddProductOpen(false);
@@ -242,6 +300,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     setNewProdName('');
     setNewBanglaName('');
     setNewSku('');
+    setNewSupplier('');
+    setShowQuickAddSupplier(false);
+    setQuickSupplierName('');
     setNewUnitPrice('');
     setNewCostPrice('');
     setNewStock('');
@@ -312,9 +373,33 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               </option>
             ))}
           </select>
+
+          <select
+            value={supplierFilter}
+            onChange={(e) => setSupplierFilter(e.target.value)}
+            className="text-xs py-2 px-2.5 border border-neutral-300 rounded-xl bg-neutral-50 font-medium text-neutral-800"
+          >
+            <option value="all">সকল সাপ্লায়ার</option>
+            {suppliers.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+            <option value="other">অন্যান্য / অনির্দিষ্ট</option>
+          </select>
         </div>
 
-        <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
+        <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end flex-wrap">
+          <button
+            type="button"
+            onClick={() => setIsSupplierSummaryOpen(true)}
+            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+            title="সাপ্লায়ার ভিত্তিক স্টক ও ইনভেন্টরি সামারি"
+          >
+            <PieChart className="w-3.5 h-3.5 text-indigo-600" />
+            <span>সাপ্লায়ার সামারি</span>
+          </button>
+
           <button
             onClick={() => setOnlyLowStock(!onlyLowStock)}
             className={`px-3 py-2 rounded-xl text-xs font-bold border transition-colors flex items-center gap-1 ${
@@ -427,6 +512,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               <tr>
                 <th className="py-3 px-4">পণ্য ও SKU</th>
                 <th className="py-3 px-3">ক্যাটাগরি</th>
+                <th className="py-3 px-3">সাপ্লায়ার / কোম্পানি</th>
                 <th className="py-3 px-3 text-right">ক্রয় দর</th>
                 <th className="py-3 px-3 text-right">বিক্রয় দর</th>
                 <th className="py-3 px-3 text-center">বর্তমান স্টক</th>
@@ -497,6 +583,17 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                       <span className="px-2 py-0.5 rounded-md bg-neutral-100 text-neutral-700 font-medium text-[11px]">
                         {prod.category}
                       </span>
+                    </td>
+
+                    <td className="py-3 px-3">
+                      {prod.supplier ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                          <Building2 className="w-3 h-3 text-indigo-500 shrink-0" />
+                          <span className="truncate max-w-[120px]">{prod.supplier}</span>
+                        </span>
+                      ) : (
+                        <span className="text-neutral-400 text-[11px] italic">অনির্দিষ্ট</span>
+                      )}
                     </td>
 
                     <td className="py-3 px-3 text-right font-medium text-neutral-600">
@@ -682,7 +779,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
                     <label className="font-bold text-neutral-700 block mb-1">ক্যাটাগরি</label>
                     <select
@@ -701,6 +798,68 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                     </select>
                   </div>
 
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="font-bold text-neutral-700 block">
+                        সাপ্লায়ার / কোম্পানি
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setShowQuickAddSupplier(!showQuickAddSupplier)}
+                        className="text-[10px] text-indigo-600 font-bold hover:underline inline-flex items-center gap-0.5 cursor-pointer"
+                      >
+                        <Plus className="w-2.5 h-2.5" />
+                        <span>{showQuickAddSupplier ? 'লিস্ট থেকে বাছুন' : '+ নতুন সাপ্লায়ার'}</span>
+                      </button>
+                    </div>
+
+                    {showQuickAddSupplier ? (
+                      <div className="flex gap-1.5">
+                        <input
+                          type="text"
+                          value={quickSupplierName}
+                          onChange={(e) => setQuickSupplierName(e.target.value)}
+                          placeholder="কোম্পানির নাম (যেমন: তীর / সিটি গ্রুপ)"
+                          className="flex-1 p-2 border border-indigo-300 rounded-xl bg-indigo-50/40 text-xs font-bold text-neutral-900 focus:outline-none focus:border-indigo-600"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleSaveQuickSupplier}
+                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold cursor-pointer"
+                        >
+                          যোগ
+                        </button>
+                      </div>
+                    ) : (
+                      <select
+                        value={newSupplier}
+                        onChange={(e) => {
+                          if (e.target.value === '__add_new__') {
+                            setShowQuickAddSupplier(true);
+                          } else {
+                            setNewSupplier(e.target.value);
+                          }
+                        }}
+                        className="w-full p-2.5 border border-neutral-300 rounded-xl bg-white font-medium focus:outline-none focus:border-emerald-600"
+                      >
+                        <option value="">-- সাপ্লায়ার নির্বাচন করুন --</option>
+                        {suppliers.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                        {newSupplier && !suppliers.includes(newSupplier) && (
+                          <option value={newSupplier}>{newSupplier}</option>
+                        )}
+                        <option value="__add_new__" className="text-indigo-600 font-bold">
+                          + নতুন সাপ্লায়ার যোগ করুন...
+                        </option>
+                      </select>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5">
                   <div>
                     <label className="font-bold text-neutral-700 block mb-1">
                       একক (Unit) <span className="text-rose-500">*</span>
@@ -722,7 +881,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                     </select>
                   </div>
 
-                  <div className="col-span-2 sm:col-span-1">
+                  <div>
                     <label className="font-bold text-neutral-700 block mb-1">SKU কোড</label>
                     <input
                       type="text"
@@ -925,6 +1084,18 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         isOpen={!!lightboxProduct}
         product={lightboxProduct}
         onClose={() => setLightboxProduct(null)}
+      />
+
+      {/* Supplier Summary Modal */}
+      <SupplierSummaryModal
+        isOpen={isSupplierSummaryOpen}
+        onClose={() => setIsSupplierSummaryOpen(false)}
+        products={products}
+        suppliersList={suppliersList}
+        onSelectSupplierFilter={(sup) => {
+          setSupplierFilter(sup);
+        }}
+        onAddSupplier={onAddSupplier}
       />
     </div>
   );

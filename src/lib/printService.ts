@@ -9,6 +9,7 @@ import {
   AuthorizedUserEmail
 } from '../types';
 import { getBusinessInfo } from './firebase';
+import { getProducts } from './storage';
 
 function escapeHtml(str: any): string {
   if (str === null || str === undefined) return '';
@@ -83,21 +84,38 @@ export function triggerGlobalPrint(htmlContent: string): void {
 
 export type OrderPrintMode = 'slips' | 'table' | 'product_summary';
 
+export interface PrintOrdersOptions {
+  supplierFilter?: string;
+  groupBySupplier?: boolean;
+  products?: Product[];
+}
+
 // 1. PRINT ORDERS (Individual Memo Slips OR Summary Table OR Product Summary / Loading Sheet)
 export function printOrdersBatch(
   orders: Order[],
   mode: OrderPrintMode = 'slips',
-  titleSuffix = ''
+  titleSuffix = '',
+  options?: PrintOrdersOptions
 ): void {
   if (!orders || orders.length === 0) return;
   const biz = getBusinessInfo();
 
   if (mode === 'product_summary') {
+    const allProducts = options?.products || getProducts();
+    const prodMap = new Map<string, Product>();
+    const prodNameMap = new Map<string, Product>();
+    allProducts.forEach((p) => {
+      if (p.id) prodMap.set(p.id, p);
+      if (p.banglaName) prodNameMap.set(p.banglaName.trim().toLowerCase(), p);
+      if (p.name) prodNameMap.set(p.name.trim().toLowerCase(), p);
+    });
+
     const itemMap = new Map<
       string,
       {
         productId: string;
         productName: string;
+        supplier: string;
         unit: string;
         unitPrice: number;
         totalQty: number;
@@ -113,13 +131,22 @@ export function printOrdersBatch(
     let totalPaid = 0;
     let totalDue = 0;
 
+    const supplierFilter = options?.supplierFilter && options.supplierFilter !== 'ALL' ? options.supplierFilter : null;
+    const isGrouped = !!options?.groupBySupplier;
+
     orders.forEach((ord) => {
       uniqueShops.add(ord.shopId || ord.shopName);
-      grandTotalValue += Number(ord.netTotal || 0);
       totalPaid += Number(ord.paidAmount || 0);
       totalDue += Number(ord.dueAmount || 0);
 
       ord.items.forEach((it) => {
+        const matchedProd = prodMap.get(it.productId) || prodNameMap.get((it.productName || '').trim().toLowerCase());
+        const itemSupplier = (it.supplier || matchedProd?.supplier || 'অন্যান্য / অনির্দিষ্ট').trim();
+
+        if (supplierFilter && itemSupplier !== supplierFilter) {
+          return; // Skip if filtered by supplier
+        }
+
         const key = `${it.productId || it.productName}__${it.unit}`;
         const prev = itemMap.get(key);
         const qty = Number(it.quantity || 0);
@@ -135,6 +162,7 @@ export function printOrdersBatch(
           itemMap.set(key, {
             productId: it.productId,
             productName: it.productName,
+            supplier: itemSupplier,
             unit: it.unit,
             unitPrice: Number(it.unitPrice || 0),
             totalQty: qty,
@@ -151,35 +179,98 @@ export function printOrdersBatch(
       (a, b) => b.totalLoadQty - a.totalLoadQty
     );
 
-    const productRowsHtml = aggregatedItems
-      .map(
-        (item, idx) => `
-        <tr style="border-bottom: 1px solid #cbd5e1;">
-          <td style="padding: 6px; text-align: center;">${idx + 1}</td>
-          <td style="padding: 6px; font-weight: 800; color: #0f172a;">${escapeHtml(
-            item.productName
-          )}</td>
-          <td style="padding: 6px; text-align: right;">৳${item.unitPrice.toLocaleString()}</td>
-          <td style="padding: 6px; text-align: center; font-weight: 700;">${
-            item.totalQty
-          } ${escapeHtml(item.unit)}</td>
-          <td style="padding: 6px; text-align: center; color: #047857; font-weight: 700;">${
-            item.totalFreeQty > 0 ? `+${item.totalFreeQty} ${escapeHtml(item.unit)}` : '---'
-          }</td>
-          <td style="padding: 6px; text-align: center; font-weight: 900; background: #f0fdfa; color: #0f766e; font-size: 13px;">${
-            item.totalLoadQty
-          } ${escapeHtml(item.unit)}</td>
-          <td style="padding: 6px; text-align: center;">${item.shopsSet.size} টি দোকান</td>
-          <td style="padding: 6px; text-align: right; font-weight: 800;">৳${item.totalValue.toLocaleString()}</td>
-        </tr>
-      `
-      )
-      .join('');
+    grandTotalValue = aggregatedItems.reduce((sum, it) => sum + it.totalValue, 0);
+
+    const fullTitle = [
+      `অর্ডারকৃত পণ্যের সামারি ও ডেলিভারি লোডিং শীট`,
+      titleSuffix,
+      supplierFilter ? `[সাপ্লায়ার: ${supplierFilter}]` : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+
+    let tableBodyHtml = '';
+
+    if (isGrouped && !supplierFilter) {
+      // Group by supplier
+      const groupsMap = new Map<string, typeof aggregatedItems>();
+      aggregatedItems.forEach((it) => {
+        const sup = it.supplier || 'অন্যান্য / অনির্দিষ্ট';
+        if (!groupsMap.has(sup)) groupsMap.set(sup, []);
+        groupsMap.get(sup)!.push(it);
+      });
+
+      let globalIdx = 1;
+      tableBodyHtml = Array.from(groupsMap.entries())
+        .map(([supName, items]) => {
+          const supTotalQty = items.reduce((s, x) => s + x.totalLoadQty, 0);
+          const supTotalVal = items.reduce((s, x) => s + x.totalValue, 0);
+          const supRows = items
+            .map(
+              (item) => `
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 5px 6px; text-align: center; color: #64748b;">${globalIdx++}</td>
+                <td style="padding: 5px 6px; font-weight: 800; color: #0f172a;">${escapeHtml(item.productName)}</td>
+                <td style="padding: 5px 6px; text-align: right;">৳${item.unitPrice.toLocaleString()}</td>
+                <td style="padding: 5px 6px; text-align: center;">${item.totalQty} ${escapeHtml(item.unit)}</td>
+                <td style="padding: 5px 6px; text-align: center; color: #047857; font-weight: 700;">${
+                  item.totalFreeQty > 0 ? `+${item.totalFreeQty} ${escapeHtml(item.unit)}` : '---'
+                }</td>
+                <td style="padding: 5px 6px; text-align: center; font-weight: 900; background: #f0fdfa; color: #0f766e;">${
+                  item.totalLoadQty
+                } ${escapeHtml(item.unit)}</td>
+                <td style="padding: 5px 6px; text-align: center;">${item.shopsSet.size} টি দোকান</td>
+                <td style="padding: 5px 6px; text-align: right; font-weight: 800;">৳${item.totalValue.toLocaleString()}</td>
+              </tr>
+            `
+            )
+            .join('');
+
+          return `
+            <tr style="background: #f1f5f9; border-top: 2px solid #cbd5e1; border-bottom: 1.5px solid #94a3b8;">
+              <td colspan="8" style="padding: 6px 8px; font-weight: 900; color: #1e293b; font-size: 12.5px;">
+                🏢 <strong>সাপ্লায়ার: ${escapeHtml(supName)}</strong>
+                <span style="font-weight: 700; color: #475569; margin-left: 12px; font-size: 11px;">
+                  (${items.length}টি পণ্য • মোট লোড: ${supTotalQty} একক • মোট মূল্য: ৳${supTotalVal.toLocaleString()})
+                </span>
+              </td>
+            </tr>
+            ${supRows}
+          `;
+        })
+        .join('');
+    } else {
+      tableBodyHtml = aggregatedItems
+        .map(
+          (item, idx) => `
+          <tr style="border-bottom: 1px solid #cbd5e1;">
+            <td style="padding: 6px; text-align: center;">${idx + 1}</td>
+            <td style="padding: 6px; font-weight: 800; color: #0f172a;">
+              ${escapeHtml(item.productName)}
+              ${!supplierFilter ? `<div style="font-size: 10px; color: #4f46e5; font-weight: 700;">🏢 ${escapeHtml(item.supplier)}</div>` : ''}
+            </td>
+            <td style="padding: 6px; text-align: right;">৳${item.unitPrice.toLocaleString()}</td>
+            <td style="padding: 6px; text-align: center; font-weight: 700;">${
+              item.totalQty
+            } ${escapeHtml(item.unit)}</td>
+            <td style="padding: 6px; text-align: center; color: #047857; font-weight: 700;">${
+              item.totalFreeQty > 0 ? `+${item.totalFreeQty} ${escapeHtml(item.unit)}` : '---'
+            }</td>
+            <td style="padding: 6px; text-align: center; font-weight: 900; background: #f0fdfa; color: #0f766e; font-size: 13px;">${
+              item.totalLoadQty
+            } ${escapeHtml(item.unit)}</td>
+            <td style="padding: 6px; text-align: center;">${item.shopsSet.size} টি দোকান</td>
+            <td style="padding: 6px; text-align: right; font-weight: 800;">৳${item.totalValue.toLocaleString()}</td>
+          </tr>
+        `
+        )
+        .join('');
+    }
 
     const html = `
       <div style="padding: 16px; font-family: 'Hind Siliguri', sans-serif; color: #0f172a;">
         ${getHeaderHtml(
-          `অর্ডারকৃত পণ্যের সামারি ও ডেলিভারি লোডিং শীট ${titleSuffix}`,
+          fullTitle,
           `মোট মেমো: ${orders.length} টি | মোট দোকান: ${uniqueShops.size} টি | মোট পণ্যের আইটেম: ${aggregatedItems.length} টি | সর্বমোট মূল্য: ৳${grandTotalValue.toLocaleString()}`
         )}
 
@@ -193,12 +284,12 @@ export function printOrdersBatch(
             <div style="font-size: 14px; font-weight: 900;">${aggregatedItems.length} টি পণ্য</div>
           </div>
           <div style="border: 1px solid #94a3b8; border-radius: 6px; padding: 6px 8px; background: #f8fafc;">
-            <div style="color: #475569;">সর্বমোট বিল</div>
-            <div style="font-size: 14px; font-weight: 900;">৳${grandTotalValue.toLocaleString()}</div>
+            <div style="color: #475569;">সর্বমোট মালের মূল্য</div>
+            <div style="font-size: 14px; font-weight: 900; color: #047857;">৳${grandTotalValue.toLocaleString()}</div>
           </div>
           <div style="border: 1px solid #94a3b8; border-radius: 6px; padding: 6px 8px; background: #f8fafc;">
-            <div style="color: #475569;">নগদ জমা / বাকী</div>
-            <div style="font-size: 12px; font-weight: 800;"><span style="color:#047857;">জমা: ৳${totalPaid.toLocaleString()}</span> • <span style="color:#be123c;">বাকী: ৳${totalDue.toLocaleString()}</span></div>
+            <div style="color: #475569;">সাপ্লায়ার ফিল্টার</div>
+            <div style="font-size: 13px; font-weight: 800; color: #4338ca;">${escapeHtml(supplierFilter || 'সকল সাপ্লায়ার')}</div>
           </div>
         </div>
 
@@ -216,12 +307,14 @@ export function printOrdersBatch(
             </tr>
           </thead>
           <tbody>
-            ${productRowsHtml}
+            ${tableBodyHtml || '<tr><td colspan="8" style="padding: 16px; text-align: center; color: #64748b;">কোনো পণ্য পাওয়া যায়নি</td></tr>'}
           </tbody>
           <tfoot>
             <tr style="background: #f8fafc; border-top: 2px solid #334155; font-weight: 900; font-size: 12.5px;">
-              <td colspan="7" style="padding: 8px; text-align: right;">সর্বমোট পণ্যের বাজার মূল্য (${orders.length} টি মেমো):</td>
-              <td style="padding: 8px 6px; text-align: right;">৳${grandTotalValue.toLocaleString()}</td>
+              <td colspan="7" style="padding: 8px; text-align: right;">
+                সর্বমোট পণ্যের মূল্য ${supplierFilter ? `(${escapeHtml(supplierFilter)}):` : `(${orders.length} টি মেমো):`}
+              </td>
+              <td style="padding: 8px 6px; text-align: right; color: #047857;">৳${grandTotalValue.toLocaleString()}</td>
             </tr>
           </tfoot>
         </table>

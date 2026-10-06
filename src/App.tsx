@@ -31,6 +31,8 @@ import {
   saveShops,
   saveOrders,
   saveCategories,
+  getSuppliers,
+  addOrUpdateSupplier,
   saveRoutes,
   saveAuthorizedEmails,
   getDeletedProductIds,
@@ -139,7 +141,21 @@ import { RouteMapView } from './components/RouteMapView';
 import { AdminDashboardView } from './components/AdminDashboardView';
 import { MemoModal } from './components/MemoModal';
 import { DeleteConfirmModal, DeletePermissionRequest } from './components/DeleteConfirmModal';
-import { Product, Shop, Order, UserProfile, PaymentMethod, UserRole, DueCollectionRecord, DailyExpenseRecord, Category, AuthorizedUserEmail, Route, BusinessInfo } from './types';
+import {
+  Product,
+  Shop,
+  Order,
+  UserProfile,
+  PaymentMethod,
+  UserRole,
+  DueCollectionRecord,
+  DailyExpenseRecord,
+  Category,
+  Supplier,
+  AuthorizedUserEmail,
+  Route,
+  BusinessInfo
+} from './types';
 import { CheckCircle2, AlertCircle, ExternalLink, LogIn, Lock } from 'lucide-react';
 import { usePWAInstall } from './hooks/usePWAInstall';
 import { notifyNewOrderPush } from './lib/pushService';
@@ -167,6 +183,7 @@ export default function App() {
   const [shops, setShops] = useState<Shop[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>(() => getSuppliers());
   const [routes, setRoutes] = useState<Route[]>([]);
   const [authorizedEmails, setAuthorizedEmails] = useState<AuthorizedUserEmail[]>([]);
   const [dueCollections, setDueCollections] = useState<DueCollectionRecord[]>([]);
@@ -228,6 +245,7 @@ export default function App() {
     const shps = getShops();
     const ords = getOrders();
     const cats = getCategories();
+    const sups = getSuppliers();
     const rts = getRoutes();
     const auths = getAuthorizedEmails();
     const cols = getDueCollections();
@@ -239,6 +257,7 @@ export default function App() {
     setShops(shps);
     setOrders(ords);
     setCategories(cats);
+    setSuppliers(sups);
     setRoutes(rts);
     setAuthorizedEmails(auths);
     setDueCollections(cols);
@@ -257,11 +276,26 @@ export default function App() {
       shops: shps,
       orders: ords,
       categories: cats,
+      suppliers: sups,
       routes: rts,
       dueCollections: cols,
       dailyExpenses: exps,
     });
   }, []);
+
+  const handleAddSupplier = (sup: Supplier) => {
+    const saved = addOrUpdateSupplier(sup);
+    setSuppliers((prev) => {
+      const idx = prev.findIndex((s) => s.id === saved.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = saved;
+        return next;
+      }
+      return [...prev, saved];
+    });
+    showToast(`সাপ্লায়ার '${saved.banglaName || saved.name}' সফলভাবে সংরক্ষিত হয়েছে`, 'success');
+  };
 
   // Initial load
   useEffect(() => {
@@ -2471,11 +2505,13 @@ export default function App() {
               <InventoryView
                 products={products}
                 categoriesList={categories}
+                suppliersList={suppliers}
                 onAddProduct={handleAddProduct}
                 onUpdateProduct={handleUpdateProduct}
                 onDeleteProduct={handleDeleteProduct}
                 onAdjustStock={handleAdjustStock}
                 onCleanAllMockData={handleCleanAllMockData}
+                onAddSupplier={handleAddSupplier}
               />
             )}
 

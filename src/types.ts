@@ -21,6 +21,17 @@ export interface Category {
   createdAt?: string;
 }
 
+export interface Supplier {
+  id: string;
+  name: string;
+  banglaName: string;
+  contactPerson?: string;
+  phone?: string;
+  address?: string;
+  notes?: string;
+  createdAt?: string;
+}
+
 export interface AuthorizedUserEmail {
   id: string;
   email: string;
@@ -80,6 +91,8 @@ export interface Product {
   banglaName: string;
   sku: string;
   category: string;
+  supplier?: string; // সাপ্লায়ার বা কোম্পানির নাম (যেমন: স্কয়ার, প্রাণ, ফ্রেশ, ইউনিলিভার)
+  supplierId?: string;
   unit: string; // যেমন: কার্টুন, ডজন, কেজি, পিস, বস্তা
   unitPrice: number; // বিক্রয় মূল্য (ডিলার/হোলসেল বা রেগুলার রেট)
   discountPrice?: number; // ছাড়কৃত বিক্রয় মূল্য (কাস্টমার স্টোর অফার রেট)
@@ -155,6 +168,7 @@ export interface OrderItem {
   tradeOfferQty?: number;
   discountAmount?: number;
   lineTotal: number;
+  supplier?: string; // সাপ্লায়ার বা কোম্পানির নাম (যেমন: স্কয়ার, প্রাণ, তীর, ফ্রেশ)
 }
 
 export interface Order {

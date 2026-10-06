@@ -345,6 +345,7 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
           quantity: qty,
           tradeOfferQty,
           lineTotal,
+          supplier: prod.supplier || undefined,
         };
       })
       .filter(Boolean) as OrderItem[];

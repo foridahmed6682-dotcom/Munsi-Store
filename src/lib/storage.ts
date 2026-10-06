@@ -1,9 +1,10 @@
-import { Product, Shop, Order, DueCollectionRecord, DailyMetrics, Category, AuthorizedUserEmail, Route, BusinessInfo, CustomerDeliveryAddress, DailyExpenseRecord, StaffTargetConfig } from '../types';
+import { Product, Shop, Order, DueCollectionRecord, DailyMetrics, Category, Supplier, AuthorizedUserEmail, Route, BusinessInfo, CustomerDeliveryAddress, DailyExpenseRecord, StaffTargetConfig } from '../types';
 
 const STORAGE_KEYS = {
   SHOPS: 'dsr_shops_v1',
   PRODUCTS: 'dsr_products_v1',
   CATEGORIES: 'dsr_categories_v1',
+  SUPPLIERS: 'dsr_suppliers_v1',
   ROUTES: 'dsr_routes_v1',
   AUTHORIZED_EMAILS: 'dsr_authorized_emails_v1',
   ORDERS: 'dsr_orders_v1',
@@ -15,6 +16,7 @@ const STORAGE_KEYS = {
   DELETED_SHOPS: 'dsr_deleted_shops_v1',
   DELETED_ORDERS: 'dsr_deleted_orders_v1',
   DELETED_CATEGORIES: 'dsr_deleted_categories_v1',
+  DELETED_SUPPLIERS: 'dsr_deleted_suppliers_v1',
   DELETED_ROUTES: 'dsr_deleted_routes_v1',
   CUSTOMER_DELIVERY_ADDRESS: 'munsi_customer_delivery_address_v1',
   DAILY_EXPENSES: 'dsr_daily_expenses_v1',
@@ -521,6 +523,25 @@ export function addDeletedCategoryId(id: string) {
   safeSetLocalStorage(STORAGE_KEYS.DELETED_CATEGORIES, JSON.stringify(Array.from(set)));
 }
 
+export function getDeletedSupplierIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.DELETED_SUPPLIERS);
+    if (raw !== null) {
+      const list: string[] = JSON.parse(raw);
+      return new Set(Array.isArray(list) ? list : []);
+    }
+    return new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+export function addDeletedSupplierId(id: string) {
+  const set = getDeletedSupplierIds();
+  set.add(id);
+  safeSetLocalStorage(STORAGE_KEYS.DELETED_SUPPLIERS, JSON.stringify(Array.from(set)));
+}
+
 export function getDeletedRouteIds(): Set<string> {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.DELETED_ROUTES);
@@ -724,6 +745,77 @@ export function deleteCategory(categoryId: string) {
   const categories = getCategories();
   const filtered = categories.filter((c) => c.id !== categoryId);
   saveCategories(filtered);
+}
+
+// Suppliers Management
+export const DEFAULT_SUPPLIERS: Supplier[] = [
+  { id: 'sup-square', name: 'Square Consumer Products', banglaName: 'স্কয়ার কনজিউমার' },
+  { id: 'sup-pran', name: 'PRAN-RFL Group', banglaName: 'প্রাণ গ্রুপ' },
+  { id: 'sup-unilever', name: 'Unilever Bangladesh', banglaName: 'ইউনিলিভার' },
+  { id: 'sup-fresh', name: 'Meghna Group (Fresh)', banglaName: 'ফ্রেশ / মেঘনা গ্রুপ' },
+  { id: 'sup-akij', name: 'Akij Food & Beverage', banglaName: 'আকিজ গ্রুপ' },
+  { id: 'sup-bashundhara', name: 'Bashundhara Group', banglaName: 'বসুন্ধরা গ্রুপ' },
+  { id: 'sup-city', name: 'City Group (Teer)', banglaName: 'তীর / সিটি গ্রুপ' },
+];
+
+export function getSuppliers(): Supplier[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.SUPPLIERS);
+    const deletedIds = getDeletedSupplierIds();
+
+    if (raw === null) {
+      localStorage.setItem(STORAGE_KEYS.SUPPLIERS, JSON.stringify(DEFAULT_SUPPLIERS));
+      return DEFAULT_SUPPLIERS;
+    }
+    const parsed: Supplier[] = JSON.parse(raw);
+    const clean = parsed.filter((s) => !deletedIds.has(s.id));
+    if (clean.length === 0) {
+      return DEFAULT_SUPPLIERS;
+    }
+    return clean;
+  } catch {
+    return DEFAULT_SUPPLIERS;
+  }
+}
+
+export function saveSuppliers(suppliers: Supplier[]) {
+  const deletedIds = getDeletedSupplierIds();
+  const clean = suppliers.filter((s) => !deletedIds.has(s.id));
+  safeSetLocalStorage(STORAGE_KEYS.SUPPLIERS, JSON.stringify(clean));
+}
+
+export function addOrUpdateSupplier(supplier: Supplier): Supplier {
+  try {
+    const rawDel = localStorage.getItem(STORAGE_KEYS.DELETED_SUPPLIERS);
+    if (rawDel) {
+      const list: string[] = JSON.parse(rawDel).filter((id: string) => id !== supplier.id);
+      localStorage.setItem(STORAGE_KEYS.DELETED_SUPPLIERS, JSON.stringify(list));
+    }
+  } catch {
+    // ignore
+  }
+  const suppliers = getSuppliers();
+  const idx = suppliers.findIndex(
+    (s) =>
+      s.id === supplier.id ||
+      (s.banglaName && supplier.banglaName && s.banglaName.trim() === supplier.banglaName.trim())
+  );
+  let finalSupplier = supplier;
+  if (idx >= 0) {
+    finalSupplier = { ...suppliers[idx], ...supplier, id: suppliers[idx].id };
+    suppliers[idx] = finalSupplier;
+  } else {
+    suppliers.push(finalSupplier);
+  }
+  saveSuppliers(suppliers);
+  return finalSupplier;
+}
+
+export function deleteSupplier(supplierId: string) {
+  addDeletedSupplierId(supplierId);
+  const suppliers = getSuppliers();
+  const filtered = suppliers.filter((s) => s.id !== supplierId);
+  saveSuppliers(filtered);
 }
 
 // Routes Management
