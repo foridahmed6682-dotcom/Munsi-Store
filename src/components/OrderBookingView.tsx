@@ -58,7 +58,16 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
   const [shopSearch, setShopSearch] = useState<string>('');
 
   // Cart
-  const [cart, setCart] = useState<{ [productId: string]: { quantity: number; unitPrice: number } }>({});
+  const [cart, setCart] = useState<{
+    [productId: string]: {
+      quantity: number;
+      unitPrice: number;
+      selectedUnit: 'পিস' | 'ডজন';
+    };
+  }>({});
+  const [productSelectedUnits, setProductSelectedUnits] = useState<{
+    [productId: string]: 'পিস' | 'ডজন';
+  }>({});
   const [discountPercent, setDiscountPercent] = useState<number>(0);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('DUE');
   const [paidAmountInput, setPaidAmountInput] = useState<string>('');
@@ -182,9 +191,90 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
 
   const [repeatNotice, setRepeatNotice] = useState<string | null>(null);
 
+  // Helper to determine the effective unit for a product ('পিস' vs 'ডজন')
+  const getEffectiveUnit = (productId: string, prod: Product): 'পিস' | 'ডজন' => {
+    if (cart[productId]?.selectedUnit) {
+      return cart[productId].selectedUnit;
+    }
+    if (productSelectedUnits[productId]) {
+      return productSelectedUnits[productId];
+    }
+    return prod.unit === 'ডজন' ? 'ডজন' : 'পিস';
+  };
+
+  // Helper to calculate default price for chosen unit
+  const getDefaultPriceForUnit = (prod: Product, targetUnit: 'পিস' | 'ডজন'): number => {
+    const isBaseDozen = prod.unit === 'ডজন';
+    if (isBaseDozen) {
+      // prod.unitPrice is for 1 dozen
+      if (targetUnit === 'ডজন') {
+        return prod.unitPrice;
+      } else {
+        // Piece: 1 dozen / 12
+        return +(prod.unitPrice / 12).toFixed(2);
+      }
+    } else {
+      // Base unit is piece (or other)
+      if (targetUnit === 'ডজন') {
+        // 1 dozen = 12 pieces
+        return +(prod.unitPrice * 12).toFixed(2);
+      } else {
+        return prod.unitPrice;
+      }
+    }
+  };
+
+  // Helper to calculate max available stock in terms of the chosen unit
+  const getMaxStockForUnit = (prod: Product, targetUnit: 'পিস' | 'ডজন'): number => {
+    const isBaseDozen = prod.unit === 'ডজন';
+    if (isBaseDozen) {
+      if (targetUnit === 'ডজন') {
+        return prod.stock;
+      } else {
+        return prod.stock * 12;
+      }
+    } else {
+      if (targetUnit === 'ডজন') {
+        return Math.floor(prod.stock / 12);
+      } else {
+        return prod.stock;
+      }
+    }
+  };
+
+  const handleUnitChange = (productId: string, newUnit: 'পিস' | 'ডজন') => {
+    const prod = products.find((p) => p.id === productId);
+    if (!prod) return;
+
+    setProductSelectedUnits((prev) => ({ ...prev, [productId]: newUnit }));
+
+    setCart((prev) => {
+      if (!prev[productId] || prev[productId].quantity <= 0) return prev;
+      const currentEntry = prev[productId];
+      const newPrice = getDefaultPriceForUnit(prod, newUnit);
+      const maxStock = getMaxStockForUnit(prod, newUnit);
+      const clampedQty = Math.max(1, Math.min(currentEntry.quantity, maxStock));
+
+      return {
+        ...prev,
+        [productId]: {
+          quantity: clampedQty,
+          unitPrice: newPrice,
+          selectedUnit: newUnit,
+        },
+      };
+    });
+  };
+
   const handleRepeatLastOrder = () => {
     if (!lastShopOrder) return;
-    const nextCart: { [productId: string]: { quantity: number; unitPrice: number } } = { ...cart };
+    const nextCart: {
+      [productId: string]: {
+        quantity: number;
+        unitPrice: number;
+        selectedUnit: 'পিস' | 'ডজন';
+      };
+    } = { ...cart };
     let addedCount = 0;
 
     lastShopOrder.items.forEach((it) => {
@@ -192,11 +282,14 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
         products.find((p) => p.id === it.productId) ||
         products.find((p) => p.banglaName === it.productName || p.name === it.productName);
       if (matchedProd && matchedProd.stock > 0) {
-        const safeQty = Math.min(it.quantity, matchedProd.stock);
+        const itemUnit: 'পিস' | 'ডজন' = it.unit === 'ডজন' ? 'ডজন' : 'পিস';
+        const maxStock = getMaxStockForUnit(matchedProd, itemUnit);
+        const safeQty = Math.min(it.quantity, maxStock);
         if (safeQty > 0) {
           nextCart[matchedProd.id] = {
             quantity: safeQty,
-            unitPrice: matchedProd.unitPrice,
+            unitPrice: it.unitPrice || getDefaultPriceForUnit(matchedProd, itemUnit),
+            selectedUnit: itemUnit,
           };
           addedCount++;
         }
@@ -235,6 +328,7 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
 
         const qty = data.quantity;
         const price = data.unitPrice;
+        const unit = data.selectedUnit || getEffectiveUnit(productId, prod);
 
         // Trade offer logic: e.g. 1 free every 10
         let tradeOfferQty = 0;
@@ -242,11 +336,11 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
           tradeOfferQty = Math.floor(qty / 10);
         }
 
-        const lineTotal = price * qty;
+        const lineTotal = +(price * qty).toFixed(2);
         return {
           productId: prod.id,
           productName: prod.banglaName || prod.name,
-          unit: prod.unit,
+          unit: unit,
           unitPrice: price,
           quantity: qty,
           tradeOfferQty,
@@ -254,7 +348,7 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
         };
       })
       .filter(Boolean) as OrderItem[];
-  }, [cart, products]);
+  }, [cart, products, productSelectedUnits]);
 
   const subTotal = useMemo(() => {
     return cartItems.reduce((sum, item) => sum + item.lineTotal, 0);
@@ -292,22 +386,33 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
     const prod = products.find((p) => p.id === productId);
     if (!prod) return;
 
+    const curUnit = getEffectiveUnit(productId, prod);
+    const maxStock = getMaxStockForUnit(prod, curUnit);
+
     setCart((prev) => {
-      const current = prev[productId] || { quantity: 0, unitPrice: prod.unitPrice };
+      const current = prev[productId] || {
+        quantity: 0,
+        unitPrice: getDefaultPriceForUnit(prod, curUnit),
+        selectedUnit: curUnit,
+      };
       const nextQty = current.quantity + delta;
-      
+
       if (nextQty <= 0) {
         const copy = { ...prev };
         delete copy[productId];
         return copy;
       }
-      if (nextQty > prod.stock) {
-        alert(`দুঃখিত! এই পণ্যের সর্বোচ্চ স্টক মাত্র ${prod.stock} ${prod.unit}`);
+      if (nextQty > maxStock) {
+        alert(`দুঃখিত! এই পণ্যের সর্বোচ্চ স্টক মাত্র ${maxStock} ${curUnit}`);
         return prev;
       }
-      return { 
-        ...prev, 
-        [productId]: { ...current, quantity: nextQty } 
+      return {
+        ...prev,
+        [productId]: {
+          ...current,
+          quantity: nextQty,
+          selectedUnit: curUnit,
+        },
       };
     });
   };
@@ -316,6 +421,9 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
     const num = parseInt(val, 10);
     const prod = products.find((p) => p.id === productId);
     if (!prod) return;
+
+    const curUnit = getEffectiveUnit(productId, prod);
+    const maxStock = getMaxStockForUnit(prod, curUnit);
 
     if (isNaN(num) || num <= 0) {
       setCart((prev) => {
@@ -326,16 +434,20 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
       return;
     }
 
-    const clamped = Math.min(num, prod.stock);
-    if (num > prod.stock) {
-      alert(`সর্বোচ্চ স্টক মাত্র ${prod.stock} ${prod.unit}`);
+    const clamped = Math.min(num, maxStock);
+    if (num > maxStock) {
+      alert(`সর্বোচ্চ স্টক মাত্র ${maxStock} ${curUnit}`);
     }
-    setCart((prev) => ({ 
-      ...prev, 
-      [productId]: { 
-        ...(prev[productId] || { unitPrice: prod.unitPrice }), 
-        quantity: clamped 
-      } 
+    setCart((prev) => ({
+      ...prev,
+      [productId]: {
+        ...(prev[productId] || {
+          unitPrice: getDefaultPriceForUnit(prod, curUnit),
+          selectedUnit: curUnit,
+        }),
+        quantity: clamped,
+        selectedUnit: curUnit,
+      },
     }));
   };
 
@@ -347,7 +459,7 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
       if (!prev[productId]) return prev;
       return {
         ...prev,
-        [productId]: { ...prev[productId], unitPrice: price }
+        [productId]: { ...prev[productId], unitPrice: price },
       };
     });
   };
@@ -673,8 +785,15 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {filteredProducts.map((prod) => {
               const inCartQty = cart[prod.id]?.quantity || 0;
-              const isLowStock = prod.stock <= prod.minStockAlert;
-              const isOutOfStock = prod.stock <= 0;
+              const currentUnit = getEffectiveUnit(prod.id, prod);
+              const maxStock = getMaxStockForUnit(prod, currentUnit);
+              const currentPrice = cart[prod.id]?.unitPrice ?? getDefaultPriceForUnit(prod, currentUnit);
+              const isOutOfStock = maxStock <= 0;
+              const isLowStock =
+                !isOutOfStock &&
+                (currentUnit === 'ডজন'
+                  ? maxStock <= Math.max(1, Math.floor(prod.minStockAlert / 12))
+                  : maxStock <= prod.minStockAlert);
 
               return (
                 <div
@@ -730,7 +849,7 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                           >
                             {isOutOfStock
                               ? 'স্টক শেষ'
-                              : `স্টক: ${prod.stock} ${prod.unit}`}
+                              : `স্টক: ${maxStock} ${currentUnit}`}
                           </span>
                         </div>
 
@@ -749,31 +868,46 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                     )}
                   </div>
 
-                  <div className="mt-3 pt-2 border-t border-neutral-100 flex items-center justify-between">
-                    <div className="flex flex-col">
-                      <span className="text-[10px] text-neutral-500">দর / {prod.unit}:</span>
+                  <div className="mt-3 pt-2 border-t border-neutral-100 flex flex-wrap items-center justify-between gap-2">
+                    {/* Price Column */}
+                    <div className="flex flex-col min-w-[70px]">
+                      <span className="text-[10px] text-neutral-500 font-medium">দর / {currentUnit}:</span>
                       {inCartQty > 0 ? (
                         <div className="flex items-center gap-1 mt-0.5">
                           <span className="text-xs font-bold text-emerald-800">৳</span>
                           <input
                             type="number"
-                            value={cart[prod.id]?.unitPrice ?? prod.unitPrice}
+                            step="any"
+                            value={cart[prod.id]?.unitPrice ?? currentPrice}
                             onChange={(e) => handleUpdatePrice(prod.id, e.target.value)}
                             className="w-16 p-1 text-xs font-black text-emerald-800 bg-neutral-50 border border-neutral-300 rounded-lg focus:ring-1 focus:ring-emerald-500 focus:outline-hidden"
                           />
                         </div>
                       ) : (
-                        <span className="text-sm font-extrabold text-neutral-900">৳{prod.unitPrice}</span>
+                        <span className="text-sm font-extrabold text-neutral-900">৳{currentPrice}</span>
                       )}
                     </div>
 
-                    {/* Quantity Selector */}
-                    <div className="flex items-center gap-1">
+                    {/* Unit Dropdown Selector (ডজন / পিস) & Quantity Controls */}
+                    <div className="flex items-center gap-1.5 ml-auto">
+                      {/* Unit Dropdown Box */}
+                      <select
+                        value={currentUnit}
+                        onChange={(e) => handleUnitChange(prod.id, e.target.value as 'পিস' | 'ডজন')}
+                        className="text-xs font-bold bg-neutral-100 hover:bg-neutral-200/70 text-neutral-800 py-1.5 px-2 rounded-xl border border-neutral-300 focus:outline-hidden focus:ring-1 focus:ring-emerald-500 cursor-pointer shadow-2xs transition-colors"
+                        title="একক নির্বাচন করুন (ডজন বা পিস)"
+                      >
+                        <option value="পিস">পিস</option>
+                        <option value="ডজন">ডজন</option>
+                      </select>
+
+                      {/* Quantity Selector */}
                       {inCartQty > 0 ? (
                         <div className="flex items-center gap-1 bg-neutral-100 p-1 rounded-xl border border-neutral-300">
                           <button
+                            type="button"
                             onClick={() => handleQuantityChange(prod.id, -1)}
-                            className="w-7 h-7 bg-white rounded-lg flex items-center justify-center text-neutral-700 hover:bg-rose-50 hover:text-rose-600 shadow-2xs font-bold"
+                            className="w-7 h-7 bg-white rounded-lg flex items-center justify-center text-neutral-700 hover:bg-rose-50 hover:text-rose-600 shadow-2xs font-bold cursor-pointer transition-colors"
                           >
                             <Minus className="w-3.5 h-3.5" />
                           </button>
@@ -783,25 +917,27 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                             onChange={(e) => handleSetExactQuantity(prod.id, e.target.value)}
                             className="w-10 text-center text-xs font-bold bg-transparent text-neutral-900 focus:outline-hidden"
                             min="0"
-                            max={prod.stock}
+                            max={maxStock}
                           />
                           <button
+                            type="button"
                             onClick={() => handleQuantityChange(prod.id, 1)}
-                            disabled={inCartQty >= prod.stock}
-                            className="w-7 h-7 bg-white rounded-lg flex items-center justify-center text-neutral-700 hover:bg-emerald-50 hover:text-emerald-700 shadow-2xs font-bold disabled:opacity-40"
+                            disabled={inCartQty >= maxStock}
+                            className="w-7 h-7 bg-white rounded-lg flex items-center justify-center text-neutral-700 hover:bg-emerald-50 hover:text-emerald-700 shadow-2xs font-bold disabled:opacity-40 cursor-pointer transition-colors"
                           >
                             <Plus className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       ) : (
                         <button
+                          type="button"
                           id={`add-to-cart-${prod.id}`}
                           onClick={() => handleQuantityChange(prod.id, 1)}
-                          disabled={isOutOfStock}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 active:bg-emerald-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                          disabled={maxStock <= 0}
+                          className="flex items-center gap-1 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 active:bg-emerald-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                         >
                           <ShoppingBag className="w-3.5 h-3.5" />
-                          <span>+ কার্ডে যোগ</span>
+                          <span>+ যোগ</span>
                         </button>
                       )}
                     </div>
@@ -1054,13 +1190,22 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                         <div className="min-w-0 flex-1">
                           <p className="font-bold text-neutral-900 truncate">{item.productName}</p>
                           <div className="flex items-center gap-2 mt-1">
-                            <span className="text-[10px] bg-white px-1.5 py-0.5 rounded border border-neutral-200 text-neutral-500 font-bold">
-                              স্টক: {products.find(p => p.id === item.productId)?.stock || 0} {item.unit}
+                            <select
+                              value={item.unit}
+                              onChange={(e) => handleUnitChange(item.productId, e.target.value as 'পিস' | 'ডজন')}
+                              className="text-[10px] font-bold bg-white text-neutral-800 px-1.5 py-0.5 rounded border border-neutral-300 focus:outline-hidden cursor-pointer"
+                              title="একক পরিবর্তন"
+                            >
+                              <option value="পিস">পিস</option>
+                              <option value="ডজন">ডজন</option>
+                            </select>
+                            <span className="text-[10px] bg-emerald-50 text-emerald-800 px-1.5 py-0.5 rounded border border-emerald-200 font-bold">
+                              দর: ৳{item.unitPrice}/{item.unit}
                             </span>
                             {item.tradeOfferQty ? (
                               <span className="text-[10px] text-emerald-700 font-bold flex items-center gap-0.5">
                                 <Tag className="w-2.5 h-2.5" />
-                                +{item.tradeOfferQty} ফ্রি
+                                +{item.tradeOfferQty} {item.unit} ফ্রি
                               </span>
                             ) : null}
                           </div>

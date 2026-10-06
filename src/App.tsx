@@ -143,6 +143,11 @@ import { Product, Shop, Order, UserProfile, PaymentMethod, UserRole, DueCollecti
 import { CheckCircle2, AlertCircle, ExternalLink, LogIn, Lock } from 'lucide-react';
 import { usePWAInstall } from './hooks/usePWAInstall';
 import { notifyNewOrderPush } from './lib/pushService';
+import {
+  syncAppDataToIndexedDB,
+  getItemsFromIndexedDB,
+  isIndexedDBSupported,
+} from './lib/indexedDb';
 
 export default function App() {
   // PWA Install Hook
@@ -245,12 +250,51 @@ export default function App() {
     } else {
       setActiveSimulatedRole('customer');
     }
+
+    // High-capacity offline background sync into browser IndexedDB
+    syncAppDataToIndexedDB({
+      products: prods,
+      shops: shps,
+      orders: ords,
+      categories: cats,
+      routes: rts,
+      dueCollections: cols,
+      dailyExpenses: exps,
+    });
   }, []);
 
   // Initial load
   useEffect(() => {
     initializeDefaultData();
     reloadData();
+
+    // If browser localStorage was emptied, restore seamlessly from IndexedDB
+    if (isIndexedDBSupported()) {
+      const localProds = getProducts();
+      if (localProds.length === 0) {
+        Promise.all([
+          getItemsFromIndexedDB<Product>('products'),
+          getItemsFromIndexedDB<Shop>('shops'),
+          getItemsFromIndexedDB<Order>('orders'),
+        ]).then(([idbProds, idbShops, idbOrders]) => {
+          if (idbProds.length > 0 || idbShops.length > 0 || idbOrders.length > 0) {
+            if (idbProds.length > 0) {
+              saveProducts(idbProds);
+              setProducts(idbProds);
+            }
+            if (idbShops.length > 0) {
+              saveShops(idbShops);
+              setShops(idbShops);
+            }
+            if (idbOrders.length > 0) {
+              saveOrders(idbOrders);
+              setOrders(idbOrders);
+            }
+            showToast('IndexedDB অফলাইন ভল্ট থেকে ডাটা সফলভাবে রিস্টোর হয়েছে', 'info');
+          }
+        }).catch(() => {});
+      }
+    }
 
     const handleOnline = () => {
       setIsOnline(true);
@@ -733,9 +777,19 @@ export default function App() {
 
       // 2. Automatically deduct inventory stock for each ordered item
       for (const item of newOrder.items) {
-        const totalDeducted = item.quantity + (item.tradeOfferQty || 0);
-        adjustProductStock(item.productId, -totalDeducted);
         const prod = products.find((p) => p.id === item.productId);
+        let totalDeducted = item.quantity + (item.tradeOfferQty || 0);
+
+        // Unit conversion if ordered in dozen but base unit is piece, or vice versa
+        if (prod) {
+          if (item.unit === 'ডজন' && prod.unit !== 'ডজন') {
+            totalDeducted = totalDeducted * 12;
+          } else if (item.unit !== 'ডজন' && prod.unit === 'ডজন') {
+            totalDeducted = +(totalDeducted / 12).toFixed(2);
+          }
+        }
+
+        adjustProductStock(item.productId, -totalDeducted);
         if (prod) {
           const updatedProd = { ...prod, stock: Math.max(0, prod.stock - totalDeducted) };
           saveProductToCloud(updatedProd).catch(() => {});
@@ -2354,7 +2408,6 @@ export default function App() {
                 }}
                 onUpdateDeliveryStatus={handleUpdateDeliveryStatus}
                 onSettleOrderDelivery={handleSettleOrderDelivery}
-                onDeleteOrder={handleDeleteOrder}
                 isAdmin={activeSimulatedRole === 'admin'}
                 onSyncWithSheets={handleSyncWithSheets}
                 onBackupToDrive={handleBackupToDrive}

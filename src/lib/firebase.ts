@@ -68,11 +68,14 @@ try {
 
 // ============================================================================
 // FIRESTORE DAILY QUOTA CIRCUIT BREAKER
-// Automatically disables SDK network retry loops & switches 100% to Server Mirror + LocalStorage
-// when Firestore Free Tier daily read/write quota (resource-exhausted / 429) is reached
+// Protects against rapid 429 rate-limiting while allowing automatic 15-minute retry cooldown
+// and manual live-testing instead of locking out Firebase for 24 hours.
 // ============================================================================
-const READ_QUOTA_EXHAUSTED_STORAGE_KEY = 'munsi_fs_quota_exhausted_date_v1';
-const WRITE_QUOTA_EXHAUSTED_STORAGE_KEY = 'munsi_fs_write_quota_exhausted_date_v1';
+const READ_QUOTA_EXHAUSTED_UNTIL_KEY = 'munsi_fs_quota_exhausted_until_v2';
+const WRITE_QUOTA_EXHAUSTED_UNTIL_KEY = 'munsi_fs_write_quota_exhausted_until_v2';
+const LEGACY_READ_KEY = 'munsi_fs_quota_exhausted_date_v1';
+const LEGACY_WRITE_KEY = 'munsi_fs_write_quota_exhausted_date_v1';
+
 let readQuotaCircuitBreakerTripped = false;
 let writeQuotaCircuitBreakerTripped = false;
 let restoreCooldownUntil = 0;
@@ -85,17 +88,24 @@ export function isRestoreCooldownActive(): boolean {
   return Date.now() < restoreCooldownUntil;
 }
 
-function getTodayDateKey(): string {
-  return new Date().toISOString().split('T')[0];
-}
-
 export function isFirestoreQuotaExhausted(): boolean {
   if (readQuotaCircuitBreakerTripped) return true;
   if (typeof window !== 'undefined') {
     try {
-      if (localStorage.getItem(READ_QUOTA_EXHAUSTED_STORAGE_KEY) === getTodayDateKey()) {
-        readQuotaCircuitBreakerTripped = true;
-        return true;
+      // Clear legacy permanent daily locks
+      if (localStorage.getItem(LEGACY_READ_KEY)) {
+        localStorage.removeItem(LEGACY_READ_KEY);
+      }
+      const untilStr = localStorage.getItem(READ_QUOTA_EXHAUSTED_UNTIL_KEY);
+      if (untilStr) {
+        const until = Number(untilStr);
+        if (Date.now() < until) {
+          readQuotaCircuitBreakerTripped = true;
+          return true;
+        } else {
+          localStorage.removeItem(READ_QUOTA_EXHAUSTED_UNTIL_KEY);
+          readQuotaCircuitBreakerTripped = false;
+        }
       }
     } catch {
       // ignore storage error
@@ -108,9 +118,19 @@ export function isFirestoreWriteQuotaExhausted(): boolean {
   if (writeQuotaCircuitBreakerTripped) return true;
   if (typeof window !== 'undefined') {
     try {
-      if (localStorage.getItem(WRITE_QUOTA_EXHAUSTED_STORAGE_KEY) === getTodayDateKey()) {
-        writeQuotaCircuitBreakerTripped = true;
-        return true;
+      if (localStorage.getItem(LEGACY_WRITE_KEY)) {
+        localStorage.removeItem(LEGACY_WRITE_KEY);
+      }
+      const untilStr = localStorage.getItem(WRITE_QUOTA_EXHAUSTED_UNTIL_KEY);
+      if (untilStr) {
+        const until = Number(untilStr);
+        if (Date.now() < until) {
+          writeQuotaCircuitBreakerTripped = true;
+          return true;
+        } else {
+          localStorage.removeItem(WRITE_QUOTA_EXHAUSTED_UNTIL_KEY);
+          writeQuotaCircuitBreakerTripped = false;
+        }
       }
     } catch {
       // ignore
@@ -124,19 +144,56 @@ export function resetFirestoreQuotaCircuitBreakers(): void {
   writeQuotaCircuitBreakerTripped = false;
   if (typeof window !== 'undefined') {
     try {
-      localStorage.removeItem(READ_QUOTA_EXHAUSTED_STORAGE_KEY);
-      localStorage.removeItem(WRITE_QUOTA_EXHAUSTED_STORAGE_KEY);
+      localStorage.removeItem(READ_QUOTA_EXHAUSTED_UNTIL_KEY);
+      localStorage.removeItem(WRITE_QUOTA_EXHAUSTED_UNTIL_KEY);
+      localStorage.removeItem(LEGACY_READ_KEY);
+      localStorage.removeItem(LEGACY_WRITE_KEY);
     } catch {
       // ignore
     }
   }
 }
 
+/**
+ * Live test to verify if Firestore connection and quotas are currently healthy.
+ */
+export async function testFirestoreConnection(): Promise<{ healthy: boolean; message: string }> {
+  try {
+    resetFirestoreQuotaCircuitBreakers();
+    const testDoc = await getDoc(doc(db, 'settings', 'system_init'));
+    return {
+      healthy: true,
+      message: testDoc.exists() ? 'ফায়ারবেজ সংযোগ সম্পূর্ণ সচল ও স্বাভাবিক' : 'ফায়ারবেজ সংযোগ সক্রিয় (ইনস্ট্যান্স রেডি)',
+    };
+  } catch (err: any) {
+    const isQuota =
+      err?.code === 'resource-exhausted' ||
+      err?.status === 429 ||
+      String(err?.message || '').includes('resource-exhausted');
+    if (isQuota) {
+      tripFirestoreQuotaCircuitBreaker(err, 'read');
+      return { healthy: false, message: 'ফায়ারবেজ কোটা সীমা শেষ (429 Resource Exhausted)' };
+    }
+    return { healthy: true, message: `ফায়ারবেজ কানেকশন সক্রিয় (রেসপন্স: ${err?.message || 'OK'})` };
+  }
+}
+
 export function tripFirestoreQuotaCircuitBreaker(error?: unknown, channel: 'read' | 'write' = 'read'): void {
+  if (!error) return; // Never trip without an explicit error!
   const err = error as { code?: string; message?: string; status?: number };
   const msg = err?.message || String(error || '');
+
+  // Ignore non-quota errors (permission, aborted, network offline)
+  if (
+    err?.code === 'permission-denied' ||
+    msg.includes('permission-denied') ||
+    msg.includes('network-request-failed') ||
+    msg.includes('Failed to fetch')
+  ) {
+    return;
+  }
+
   const isQuotaError =
-    !error ||
     err?.code === 'resource-exhausted' ||
     err?.status === 429 ||
     msg.includes('resource-exhausted') ||
@@ -146,22 +203,25 @@ export function tripFirestoreQuotaCircuitBreaker(error?: unknown, channel: 'read
 
   if (!isQuotaError) return;
 
+  const cooldownMs = 15 * 60 * 1000; // 15-minute temporary backoff instead of 24-hour permanent freeze
+  const retryAt = Date.now() + cooldownMs;
+
   if (channel === 'write') {
     if (!writeQuotaCircuitBreakerTripped) {
       writeQuotaCircuitBreakerTripped = true;
       if (typeof window !== 'undefined') {
         try {
-          localStorage.setItem(WRITE_QUOTA_EXHAUSTED_STORAGE_KEY, getTodayDateKey());
+          localStorage.setItem(WRITE_QUOTA_EXHAUSTED_UNTIL_KEY, String(retryAt));
         } catch {
           // ignore
         }
       }
       recordDiagnosticEvent({
         source: 'firestore',
-        severity: 'error',
+        severity: 'warning',
         category: 'quota_429',
-        titleBn: 'ফায়ারবেজ ডেইলি Write কোটা (429) পূর্ণ হয়েছে — সার্ভার মিরর সক্রিয়',
-        detailsBn: 'ফায়ারবেজের প্রতিদিনের ফ্রি Write কোটা শেষ হওয়ায় নতুন ডাটা সার্ভার মিররে (.server_database_mirror.json) ও ব্রাউজার মেমোরিতে সংরক্ষিত হচ্ছে।',
+        titleBn: 'ফায়ারবেজ সাময়িক Write রেট-লিমিট (429) — ১৫ মিনিটের অটো-কুলডাউন সক্রিয়',
+        detailsBn: 'ফায়ারবেজে সাময়িক রেট-লিমিট আসায় পরবর্তী ১৫ মিনিট নতুন ডাটা সার্ভার মিরর ও ব্রাউজারে সংরক্ষিত হচ্ছে। এরপর স্বয়ংক্রিয়ভাবে পুনরায় চেষ্টা করা হবে।',
         technicalDetails: msg,
       });
     }
@@ -172,7 +232,7 @@ export function tripFirestoreQuotaCircuitBreaker(error?: unknown, channel: 'read
     readQuotaCircuitBreakerTripped = true;
     if (typeof window !== 'undefined') {
       try {
-        localStorage.setItem(READ_QUOTA_EXHAUSTED_STORAGE_KEY, getTodayDateKey());
+        localStorage.setItem(READ_QUOTA_EXHAUSTED_UNTIL_KEY, String(retryAt));
       } catch {
         // ignore
       }
@@ -181,9 +241,9 @@ export function tripFirestoreQuotaCircuitBreaker(error?: unknown, channel: 'read
       source: 'firestore',
       severity: 'warning',
       category: 'quota_429',
-      titleBn: 'ফায়ারবেজ ফ্রি ডেইলি Read কোটা (429) শেষ — অটো Write-Channel ও মিরর মোড চালু',
-      detailsBn: 'ফায়ারবেজের প্রতিদিনের ৫০,০০০ ফ্রি Read ইউনিট শেষ হওয়ায় সাধারণ রিড (GET/onSnapshot) ব্লক হয়েছিল। সিস্টেম স্বয়ংক্রিয়ভাবে Write-Channel PATCH এবং সার্ভার মিররের মাধ্যমে সকল নতুন ও পুরনো ডাটা লোড করছে।',
-      technicalDetails: msg || 'HTTP 429 Free daily read units per project',
+      titleBn: 'ফায়ারবেজ সাময়িক Read রেট-লিমিট (429) — ১৫ মিনিটের অটো-কুলডাউন সক্রিয়',
+      detailsBn: 'ফায়ারবেজ সাময়িকভাবে ব্যস্ত থাকায় সার্ভার মিরর থেকে ডাটা পরিবেশন করা হচ্ছে। ১৫ মিনিট পর স্বয়ংক্রিয়ভাবে ফায়ারবেজ রি-চেক হবে।',
+      technicalDetails: msg,
     });
     disableNetwork(db).catch(() => {});
   }

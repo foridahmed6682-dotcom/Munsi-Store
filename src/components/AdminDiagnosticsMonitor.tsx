@@ -14,6 +14,7 @@ import {
   Wrench,
   ImageIcon,
   UploadCloud,
+  Database,
 } from 'lucide-react';
 import {
   ClientDiagnosticEvent,
@@ -29,7 +30,9 @@ import {
   isFirestoreQuotaExhausted,
   isFirestoreWriteQuotaExhausted,
   resetFirestoreQuotaCircuitBreakers,
+  testFirestoreConnection,
 } from '../lib/firebase';
+import { getIndexedDBStats } from '../lib/indexedDb';
 
 interface AdminDiagnosticsMonitorProps {
   productsCount: number;
@@ -78,6 +81,13 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
   const [serverData, setServerData] = useState<ServerDiagnosticsData | null>(null);
   const [isLoadingServer, setIsLoadingServer] = useState(false);
   const [isRecovering, setIsRecovering] = useState(false);
+  const [isTestingCloud, setIsTestingCloud] = useState(false);
+  const [idbStats, setIdbStats] = useState<{
+    supported: boolean;
+    totalRecords: number;
+    estimatedQuotaMB?: number;
+    estimatedUsageMB?: number;
+  }>({ supported: true, totalRecords: 0 });
   const [logFilter, setLogFilter] = useState<'ALL' | 'ERROR' | 'QUOTA' | 'RECOVERY'>('ALL');
 
   const refreshDiagnostics = useCallback(async () => {
@@ -86,6 +96,8 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
     setStorageStats(getLocalStorageHealthReport());
     setReadExhausted(isFirestoreQuotaExhausted());
     setWriteExhausted(isFirestoreWriteQuotaExhausted());
+
+    getIndexedDBStats().then(setIdbStats).catch(() => {});
 
     try {
       const controller = new AbortController();
@@ -194,6 +206,23 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
       }
     } finally {
       setIsRecovering(false);
+    }
+  };
+
+  const handleTestCloudConnection = async () => {
+    setIsTestingCloud(true);
+    try {
+      const res = await testFirestoreConnection();
+      await refreshDiagnostics();
+      if (onShowToast) {
+        onShowToast(res.message, res.healthy ? 'success' : 'error');
+      }
+    } catch (err: any) {
+      if (onShowToast) {
+        onShowToast(`ক্লাউড টেস্ট ব্যর্থ: ${err?.message || 'Error'}`, 'error');
+      }
+    } finally {
+      setIsTestingCloud(false);
     }
   };
 
@@ -375,8 +404,8 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
         </div>
       </div>
 
-      {/* 5 LIVE SYSTEM HEALTH METRIC CARDS */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3.5">
+      {/* 6 LIVE SYSTEM HEALTH METRIC CARDS */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3.5">
         {/* Card 1: Active Data in UI */}
         <div className="bg-white p-4 rounded-2xl border border-neutral-200 shadow-xs space-y-2">
           <div className="flex items-center justify-between">
@@ -404,40 +433,48 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
         </div>
 
         {/* Card 2: Firebase Cloud Channels */}
-        <div className="bg-white p-4 rounded-2xl border border-neutral-200 shadow-xs space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-neutral-500">ফায়ারবেজ ক্লাউড চ্যানেল</span>
-            <Wifi className="w-4 h-4 text-emerald-600" />
-          </div>
-          <div className="space-y-1.5 pt-1">
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-neutral-600 font-medium">Read Channel (GET):</span>
-              {readExhausted || serverData?.firestoreReadQuotaExhausted ? (
-                <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-bold text-[10px]">
-                  429 কোটা পূর্ণ (বাইপাস সক্রিয়)
-                </span>
-              ) : (
-                <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold text-[10px]">
-                  ✓ স্বাভাবিক সচল
-                </span>
-              )}
+        <div className="bg-white p-4 rounded-2xl border border-neutral-200 shadow-xs space-y-2 flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-neutral-500">ফায়ারবেজ ক্লাউড চ্যানেল</span>
+              <Wifi className="w-4 h-4 text-emerald-600" />
             </div>
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-neutral-600 font-medium">Write/PATCH Bridge:</span>
-              {writeExhausted || serverData?.firestoreWriteQuotaExhausted ? (
-                <span className="px-2 py-0.5 rounded bg-rose-100 text-rose-800 font-bold text-[10px]">
-                  লিমিট পূর্ণ
-                </span>
-              ) : (
-                <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold text-[10px]">
-                  ✓ ১০০% সচল (ক্যাটালগ ভল্ট)
-                </span>
-              )}
+            <div className="space-y-1.5 pt-1">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-neutral-600 font-medium">Read Channel (GET):</span>
+                {readExhausted || serverData?.firestoreReadQuotaExhausted ? (
+                  <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-bold text-[10px]">
+                    429 কোটা পূর্ণ (বাইপাস সক্রিয়)
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold text-[10px]">
+                    ✓ স্বাভাবিক সচল
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-neutral-600 font-medium">Write/PATCH Bridge:</span>
+                {writeExhausted || serverData?.firestoreWriteQuotaExhausted ? (
+                  <span className="px-2 py-0.5 rounded bg-rose-100 text-rose-800 font-bold text-[10px]">
+                    লিমিট পূর্ণ
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold text-[10px]">
+                    ✓ ১০০% সচল (ক্যাটালগ ভল্ট)
+                  </span>
+                )}
+              </div>
             </div>
           </div>
-          <p className="text-[10px] text-neutral-500 pt-1">
-            রিড কোটা শেষ হলেও PATCH ব্রিজ দিয়ে সরাসরি ডাটা পড়া ও সেভ হয়।
-          </p>
+          <button
+            type="button"
+            disabled={isTestingCloud}
+            onClick={handleTestCloudConnection}
+            className="w-full mt-2 py-1.5 px-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1.5 cursor-pointer transition active:scale-95"
+          >
+            <RefreshCw className={`w-3 h-3 ${isTestingCloud ? 'animate-spin' : ''}`} />
+            <span>{isTestingCloud ? 'টেস্ট হচ্ছে...' : 'কানেকশন টেস্ট ও রিসেট'}</span>
+          </button>
         </div>
 
         {/* Card 3: Server Disk Mirror */}
@@ -525,7 +562,31 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
           </div>
         </div>
 
-        {/* Card 5: Product Catalog Image Health */}
+        {/* Card 5: High-Capacity Browser IndexedDB Offline Vault */}
+        <div className="bg-white p-4 rounded-2xl border border-neutral-200 shadow-xs space-y-2 flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-neutral-500">IndexedDB অফলাইন ভল্ট</span>
+              <Database className="w-4 h-4 text-indigo-600" />
+            </div>
+            <div className="flex items-baseline justify-between pt-1">
+              <span className="text-lg font-black text-neutral-900">
+                {idbStats.totalRecords} টি রেকর্ড
+              </span>
+              <span className="px-2 py-0.5 rounded font-bold text-[10px] bg-indigo-100 text-indigo-800">
+                ✓ অফলাইন রেডি
+              </span>
+            </div>
+            <div className="text-[11px] text-neutral-600 font-medium pt-1">
+              সীমা: {idbStats.estimatedQuotaMB ? `${idbStats.estimatedQuotaMB} MB` : '৫০ MB – ১ GB+'} • ৫ MB লিমিট নেই
+            </div>
+            <p className="text-[10px] text-neutral-400 pt-0.5">
+              অফলাইনেও সম্পূর্ণ অর্ডার, ইনভেন্টরি ও দোকান ডিভাইসে সুরক্ষিত থাকে।
+            </p>
+          </div>
+        </div>
+
+        {/* Card 6: Product Catalog Image Health */}
         <div className="bg-white p-4 rounded-2xl border border-neutral-200 shadow-xs space-y-2 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between">

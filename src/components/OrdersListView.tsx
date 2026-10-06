@@ -1002,20 +1002,6 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                       <Printer className="w-3.5 h-3.5" />
                       <span>প্রিন্ট</span>
                     </button>
-
-                    {/* Admin Delete Button */}
-                    {isAdmin && onDeleteOrder && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onDeleteOrder(order.id);
-                        }}
-                        className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-xl text-xs font-bold flex items-center justify-center cursor-pointer"
-                        title="মেমো ডিলিট করুন (এডমিন)"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
                   </div>
                 </div>
               </div>
