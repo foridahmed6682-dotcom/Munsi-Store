@@ -183,7 +183,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     setNewBanglaName('');
     setNewSku('');
     setNewCategory(categories[0] || 'তেল ও ঘি');
-    setNewSupplier(suppliers[0] || 'স্কয়ার কনজিউমার');
+    setNewSupplier(suppliers[0] || '');
     setShowQuickAddSupplier(false);
     setQuickSupplierName('');
     setNewUnit('কার্টুন');
@@ -202,7 +202,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     setNewBanglaName(prod.banglaName || '');
     setNewSku(prod.sku || '');
     setNewCategory(prod.category || (categories[0] || 'তেল ও ঘি'));
-    setNewSupplier(prod.supplier || (suppliers[0] || 'স্কয়ার কনজিউমার'));
+    setNewSupplier(prod.supplier || (suppliers[0] || ''));
     setShowQuickAddSupplier(false);
     setQuickSupplierName('');
     setNewUnit(prod.unit || 'কার্টুন');

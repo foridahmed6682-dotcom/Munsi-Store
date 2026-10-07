@@ -12,10 +12,12 @@ import {
   Trash2,
   Plus,
   Save,
-  Send
+  Send,
+  Scissors
 } from 'lucide-react';
 import { Order, OrderItem, Product } from '../types';
 import { getBusinessInfo } from '../lib/firebase';
+import { printOrdersBatch } from '../lib/printService';
 
 interface MemoModalProps {
   order: Order | null;
@@ -26,6 +28,7 @@ interface MemoModalProps {
   isAdmin?: boolean;
   products?: Product[];
   initialEditMode?: boolean;
+  allOrders?: Order[];
 }
 
 export const MemoModal: React.FC<MemoModalProps> = ({
@@ -37,9 +40,13 @@ export const MemoModal: React.FC<MemoModalProps> = ({
   isAdmin = false,
   products = [],
   initialEditMode = false,
+  allOrders = [],
 }) => {
   const [copied, setCopied] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [isPairModalOpen, setIsPairModalOpen] = useState(false);
+  const [pairTargetOrderId, setPairTargetOrderId] = useState('');
+  const [pairMode, setPairMode] = useState<'another' | 'same'>('another');
 
   // Editable state
   const [editShopName, setEditShopName] = useState('');
@@ -65,7 +72,19 @@ export const MemoModal: React.FC<MemoModalProps> = ({
   const biz = getBusinessInfo();
 
   const handlePrint = () => {
-    window.print();
+    printOrdersBatch([order], 'slips', '(সিঙ্গেল মেমো)');
+  };
+
+  const handleOpenPairModal = () => {
+    const others = allOrders.filter((o) => o.id !== order.id);
+    if (others.length > 0) {
+      setPairTargetOrderId(others[0].id);
+      setPairMode('another');
+    } else {
+      setPairTargetOrderId(order.id);
+      setPairMode('same');
+    }
+    setIsPairModalOpen(true);
   };
 
   const normalizePhoneForWhatsApp = (rawPhone: string) => {
@@ -260,10 +279,18 @@ export const MemoModal: React.FC<MemoModalProps> = ({
             <button
               onClick={handlePrint}
               className="p-1.5 px-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs flex items-center gap-1 font-bold shadow-xs shrink-0 cursor-pointer"
-              title="সরাসরি প্রিন্ট বা পিডিএফ সেভ করুন"
+              title="সরাসরি পুরো পেইজে প্রিন্ট বা পিডিএফ সেভ করুন"
             >
               <Printer className="w-3.5 h-3.5" />
               <span>প্রিন্ট / PDF</span>
+            </button>
+            <button
+              onClick={handleOpenPairModal}
+              className="p-1.5 px-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs flex items-center gap-1 font-bold shadow-xs shrink-0 cursor-pointer"
+              title="১টি A4 পেপারে ২টি মেমো (আলাদা আলাদা দোকান কপি) প্রিন্ট করুন"
+            >
+              <Scissors className="w-3.5 h-3.5" />
+              <span>২-ইন-১ A4</span>
             </button>
             {isAdmin && onDeleteOrder && (
               <button
@@ -627,6 +654,124 @@ export const MemoModal: React.FC<MemoModalProps> = ({
           </div>
         </div>
       </div>
+
+      {/* 2-in-1 Memos on single A4 Pairing Dialog */}
+      {isPairModalOpen && (
+        <div className="fixed inset-0 z-60 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl border border-neutral-200 overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95">
+            <div className="bg-gradient-to-r from-blue-900 to-indigo-950 text-white p-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Scissors className="w-5 h-5 text-amber-300" />
+                <h4 className="font-black text-sm text-white">২টি মেমো ১টি A4 পেপারে প্রিন্ট</h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsPairModalOpen(false)}
+                className="p-1 rounded-lg hover:bg-white/10 text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3.5 text-xs">
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
+                <span className="font-black text-blue-900 block text-xs">
+                  ১ম মেমো (শীর্ষার্ধ): 🏪 {order.shopName}
+                </span>
+                <span className="text-blue-700 font-mono text-[11px]">
+                  #{order.memoNumber} • বিল: ৳{order.netTotal.toLocaleString()}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2 text-neutral-400 font-bold text-[10px]">
+                <div className="flex-1 border-t border-dashed border-neutral-300"></div>
+                <span>✂️ কাটার দাগ (২টি আলাদা দোকান কপি)</span>
+                <div className="flex-1 border-t border-dashed border-neutral-300"></div>
+              </div>
+
+              <div className="space-y-2">
+                <span className="font-black text-neutral-800 block">২য় মেমো (নিম্নার্ধ):</span>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPairMode('another')}
+                    className={`p-2 rounded-xl border text-left cursor-pointer transition-all ${
+                      pairMode === 'another'
+                        ? 'border-indigo-600 bg-indigo-50 font-black text-indigo-950'
+                        : 'border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-100'
+                    }`}
+                  >
+                    <div>🏪 অন্য দোকানের মেমো</div>
+                    <div className="text-[10px] opacity-75">আলাদা দোকান কপি</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPairMode('same');
+                      setPairTargetOrderId(order.id);
+                    }}
+                    className={`p-2 rounded-xl border text-left cursor-pointer transition-all ${
+                      pairMode === 'same'
+                        ? 'border-indigo-600 bg-indigo-50 font-black text-indigo-950'
+                        : 'border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-100'
+                    }`}
+                  >
+                    <div>📑 এই মেমোর ২ কপি</div>
+                    <div className="text-[10px] opacity-75">দোকান কপি ডুপ্লিকেট</div>
+                  </button>
+                </div>
+
+                {pairMode === 'another' && (
+                  <div className="pt-1 space-y-1">
+                    <label className="text-[11px] font-bold text-neutral-600">অন্য দোকান বাছাই করুন:</label>
+                    <select
+                      value={pairTargetOrderId}
+                      onChange={(e) => setPairTargetOrderId(e.target.value)}
+                      className="w-full p-2 bg-white border border-neutral-300 rounded-xl font-bold text-xs text-neutral-900"
+                    >
+                      {allOrders
+                        .filter((o) => o.id !== order.id)
+                        .map((o) => (
+                          <option key={o.id} value={o.id}>
+                            {o.shopName} (#{o.memoNumber}) — ৳{o.netTotal.toLocaleString()}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-neutral-50 border-t border-neutral-200 p-3 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsPairModalOpen(false)}
+                className="px-3 py-1.5 bg-neutral-200 hover:bg-neutral-300 text-neutral-800 rounded-xl font-bold text-xs"
+              >
+                বাতিল
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const targetSecond = pairMode === 'same'
+                    ? order
+                    : (allOrders.find((o) => o.id === pairTargetOrderId) || order);
+                  printOrdersBatch(
+                    [order, targetSecond],
+                    'slips_2in1',
+                    pairMode === 'same' ? '(২টি দোকান কপি - ডুপ্লিকেট)' : '(২টি আলাদা দোকান কপি)'
+                  );
+                  setIsPairModalOpen(false);
+                }}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-md flex items-center gap-1.5 cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>১টি A4 পেপারে ২টি মেমো প্রিন্ট</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

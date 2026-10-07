@@ -748,15 +748,17 @@ export function deleteCategory(categoryId: string) {
 }
 
 // Suppliers Management
-export const DEFAULT_SUPPLIERS: Supplier[] = [
-  { id: 'sup-square', name: 'Square Consumer Products', banglaName: 'স্কয়ার কনজিউমার' },
-  { id: 'sup-pran', name: 'PRAN-RFL Group', banglaName: 'প্রাণ গ্রুপ' },
-  { id: 'sup-unilever', name: 'Unilever Bangladesh', banglaName: 'ইউনিলিভার' },
-  { id: 'sup-fresh', name: 'Meghna Group (Fresh)', banglaName: 'ফ্রেশ / মেঘনা গ্রুপ' },
-  { id: 'sup-akij', name: 'Akij Food & Beverage', banglaName: 'আকিজ গ্রুপ' },
-  { id: 'sup-bashundhara', name: 'Bashundhara Group', banglaName: 'বসুন্ধরা গ্রুপ' },
-  { id: 'sup-city', name: 'City Group (Teer)', banglaName: 'তীর / সিটি গ্রুপ' },
-];
+export const DEFAULT_SUPPLIERS: Supplier[] = [];
+
+const DEMO_SUPPLIER_IDS = new Set([
+  'sup-square',
+  'sup-pran',
+  'sup-unilever',
+  'sup-fresh',
+  'sup-akij',
+  'sup-bashundhara',
+  'sup-city',
+]);
 
 export function getSuppliers(): Supplier[] {
   try {
@@ -764,17 +766,19 @@ export function getSuppliers(): Supplier[] {
     const deletedIds = getDeletedSupplierIds();
 
     if (raw === null) {
-      localStorage.setItem(STORAGE_KEYS.SUPPLIERS, JSON.stringify(DEFAULT_SUPPLIERS));
-      return DEFAULT_SUPPLIERS;
+      localStorage.setItem(STORAGE_KEYS.SUPPLIERS, JSON.stringify([]));
+      return [];
     }
     const parsed: Supplier[] = JSON.parse(raw);
-    const clean = parsed.filter((s) => !deletedIds.has(s.id));
-    if (clean.length === 0) {
-      return DEFAULT_SUPPLIERS;
+    const clean = parsed.filter(
+      (s) => !deletedIds.has(s.id) && !DEMO_SUPPLIER_IDS.has(s.id)
+    );
+    if (clean.length !== parsed.length) {
+      safeSetLocalStorage(STORAGE_KEYS.SUPPLIERS, JSON.stringify(clean));
     }
     return clean;
   } catch {
-    return DEFAULT_SUPPLIERS;
+    return [];
   }
 }
 

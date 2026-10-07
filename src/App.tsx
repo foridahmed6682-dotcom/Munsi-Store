@@ -2431,6 +2431,8 @@ export default function App() {
               <OrdersListView
                 orders={orders}
                 shops={shops}
+                products={products}
+                suppliers={suppliers}
                 dueCollections={dueCollections}
                 dailyExpenses={dailyExpenses}
                 onAddDailyExpense={handleAddDailyExpense}
@@ -2521,6 +2523,8 @@ export default function App() {
                 shops={shops}
                 orders={orders}
                 categories={categories}
+                suppliers={suppliers}
+                onAddSupplier={handleAddSupplier}
                 authorizedEmails={authorizedEmails}
                 routes={routes}
                 currentUser={userProfile}
@@ -2608,6 +2612,7 @@ export default function App() {
         isAdmin={activeSimulatedRole === 'admin'}
         products={products}
         initialEditMode={isMemoEditMode}
+        allOrders={orders}
       />
     </div>
   );

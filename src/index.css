@@ -74,4 +74,13 @@
     page-break-after: always;
     break-after: page;
   }
+  .a4-sheet-two-memos {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  @page {
+    size: A4 portrait;
+    margin: 6mm;
+  }
 }
+

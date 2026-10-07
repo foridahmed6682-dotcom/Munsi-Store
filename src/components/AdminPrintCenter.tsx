@@ -519,6 +519,8 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
     onSecondaryPrint?: () => void;
     tertiaryBtnText?: string;
     onTertiaryPrint?: () => void;
+    twoInOneBtnText?: string;
+    onTwoInOnePrint?: () => void;
   }> = [
     {
       key: 'orders',
@@ -533,6 +535,13 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
           `${activeFilterSummaryLabel || '(সকল মেমো স্লিপ)'}`
         ),
       bulkBtnText: `১-ক্লিকে মেমো স্লিপ প্রিন্ট (${filteredOrders.length})`,
+      twoInOneBtnText: `📑 ২ মেমো প্রতি A4 প্রিন্ট (${filteredOrders.length}টি)`,
+      onTwoInOnePrint: () =>
+        printOrdersBatch(
+          filteredOrders,
+          'slips_2in1',
+          `${activeFilterSummaryLabel || '(২টি আলাদা দোকান কপি - A4)'}`
+        ),
       secondaryBtnText: `📊 অর্ডার সামারি টেবিল প্রিন্ট (${filteredOrders.length})`,
       onSecondaryPrint: () =>
         printOrdersBatch(
@@ -663,6 +672,23 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
             >
               <Printer className="w-4 h-4" />
               <span>সব মেমো স্লিপ প্রিন্ট ({filteredOrders.length}টি)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                printOrdersBatch(
+                  filteredOrders,
+                  'slips_2in1',
+                  activeFilterSummaryLabel || '(২টি আলাদা দোকান কপি - A4)'
+                )
+              }
+              disabled={filteredOrders.length === 0}
+              className="px-4 py-2.5 rounded-2xl bg-indigo-300 hover:bg-indigo-200 disabled:opacity-40 text-neutral-950 font-black text-xs flex items-center gap-1.5 shadow-lg cursor-pointer transition-all active:scale-95"
+              title="১টি A4 পেপারে ২টি আলাদা মেমো (দোকান কপি) প্রিন্ট হবে"
+            >
+              <Printer className="w-4 h-4" />
+              <span>📑 ২ মেমো প্রতি A4 প্রিন্ট ({filteredOrders.length}টি)</span>
             </button>
 
             <button
@@ -920,6 +946,18 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
                   </button>
                 )}
 
+                {card.twoInOneBtnText && card.onTwoInOnePrint && (
+                  <button
+                    type="button"
+                    onClick={card.onTwoInOnePrint}
+                    disabled={card.count === 0}
+                    className="w-full py-1.5 px-3 rounded-xl bg-indigo-50 hover:bg-indigo-100 disabled:opacity-40 text-indigo-950 border border-indigo-300 font-black text-[11px] flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                  >
+                    <Printer className="w-3.5 h-3.5 shrink-0 text-indigo-700" />
+                    <span>{card.twoInOneBtnText}</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={() => switchCategory(card.key)}
@@ -992,7 +1030,7 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
                 </span>
               )}
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
               <button
                 type="button"
                 onClick={() => setOrderPrintMode('slips')}
@@ -1002,7 +1040,18 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
                     : 'bg-white text-blue-900 border border-blue-200 hover:bg-blue-100'
                 }`}
               >
-                📄 আলাদা আলাদা মেমো স্লিপ (প্রতি পাতায় মেমো)
+                📄 আলাদা আলাদা মেমো স্লিপ (১টি পেজ)
+              </button>
+              <button
+                type="button"
+                onClick={() => setOrderPrintMode('slips_2in1')}
+                className={`px-3.5 py-2.5 rounded-xl text-xs font-black cursor-pointer transition-all text-center ${
+                  orderPrintMode === 'slips_2in1'
+                    ? 'bg-indigo-700 text-white shadow-sm'
+                    : 'bg-white text-indigo-900 border border-indigo-200 hover:bg-indigo-50'
+                }`}
+              >
+                📑 ২ মেমো প্রতি A4 (২ দোকানে ১ পাতা)
               </button>
               <button
                 type="button"
@@ -1024,7 +1073,7 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
                     : 'bg-white text-teal-900 border border-teal-300 hover:bg-teal-50'
                 }`}
               >
-                📦 পণ্যের সামারি / লোডিং শীট (কোন পণ্য কতটি)
+                📦 পণ্যের সামারি / লোডিং শীট
               </button>
             </div>
           </div>

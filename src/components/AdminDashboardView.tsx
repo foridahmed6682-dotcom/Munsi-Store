@@ -51,7 +51,8 @@ import {
   CheckSquare,
   Square,
   RotateCcw,
-  Calendar
+  Calendar,
+  Building2
 } from 'lucide-react';
 import {
   Product,
@@ -60,6 +61,7 @@ import {
   UserProfile,
   UserRole,
   Category,
+  Supplier,
   AuthorizedUserEmail,
   AppUser,
   Route,
@@ -70,7 +72,7 @@ import {
 } from '../types';
 import { processImageFile } from '../lib/imageUtils';
 import { fetchAllUsers, updateUserRoleAndRoute, getBusinessInfo, saveBusinessInfoToCloud, subscribeToCloudBusinessInfo } from '../lib/firebase';
-import { saveBusinessInfoLocal, DEFAULT_BUSINESS_INFO, parseBanglaNumber } from '../lib/storage';
+import { saveBusinessInfoLocal, DEFAULT_BUSINESS_INFO, parseBanglaNumber, addOrUpdateSupplier } from '../lib/storage';
 import { AddShopModal } from './AddShopModal';
 import { ProductImageLightboxModal } from './ProductImageLightboxModal';
 import {
@@ -104,6 +106,8 @@ interface AdminDashboardViewProps {
   shops: Shop[];
   orders: Order[];
   categories: Category[];
+  suppliers?: Supplier[];
+  onAddSupplier?: (supplier: Supplier) => void;
   authorizedEmails: AuthorizedUserEmail[];
   routes: Route[];
   dueCollections?: DueCollectionRecord[];
@@ -193,6 +197,8 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   shops,
   orders,
   categories,
+  suppliers = [],
+  onAddSupplier,
   authorizedEmails,
   routes,
   dueCollections = [],
@@ -510,6 +516,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [prodBanglaName, setProdBanglaName] = useState('');
   const [prodSku, setProdSku] = useState('');
   const [prodCategory, setProdCategory] = useState(categories[0]?.banglaName || 'তেল ও ঘি');
+  const [prodSupplier, setProdSupplier] = useState('');
+  const [showQuickAddSupplier, setShowQuickAddSupplier] = useState(false);
+  const [quickSupplierName, setQuickSupplierName] = useState('');
   const [prodUnit, setProdUnit] = useState('কার্টুন');
   const [prodUnitPrice, setProdUnitPrice] = useState('');
   const [prodDiscountPrice, setProdDiscountPrice] = useState('');
@@ -585,6 +594,45 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   // Product Filter State
   const [productSearch, setProductSearch] = useState('');
   const [productCategoryFilter, setProductCategoryFilter] = useState('all');
+  const [productSupplierFilter, setProductSupplierFilter] = useState('all');
+
+  // Available Suppliers without hardcoded demo names
+  const availableSuppliers = useMemo(() => {
+    const set = new Set<string>();
+    if (suppliers && suppliers.length > 0) {
+      suppliers.forEach((s) => {
+        const name = (s.banglaName || s.name || '').trim();
+        if (name) set.add(name);
+      });
+    }
+    products.forEach((p) => {
+      if (p.supplier && p.supplier.trim()) set.add(p.supplier.trim());
+    });
+    return Array.from(set);
+  }, [suppliers, products]);
+
+  const handleSaveQuickSupplier = () => {
+    const trimmed = quickSupplierName.trim();
+    if (!trimmed) {
+      showToast('সাপ্লায়ার বা কোম্পানির নাম লিখুন', 'error');
+      return;
+    }
+    const newSup: Supplier = {
+      id: `sup-${Date.now()}`,
+      name: trimmed,
+      banglaName: trimmed,
+      createdAt: new Date().toISOString(),
+    };
+    if (onAddSupplier) {
+      onAddSupplier(newSup);
+    } else {
+      addOrUpdateSupplier(newSup);
+    }
+    setProdSupplier(trimmed);
+    setQuickSupplierName('');
+    setShowQuickAddSupplier(false);
+    showToast(`নতুন সাপ্লায়ার '${trimmed}' যুক্ত করা হয়েছে`, 'success');
+  };
 
   // Business Info Settings State
   const [bizInfo, setBizInfo] = useState<BusinessInfo>(getBusinessInfo());
@@ -857,9 +905,12 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       const matchCat =
         productCategoryFilter === 'all' ||
         p.category === productCategoryFilter;
-      return matchSearch && matchCat;
+      const matchSupplier =
+        productSupplierFilter === 'all' ||
+        (p.supplier || 'অন্যান্য / অনির্দিষ্ট') === productSupplierFilter;
+      return matchSearch && matchCat && matchSupplier;
     });
-  }, [products, productSearch, productCategoryFilter]);
+  }, [products, productSearch, productCategoryFilter, productSupplierFilter]);
 
   // Category Submit
   const handleCategorySubmit = (e: React.FormEvent) => {
@@ -957,6 +1008,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         banglaName: cleanBangla,
         sku: prodSku.trim() || editingProduct.sku,
         category: resolvedCategory,
+        supplier: prodSupplier.trim() || undefined,
         unit: prodUnit || 'পিস',
         unitPrice: unitPriceNum,
         discountPrice: !isNaN(discountPriceNum) && discountPriceNum > 0 ? discountPriceNum : undefined,
@@ -977,6 +1029,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         banglaName: cleanBangla,
         sku: prodSku.trim() || `SKU-${Date.now().toString().slice(-5)}`,
         category: resolvedCategory,
+        supplier: prodSupplier.trim() || undefined,
         unit: prodUnit || 'পিস',
         unitPrice: unitPriceNum,
         discountPrice: !isNaN(discountPriceNum) && discountPriceNum > 0 ? discountPriceNum : undefined,
@@ -993,6 +1046,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       onAddProduct(newProduct);
       setProductSearch('');
       setProductCategoryFilter('all');
+      setProductSupplierFilter('all');
       showToast(`নতুন পণ্য '${cleanBangla}' সফলভাবে আপলোড করা হয়েছে!`, 'success');
     }
 
@@ -1001,6 +1055,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     setProdName('');
     setProdBanglaName('');
     setProdSku('');
+    setProdSupplier('');
+    setQuickSupplierName('');
+    setShowQuickAddSupplier(false);
     setProdUnitPrice('');
     setProdDiscountPrice('');
     setProdCostPrice('');
@@ -1017,6 +1074,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     setProdBanglaName('');
     setProdSku('');
     setProdCategory(categories[0]?.banglaName || 'তেল ও ঘি');
+    setProdSupplier(availableSuppliers[0] || '');
+    setShowQuickAddSupplier(false);
+    setQuickSupplierName('');
     setProdUnit('কার্টুন');
     setProdUnitPrice('');
     setProdDiscountPrice('');
@@ -1036,6 +1096,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     setProdBanglaName(prod.banglaName || '');
     setProdSku(prod.sku || '');
     setProdCategory(prod.category || (categories[0]?.banglaName || 'তেল ও ঘি'));
+    setProdSupplier(prod.supplier || (availableSuppliers[0] || ''));
+    setShowQuickAddSupplier(false);
+    setQuickSupplierName('');
     setProdUnit(prod.unit || 'কার্টুন');
     setProdUnitPrice(prod.unitPrice !== undefined && prod.unitPrice !== null ? prod.unitPrice.toString() : '');
     setProdDiscountPrice(prod.discountPrice !== undefined && prod.discountPrice !== null ? prod.discountPrice.toString() : '');
@@ -2373,6 +2436,23 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 {categories.map((c) => (
                   <option key={c.id} value={c.banglaName}>
                     {c.banglaName}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={productSupplierFilter}
+                onChange={(e) => setProductSupplierFilter(e.target.value)}
+                className={`px-3 py-1.5 rounded-xl text-xs border font-medium ${
+                  productSupplierFilter !== 'all'
+                    ? 'border-indigo-300 bg-indigo-50 text-indigo-900 font-bold'
+                    : 'border-neutral-300 bg-neutral-50 text-neutral-800'
+                }`}
+              >
+                <option value="all">সব সাপ্লায়ার ({availableSuppliers.length})</option>
+                {availableSuppliers.map((s) => (
+                  <option key={s} value={s}>
+                    🏢 {s}
                   </option>
                 ))}
               </select>
@@ -5317,7 +5397,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
                   <div>
                     <label className="block text-xs font-bold text-neutral-700 mb-1">
                       ক্যাটাগরি <span className="text-rose-500">*</span>
@@ -5339,6 +5419,79 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   </div>
 
                   <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-bold text-neutral-700">
+                        সাপ্লায়ার / কোম্পানি (Supplier)
+                      </label>
+                      {!showQuickAddSupplier && (
+                        <button
+                          type="button"
+                          onClick={() => setShowQuickAddSupplier(true)}
+                          className="text-[11px] text-indigo-600 hover:text-indigo-800 font-bold cursor-pointer"
+                        >
+                          + নতুন সাপ্লায়ার
+                        </button>
+                      )}
+                    </div>
+
+                    {showQuickAddSupplier ? (
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="text"
+                          value={quickSupplierName}
+                          onChange={(e) => setQuickSupplierName(e.target.value)}
+                          placeholder="কোম্পানির নাম লিখুন..."
+                          className="flex-1 px-2.5 py-2 border border-indigo-300 rounded-xl bg-indigo-50/50 text-xs font-bold text-neutral-900 focus:outline-none focus:border-indigo-600"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleSaveQuickSupplier}
+                          className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold cursor-pointer"
+                        >
+                          যোগ
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowQuickAddSupplier(false);
+                            setQuickSupplierName('');
+                          }}
+                          className="p-2 text-neutral-400 hover:text-neutral-600 rounded-xl cursor-pointer"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <select
+                        value={prodSupplier}
+                        onChange={(e) => {
+                          if (e.target.value === '__add_new__') {
+                            setShowQuickAddSupplier(true);
+                          } else {
+                            setProdSupplier(e.target.value);
+                          }
+                        }}
+                        className="w-full px-2.5 py-2.5 rounded-xl border border-neutral-300 text-xs bg-white focus:outline-none focus:border-emerald-600 font-medium"
+                      >
+                        <option value="">-- সাপ্লায়ার নির্বাচন করুন (ঐচ্ছিক) --</option>
+                        {availableSuppliers.map((s) => (
+                          <option key={s} value={s}>
+                            🏢 {s}
+                          </option>
+                        ))}
+                        {prodSupplier && !availableSuppliers.includes(prodSupplier) && (
+                          <option value={prodSupplier}>🏢 {prodSupplier}</option>
+                        )}
+                        <option value="__add_new__" className="text-indigo-600 font-bold">
+                          + নতুন সাপ্লায়ার যোগ করুন...
+                        </option>
+                      </select>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
+                  <div>
                     <label className="block text-xs font-bold text-neutral-700 mb-1">
                       একক (Unit) <span className="text-rose-500">*</span>
                     </label>
@@ -5359,7 +5512,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                     </select>
                   </div>
 
-                  <div className="col-span-2 sm:col-span-1">
+                  <div>
                     <label className="block text-xs font-bold text-neutral-700 mb-1">SKU কোড</label>
                     <input
                       type="text"
