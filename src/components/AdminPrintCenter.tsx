@@ -33,6 +33,7 @@ import {
 } from '../types';
 import {
   OrderPrintMode,
+  PrintOrientation,
   printOrdersBatch,
   printProductsBatch,
   printShopsBatch,
@@ -80,6 +81,13 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
 }) => {
   const [activeListType, setActiveListType] = useState<PrintCategoryKey>('orders');
   const [orderPrintMode, setOrderPrintMode] = useState<OrderPrintMode>('slips');
+  const [printOrientation, setPrintOrientation] = useState<PrintOrientation>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('preferred_print_orientation');
+      if (saved === 'landscape' || saved === 'portrait') return saved;
+    }
+    return 'portrait';
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -375,7 +383,7 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
     switch (activeListType) {
       case 'orders': {
         const found = orders.filter((o) => o.id === id);
-        printOrdersBatch(found, orderPrintMode, '(সিঙ্গেল মেমো)');
+        printOrdersBatch(found, orderPrintMode, '(সিঙ্গেল মেমো)', { orientation: printOrientation });
         break;
       }
       case 'products': {
@@ -426,7 +434,8 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
         printOrdersBatch(
           orders.filter((o) => selectedIds.has(o.id)),
           overrideMode || orderPrintMode,
-          suffix
+          suffix,
+          { orientation: printOrientation }
         );
         break;
       case 'products':
@@ -481,7 +490,7 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
     const suffix = activeFilterSummaryLabel || '(সকল ডাটা)';
     switch (activeListType) {
       case 'orders':
-        printOrdersBatch(filteredOrders, overrideMode || orderPrintMode, suffix);
+        printOrdersBatch(filteredOrders, overrideMode || orderPrintMode, suffix, { orientation: printOrientation });
         break;
       case 'products':
         printProductsBatch(products, '(সকল পণ্য)');
@@ -532,7 +541,8 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
         printOrdersBatch(
           filteredOrders,
           'slips',
-          `${activeFilterSummaryLabel || '(সকল মেমো স্লিপ)'}`
+          `${activeFilterSummaryLabel || '(সকল মেমো স্লিপ)'}`,
+          { orientation: printOrientation }
         ),
       bulkBtnText: `১-ক্লিকে মেমো স্লিপ প্রিন্ট (${filteredOrders.length})`,
       twoInOneBtnText: `📑 ২ মেমো প্রতি A4 প্রিন্ট (${filteredOrders.length}টি)`,
@@ -540,21 +550,24 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
         printOrdersBatch(
           filteredOrders,
           'slips_2in1',
-          `${activeFilterSummaryLabel || '(২টি আলাদা দোকান কপি - A4)'}`
+          `${activeFilterSummaryLabel || '(২টি আলাদা দোকান কপি - A4)'}`,
+          { orientation: printOrientation }
         ),
       secondaryBtnText: `📊 অর্ডার সামারি টেবিল প্রিন্ট (${filteredOrders.length})`,
       onSecondaryPrint: () =>
         printOrdersBatch(
           filteredOrders,
           'table',
-          `${activeFilterSummaryLabel || '(অর্ডার সামারি)'}`
+          `${activeFilterSummaryLabel || '(অর্ডার সামারি)'}`,
+          { orientation: printOrientation }
         ),
       tertiaryBtnText: `📦 পণ্যের সামারি / লোডিং শীট প্রিন্ট (${filteredOrders.length})`,
       onTertiaryPrint: () =>
         printOrdersBatch(
           filteredOrders,
           'product_summary',
-          `${activeFilterSummaryLabel || '(পণ্যের সামারি)'}`
+          `${activeFilterSummaryLabel || '(পণ্যের সামারি)'}`,
+          { orientation: printOrientation }
         ),
     },
     {
@@ -642,13 +655,50 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {/* Page Orientation Selector */}
+            <div className="flex items-center bg-blue-950/60 border border-blue-400/40 rounded-2xl p-1" title="প্রিন্ট ওরিয়েন্টেশন">
+              <button
+                type="button"
+                onClick={() => {
+                  setPrintOrientation('portrait');
+                  if (typeof window !== 'undefined') localStorage.setItem('preferred_print_orientation', 'portrait');
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1.5 ${
+                  printOrientation === 'portrait'
+                    ? 'bg-blue-500 text-white shadow-xs'
+                    : 'text-blue-200 hover:text-white'
+                }`}
+                title="পোর্ট্রেট (Portrait - খাড়া পেজ)"
+              >
+                <span className="inline-block border-2 border-current rounded-2xs w-2.5 h-3.5"></span>
+                <span>পোর্ট্রেট</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPrintOrientation('landscape');
+                  if (typeof window !== 'undefined') localStorage.setItem('preferred_print_orientation', 'landscape');
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors flex items-center gap-1.5 ${
+                  printOrientation === 'landscape'
+                    ? 'bg-blue-500 text-white shadow-xs'
+                    : 'text-blue-200 hover:text-white'
+                }`}
+                title="ল্যান্ডস্কেপ (Landscape - আড়াআড়ি পেজ)"
+              >
+                <span className="inline-block border-2 border-current rounded-2xs w-3.5 h-2.5"></span>
+                <span>ল্যান্ডস্কেপ</span>
+              </button>
+            </div>
+
             <button
               type="button"
               onClick={() =>
                 printOrdersBatch(
                   filteredOrders,
                   'product_summary',
-                  activeFilterSummaryLabel || '(পণ্যের সামারি)'
+                  activeFilterSummaryLabel || '(পণ্যের সামারি)',
+                  { orientation: printOrientation }
                 )
               }
               disabled={filteredOrders.length === 0}
@@ -664,7 +714,8 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
                 printOrdersBatch(
                   filteredOrders,
                   'slips',
-                  activeFilterSummaryLabel || '(সকল মেমো স্লিপ)'
+                  activeFilterSummaryLabel || '(সকল মেমো স্লিপ)',
+                  { orientation: printOrientation }
                 )
               }
               disabled={filteredOrders.length === 0}
@@ -680,7 +731,8 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
                 printOrdersBatch(
                   filteredOrders,
                   'slips_2in1',
-                  activeFilterSummaryLabel || '(২টি আলাদা দোকান কপি - A4)'
+                  activeFilterSummaryLabel || '(২টি আলাদা দোকান কপি - A4)',
+                  { orientation: printOrientation }
                 )
               }
               disabled={filteredOrders.length === 0}

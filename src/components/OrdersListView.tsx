@@ -36,7 +36,7 @@ import {
 import { Order, Shop, PaymentMethod, DueCollectionRecord, DailyExpenseRecord, Product, Supplier } from '../types';
 import { getBusinessInfo } from '../lib/firebase';
 import { getProducts } from '../lib/storage';
-import { OrderPrintMode, printOrdersBatch } from '../lib/printService';
+import { OrderPrintMode, PrintOrientation, printOrdersBatch } from '../lib/printService';
 
 interface OrdersListViewProps {
   orders: Order[];
@@ -155,6 +155,13 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
   const [customDate, setCustomDate] = useState<string>('');
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
   const [bulkPrintMode, setBulkPrintMode] = useState<OrderPrintMode>('slips');
+  const [bulkPrintOrientation, setBulkPrintOrientation] = useState<PrintOrientation>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('preferred_print_orientation');
+      if (saved === 'landscape' || saved === 'portrait') return saved;
+    }
+    return 'portrait';
+  });
 
   const toggleSelectOrder = (id: string) => {
     setSelectedOrderIds((prev) => {
@@ -188,6 +195,7 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
   const [twoInOnePairingOrder, setTwoInOnePairingOrder] = useState<Order | null>(null);
   const [secondPairOrderId, setSecondPairOrderId] = useState<string>('');
   const [secondPairOption, setSecondPairOption] = useState<'another' | 'same'>('another');
+  const [secondPairOrientation, setSecondPairOrientation] = useState<PrintOrientation>('portrait');
 
   // Tool #3: Daily Cash Closing & Expense Ledger Modal State
   const [isCashClosingOpen, setIsCashClosingOpen] = useState(false);
@@ -851,6 +859,43 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
               </button>
             </div>
 
+            {/* Orientation Toggle: Portrait vs Landscape */}
+            <div className="flex items-center bg-white border border-blue-200 rounded-xl p-0.5" title="প্রিন্ট ওরিয়েন্টেশন (পোর্ট্রেট বা ল্যান্ডস্কেপ সিলেক্ট করুন)">
+              <span className="text-[10px] font-bold text-neutral-500 px-2 hidden sm:inline">পেজ:</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setBulkPrintOrientation('portrait');
+                  if (typeof window !== 'undefined') localStorage.setItem('preferred_print_orientation', 'portrait');
+                }}
+                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition-colors flex items-center gap-1.5 ${
+                  bulkPrintOrientation === 'portrait'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'text-neutral-700 hover:bg-neutral-100'
+                }`}
+                title="পোর্ট্রেট (Portrait - খাড়া/উল্লম্ব পেজ)"
+              >
+                <span className="inline-block border-2 border-current rounded-2xs w-2.5 h-3.5"></span>
+                <span>পোর্ট্রেট</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setBulkPrintOrientation('landscape');
+                  if (typeof window !== 'undefined') localStorage.setItem('preferred_print_orientation', 'landscape');
+                }}
+                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition-colors flex items-center gap-1.5 ${
+                  bulkPrintOrientation === 'landscape'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'text-neutral-700 hover:bg-neutral-100'
+                }`}
+                title="ল্যান্ডস্কেপ (Landscape - আড়াআড়ি/অনুভূমিক পেজ)"
+              >
+                <span className="inline-block border-2 border-current rounded-2xs w-3.5 h-2.5"></span>
+                <span>ল্যান্ডস্কেপ</span>
+              </button>
+            </div>
+
             {/* Select All / Deselect All Button */}
             <button
               type="button"
@@ -886,13 +931,13 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                 type="button"
                 onClick={() => {
                   const chosen = orders.filter((o) => selectedOrderIds.has(o.id));
-                  printOrdersBatch(chosen, 'slips_2in1', '(নির্বাচিত ২টি আলাদা দোকান কপি)');
+                  printOrdersBatch(chosen, 'slips_2in1', '(নির্বাচিত ২টি আলাদা দোকান কপি)', { orientation: bulkPrintOrientation });
                 }}
                 className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer animate-in zoom-in-95"
                 title="বাছাইকৃত ২টি আলাদা মেমো ১টি A4 পেপারে প্রিন্ট করুন"
               >
                 <Scissors className="w-3.5 h-3.5" />
-                <span>📑 এই ২টি মেমো ১টি A4-এ প্রিন্ট করুন (আলাদা দোকান কপি)</span>
+                <span>📑 এই ২টি মেমো ১টি A4-এ প্রিন্ট করুন ({bulkPrintOrientation === 'landscape' ? 'ল্যান্ডস্কেপ' : 'পোর্ট্রেট'})</span>
               </button>
             )}
 
@@ -902,7 +947,7 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                 type="button"
                 onClick={() => {
                   const chosen = orders.filter((o) => selectedOrderIds.has(o.id));
-                  printOrdersBatch(chosen, bulkPrintMode, `(নির্বাচিত ${chosen.length} টি)`);
+                  printOrdersBatch(chosen, bulkPrintMode, `(নির্বাচিত ${chosen.length} টি)`, { orientation: bulkPrintOrientation });
                 }}
                 className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
               >
@@ -922,7 +967,8 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                 printOrdersBatch(
                   filteredOrders,
                   bulkPrintMode,
-                  `(${filteredOrders.length} টি মেমো)`
+                  `(${filteredOrders.length} টি মেমো)`,
+                  { orientation: bulkPrintOrientation }
                 );
               }}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
@@ -1112,7 +1158,7 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                     {/* Direct 1-Click Print Single Memo Button */}
                     <button
                       type="button"
-                      onClick={() => printOrdersBatch([order], 'slips', '(সিঙ্গেল মেমো)')}
+                      onClick={() => printOrdersBatch([order], 'slips', '(সিঙ্গেল মেমো)', { orientation: bulkPrintOrientation })}
                       className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-600 text-blue-700 hover:text-white border border-blue-200 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
                       title="এই মেমোটি ১-ক্লিকে পুরো পেজে প্রিন্ট করুন"
                     >
@@ -1960,6 +2006,7 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                             supplierFilter: loadSheetSupplier,
                             groupBySupplier: loadSheetGroupBySupplier,
                             products: products,
+                            orientation: bulkPrintOrientation,
                           }
                         )
                       }
@@ -2249,13 +2296,7 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
               </div>
 
               {/* Scissors Cut Line Indicator */}
-              <div className="flex items-center gap-2 text-neutral-400 font-bold text-[11px]">
-                <div className="flex-1 border-t-2 border-dashed border-neutral-300"></div>
-                <span className="px-2.5 py-1 bg-neutral-100 text-neutral-600 rounded-full border border-neutral-300 flex items-center gap-1.5 text-[10.5px]">
-                  <Scissors className="w-3.5 h-3.5 text-indigo-600" /> ✂️ A4 পেপারের মাঝখান দিয়ে কাটার দাগ (২টি আলাদা দোকান কপি)
-                </span>
-                <div className="flex-1 border-t-2 border-dashed border-neutral-300"></div>
-              </div>
+              <div className="w-full border-t-2 border-dashed border-neutral-300 my-2"></div>
 
               {/* Selection for 2nd Memo (Bottom Half) */}
               <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-3.5 space-y-3">
@@ -2334,9 +2375,46 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
 
                 {secondPairOption === 'same' && (
                   <div className="bg-amber-50 border border-amber-200 rounded-xl p-2.5 text-[11px] text-amber-900">
-                    ℹ️ ১টি A4 পেপারের উপর ও নিচে &apos;{twoInOnePairingOrder.shopName}&apos; এর ২টি দোকান কপি প্রিন্ট হবে।
+                    ℹ️ ১টি A4 পেপারে &apos;{twoInOnePairingOrder.shopName}&apos; এর ২টি দোকান কপি প্রিন্ট হবে।
                   </div>
                 )}
+
+                {/* Orientation Selector: Portrait vs Landscape */}
+                <div className="space-y-1.5 pt-1">
+                  <label className="text-[11px] font-bold text-neutral-700 block">পেপারের দিক (Orientation):</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSecondPairOrientation('portrait')}
+                      className={`p-2 rounded-xl border text-left cursor-pointer transition-all flex items-center gap-2 ${
+                        secondPairOrientation === 'portrait'
+                          ? 'border-indigo-600 bg-indigo-50 font-black text-indigo-950 ring-1 ring-indigo-500'
+                          : 'border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-100'
+                      }`}
+                    >
+                      <span className="inline-block border-2 border-current rounded-2xs w-3 h-4 shrink-0"></span>
+                      <div>
+                        <div className="font-bold text-xs">পোর্ট্রেট (Portrait)</div>
+                        <div className="text-[10px] opacity-75">উপরে ও নিচে ২টি মেমো</div>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSecondPairOrientation('landscape')}
+                      className={`p-2 rounded-xl border text-left cursor-pointer transition-all flex items-center gap-2 ${
+                        secondPairOrientation === 'landscape'
+                          ? 'border-indigo-600 bg-indigo-50 font-black text-indigo-950 ring-1 ring-indigo-500'
+                          : 'border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-100'
+                      }`}
+                    >
+                      <span className="inline-block border-2 border-current rounded-2xs w-4 h-3 shrink-0"></span>
+                      <div>
+                        <div className="font-bold text-xs">ল্যান্ডস্কেপ (Landscape)</div>
+                        <div className="text-[10px] opacity-75">পাশাপাশি ২টি মেমো</div>
+                      </div>
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -2358,14 +2436,15 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                   printOrdersBatch(
                     [twoInOnePairingOrder, targetSecond],
                     'slips_2in1',
-                    secondPairOption === 'same' ? '(২টি দোকান কপি - ডুপ্লিকেট)' : '(২টি আলাদা দোকান কপি)'
+                    secondPairOption === 'same' ? '(২টি দোকান কপি - ডুপ্লিকেট)' : '(২টি আলাদা দোকান কপি)',
+                    { orientation: secondPairOrientation }
                   );
                   setTwoInOnePairingOrder(null);
                 }}
                 className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-md flex items-center gap-1.5 cursor-pointer active:scale-95 transition-all"
               >
                 <Printer className="w-4 h-4" />
-                <span>১টি A4 পেপারে ২টি মেমো প্রিন্ট করুন</span>
+                <span>১টি A4 পেপারে ২টি মেমো প্রিন্ট ({secondPairOrientation === 'landscape' ? 'ল্যান্ডস্কেপ' : 'পোর্ট্রেট'})</span>
               </button>
             </div>
           </div>

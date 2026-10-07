@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { Order, OrderItem, Product } from '../types';
 import { getBusinessInfo } from '../lib/firebase';
-import { printOrdersBatch } from '../lib/printService';
+import { PrintOrientation, printOrdersBatch } from '../lib/printService';
 
 interface MemoModalProps {
   order: Order | null;
@@ -47,6 +47,13 @@ export const MemoModal: React.FC<MemoModalProps> = ({
   const [isPairModalOpen, setIsPairModalOpen] = useState(false);
   const [pairTargetOrderId, setPairTargetOrderId] = useState('');
   const [pairMode, setPairMode] = useState<'another' | 'same'>('another');
+  const [printOrientation, setPrintOrientation] = useState<PrintOrientation>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('preferred_print_orientation');
+      if (saved === 'landscape' || saved === 'portrait') return saved;
+    }
+    return 'portrait';
+  });
 
   // Editable state
   const [editShopName, setEditShopName] = useState('');
@@ -72,7 +79,7 @@ export const MemoModal: React.FC<MemoModalProps> = ({
   const biz = getBusinessInfo();
 
   const handlePrint = () => {
-    printOrdersBatch([order], 'slips', '(সিঙ্গেল মেমো)');
+    printOrdersBatch([order], 'slips', '(সিঙ্গেল মেমো)', { orientation: printOrientation });
   };
 
   const handleOpenPairModal = () => {
@@ -276,6 +283,42 @@ export const MemoModal: React.FC<MemoModalProps> = ({
               <Share2 className="w-3.5 h-3.5" />
               <span>হোয়াটসঅ্যাপ</span>
             </button>
+            {/* Orientation Toggle: Portrait vs Landscape */}
+            <div className="flex items-center bg-neutral-900 border border-neutral-700 rounded-lg p-0.5 shrink-0" title="প্রিন্ট ওরিয়েন্টেশন">
+              <button
+                type="button"
+                onClick={() => {
+                  setPrintOrientation('portrait');
+                  if (typeof window !== 'undefined') localStorage.setItem('preferred_print_orientation', 'portrait');
+                }}
+                className={`p-1 px-1.5 rounded text-[10px] font-bold cursor-pointer transition-colors flex items-center gap-1 ${
+                  printOrientation === 'portrait'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'text-neutral-400 hover:text-white'
+                }`}
+                title="পোর্ট্রেট (Portrait - খাড়া পেজ)"
+              >
+                <span className="inline-block border border-current rounded-2xs w-2 h-3"></span>
+                <span>পোর্ট্রেট</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPrintOrientation('landscape');
+                  if (typeof window !== 'undefined') localStorage.setItem('preferred_print_orientation', 'landscape');
+                }}
+                className={`p-1 px-1.5 rounded text-[10px] font-bold cursor-pointer transition-colors flex items-center gap-1 ${
+                  printOrientation === 'landscape'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'text-neutral-400 hover:text-white'
+                }`}
+                title="ল্যান্ডস্কেপ (Landscape - আড়াআড়ি পেজ)"
+              >
+                <span className="inline-block border border-current rounded-2xs w-3 h-2"></span>
+                <span>ল্যান্ডস্কেপ</span>
+              </button>
+            </div>
+
             <button
               onClick={handlePrint}
               className="p-1.5 px-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs flex items-center gap-1 font-bold shadow-xs shrink-0 cursor-pointer"
@@ -683,11 +726,7 @@ export const MemoModal: React.FC<MemoModalProps> = ({
                 </span>
               </div>
 
-              <div className="flex items-center gap-2 text-neutral-400 font-bold text-[10px]">
-                <div className="flex-1 border-t border-dashed border-neutral-300"></div>
-                <span>✂️ কাটার দাগ (২টি আলাদা দোকান কপি)</span>
-                <div className="flex-1 border-t border-dashed border-neutral-300"></div>
-              </div>
+              <div className="w-full border-t border-dashed border-neutral-300 my-2"></div>
 
               <div className="space-y-2">
                 <span className="font-black text-neutral-800 block">২য় মেমো (নিম্নার্ধ):</span>
@@ -739,6 +778,43 @@ export const MemoModal: React.FC<MemoModalProps> = ({
                     </select>
                   </div>
                 )}
+
+                {/* Orientation Selector: Portrait vs Landscape */}
+                <div className="space-y-1.5 pt-2">
+                  <label className="text-[11px] font-bold text-neutral-700 block">পেপারের দিক (Orientation):</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPrintOrientation('portrait')}
+                      className={`p-2 rounded-xl border text-left cursor-pointer transition-all flex items-center gap-2 ${
+                        printOrientation === 'portrait'
+                          ? 'border-indigo-600 bg-indigo-50 font-black text-indigo-950 ring-1 ring-indigo-500'
+                          : 'border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-100'
+                      }`}
+                    >
+                      <span className="inline-block border-2 border-current rounded-2xs w-3 h-4 shrink-0"></span>
+                      <div>
+                        <div className="font-bold text-xs">পোর্ট্রেট (Portrait)</div>
+                        <div className="text-[10px] opacity-75">উপরে ও নিচে ২টি মেমো</div>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPrintOrientation('landscape')}
+                      className={`p-2 rounded-xl border text-left cursor-pointer transition-all flex items-center gap-2 ${
+                        printOrientation === 'landscape'
+                          ? 'border-indigo-600 bg-indigo-50 font-black text-indigo-950 ring-1 ring-indigo-500'
+                          : 'border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-100'
+                      }`}
+                    >
+                      <span className="inline-block border-2 border-current rounded-2xs w-4 h-3 shrink-0"></span>
+                      <div>
+                        <div className="font-bold text-xs">ল্যান্ডস্কেপ (Landscape)</div>
+                        <div className="text-[10px] opacity-75">পাশাপাশি ২টি মেমো</div>
+                      </div>
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -759,14 +835,15 @@ export const MemoModal: React.FC<MemoModalProps> = ({
                   printOrdersBatch(
                     [order, targetSecond],
                     'slips_2in1',
-                    pairMode === 'same' ? '(২টি দোকান কপি - ডুপ্লিকেট)' : '(২টি আলাদা দোকান কপি)'
+                    pairMode === 'same' ? '(২টি দোকান কপি - ডুপ্লিকেট)' : '(২টি আলাদা দোকান কপি)',
+                    { orientation: printOrientation }
                   );
                   setIsPairModalOpen(false);
                 }}
                 className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-md flex items-center gap-1.5 cursor-pointer"
               >
                 <Printer className="w-3.5 h-3.5" />
-                <span>১টি A4 পেপারে ২টি মেমো প্রিন্ট</span>
+                <span>১টি A4 পেপারে ২টি মেমো প্রিন্ট ({printOrientation === 'landscape' ? 'ল্যান্ডস্কেপ' : 'পোর্ট্রেট'})</span>
               </button>
             </div>
           </div>
