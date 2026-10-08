@@ -19,11 +19,19 @@ import {
   Square,
   Building2,
   PieChart,
+  FileSpreadsheet,
+  Download,
+  FileUp,
 } from 'lucide-react';
 import { Product, Category, Supplier } from '../types';
 import { DEMO_PRODUCT_IDS, parseBanglaNumber, getSuppliers, addOrUpdateSupplier } from '../lib/storage';
 import { processImageFile } from '../lib/imageUtils';
 import { printProductsBatch } from '../lib/printService';
+import {
+  downloadInventoryCSV,
+  downloadProductTemplateCSV,
+  parseProductsFromCSV,
+} from '../lib/backupService';
 import { ProductImageLightboxModal } from './ProductImageLightboxModal';
 import { SupplierSummaryModal } from './SupplierSummaryModal';
 
@@ -57,6 +65,15 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [lightboxProduct, setLightboxProduct] = useState<Product | null>(null);
   const [onlyLowStock, setOnlyLowStock] = useState(false);
   const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set());
+
+  // Bulk CSV Import Modal State
+  const [isBulkCsvModalOpen, setIsBulkCsvModalOpen] = useState(false);
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [csvPreviewProducts, setCsvPreviewProducts] = useState<Product[]>([]);
+  const [csvImportErrors, setCsvImportErrors] = useState<string[]>([]);
+  const [csvSkippedCount, setCsvSkippedCount] = useState(0);
+  const [isImportingCsv, setIsImportingCsv] = useState(false);
+  const [importSuccessMsg, setImportSuccessMsg] = useState<string | null>(null);
 
   const toggleSelectProduct = (id: string) => {
     setSelectedProductIds((prev) => {
@@ -213,6 +230,56 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     setNewTradeOffer(prod.tradeOfferDesc || '');
     setNewImageUrl(prod.imageUrl || '');
     setIsAddProductOpen(true);
+  };
+
+  const handleCsvFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    setCsvFile(file);
+    setCsvImportErrors([]);
+    setImportSuccessMsg(null);
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      if (!content) return;
+      const { products: parsedProds, skippedCount, errors } = parseProductsFromCSV(
+        content,
+        categories,
+        suppliers
+      );
+      setCsvPreviewProducts(parsedProds);
+      setCsvSkippedCount(skippedCount);
+      setCsvImportErrors(errors);
+    };
+    reader.onerror = () => {
+      setCsvImportErrors(['ফাইলটি পড়তে সমস্যা হয়েছে']);
+    };
+    reader.readAsText(file);
+  };
+
+  const handleConfirmBulkImport = () => {
+    if (csvPreviewProducts.length === 0) return;
+    setIsImportingCsv(true);
+
+    try {
+      csvPreviewProducts.forEach((prod) => {
+        onAddProduct(prod);
+      });
+      setImportSuccessMsg(`সফলভাবে ${csvPreviewProducts.length}টি পণ্য ইনভেন্টরিতে যুক্ত করা হয়েছে!`);
+      setTimeout(() => {
+        setIsBulkCsvModalOpen(false);
+        setCsvFile(null);
+        setCsvPreviewProducts([]);
+        setImportSuccessMsg(null);
+      }, 1500);
+    } catch {
+      setCsvImportErrors(['পণ্যগুলো সংরক্ষণ করতে সমস্যা হয়েছে']);
+    } finally {
+      setIsImportingCsv(false);
+    }
   };
 
   const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -390,6 +457,32 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         </div>
 
         <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end flex-wrap">
+          <button
+            type="button"
+            onClick={() => downloadInventoryCSV(products)}
+            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+            title="সকল প্রোডাক্ট ও ইনভেন্টরি এক্সেল (CSV) ফাইলে ডাউনলোড করুন"
+          >
+            <Download className="w-3.5 h-3.5 text-emerald-600" />
+            <span>এক্সেল এক্সপোর্ট</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setCsvFile(null);
+              setCsvPreviewProducts([]);
+              setCsvImportErrors([]);
+              setImportSuccessMsg(null);
+              setIsBulkCsvModalOpen(true);
+            }}
+            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+            title="এক্সেল বা CSV ফাইল থেকে একসাথে ১০০+ পণ্য আপলোড করুন"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5 text-teal-600" />
+            <span>বাল্ক আপলোড (CSV)</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setIsSupplierSummaryOpen(true)}
@@ -961,8 +1054,12 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
                 <div>
                   <label className="font-bold text-neutral-700 block mb-1">
-                    প্রোডাক্ট ছবি লিংক (Image URL) অথবা ডিভাইস থেকে সরাসরি আপলোড
+                    প্রোডাক্ট ছবি লিংক (Image URL) অথবা ক্যামেরা/গ্যালারি থেকে সরাসরি আপলোড
                   </label>
+                  <p className="text-[11px] text-emerald-800 font-medium mb-1.5 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 inline-block"></span>
+                    <span>ক্যামেরা বা গ্যালারি থেকে ৩-৫ MB বড় ছবি দিলেও ব্রাউজারে স্বয়ংক্রিয়ভাবে WebP/JPEG ফরম্যাটে অপ্টিমাইজড ও কম্প্রেস হয়ে যাবে (ডাটা সাশ্রয়ী)।</span>
+                  </p>
                   <div className="flex gap-2 items-stretch">
                     <input
                       type="text"
@@ -1075,6 +1172,189 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 </div>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk CSV Import Modal */}
+      {isBulkCsvModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-2xl w-full p-5 sm:p-6 shadow-2xl border border-neutral-200 my-8">
+            <div className="flex items-center justify-between pb-3 border-b border-neutral-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-teal-100 text-teal-800 flex items-center justify-center font-bold">
+                  <FileSpreadsheet className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base text-neutral-900">
+                    এক্সেল / CSV দিয়ে ১০০+ পণ্য বাল্ক আপলোড
+                  </h3>
+                  <p className="text-xs text-neutral-500">
+                    এক্সেল স্প্রেডশীট থেকে একসাথে বহুসংখ্যক পণ্য দ্রুত ইনভেন্টরিতে যুক্ত করুন
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsBulkCsvModalOpen(false);
+                  setCsvFile(null);
+                  setCsvPreviewProducts([]);
+                  setCsvImportErrors([]);
+                }}
+                className="p-2 text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 rounded-xl transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="py-4 space-y-4">
+              {/* Step 1: Download Sample Template */}
+              <div className="p-3.5 bg-neutral-50 rounded-2xl border border-neutral-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-xs font-bold text-neutral-800">
+                    ১. ডেমো এক্সেল টেমপ্লেট ডাউনলোড করুন
+                  </h4>
+                  <p className="text-[11px] text-neutral-500">
+                    সঠিক কলাম ফরম্যাট দেখতে এই টেমপ্লেটটি ডাউনলোড করে এতে পণ্য পূরণ করুন।
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={downloadProductTemplateCSV}
+                  className="px-3 py-1.5 bg-white hover:bg-neutral-100 text-teal-800 border border-teal-300 rounded-xl text-xs font-bold flex items-center gap-1.5 shrink-0 shadow-2xs cursor-pointer transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5 text-teal-600" />
+                  <span>নমুনা টেমপ্লেট CSV</span>
+                </button>
+              </div>
+
+              {/* Step 2: Choose File */}
+              <div>
+                <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                  ২. আপনার প্রস্তুতকৃত CSV ফাইল আপলোড করুন (.csv ফরম্যাট)
+                </label>
+                <div className="border-2 border-dashed border-teal-300 hover:border-teal-500 rounded-2xl p-6 text-center bg-teal-50/30 transition-colors">
+                  <input
+                    type="file"
+                    accept=".csv,text/csv"
+                    id="bulk-product-csv-input"
+                    onChange={handleCsvFileSelect}
+                    className="hidden"
+                  />
+                  <label
+                    htmlFor="bulk-product-csv-input"
+                    className="cursor-pointer flex flex-col items-center justify-center gap-2"
+                  >
+                    <FileUp className="w-8 h-8 text-teal-600 animate-bounce" />
+                    <span className="text-xs font-bold text-teal-900">
+                      {csvFile ? `ফাইল সিলেক্ট হয়েছে: ${csvFile.name}` : 'ফাইল সিলেক্ট করতে এখানে ক্লিক করুন'}
+                    </span>
+                    <span className="text-[11px] text-neutral-500">
+                      Excel থেকে &quot;Save As &rarr; CSV (Comma delimited)&quot; হিসেবে সেভ করা ফাইল নির্বাচন করুন
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Status messages */}
+              {importSuccessMsg && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-bold flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{importSuccessMsg}</span>
+                </div>
+              )}
+
+              {csvImportErrors.length > 0 && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs space-y-1">
+                  <span className="font-bold flex items-center gap-1">
+                    <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                    <span>কিছু লাইনে ত্রুটি পাওয়া গেছে:</span>
+                  </span>
+                  <ul className="list-disc pl-5 text-[11px] space-y-0.5 max-h-24 overflow-y-auto">
+                    {csvImportErrors.slice(0, 5).map((err, idx) => (
+                      <li key={idx}>{err}</li>
+                    ))}
+                    {csvImportErrors.length > 5 && (
+                      <li>...আরও {csvImportErrors.length - 5}টি ত্রুটি</li>
+                    )}
+                  </ul>
+                </div>
+              )}
+
+              {/* Step 3: Preview Data */}
+              {csvPreviewProducts.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs font-bold text-neutral-700">
+                    <span className="text-teal-900 font-extrabold">
+                      ✅ প্রিভিউ: মোট {csvPreviewProducts.length}টি পণ্য সফলভাবে রিড করা হয়েছে
+                    </span>
+                    {csvSkippedCount > 0 && (
+                      <span className="text-amber-700 text-[11px]">
+                        (খালি লাইন বাদ: {csvSkippedCount})
+                      </span>
+                    )}
+                  </div>
+                  <div className="max-h-48 overflow-y-auto border border-neutral-200 rounded-xl">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-neutral-100 text-neutral-700 font-bold sticky top-0">
+                        <tr>
+                          <th className="p-2">পণ্যের নাম</th>
+                          <th className="p-2">ক্যাটাগরি</th>
+                          <th className="p-2">বিক্রয় রেট</th>
+                          <th className="p-2">কেনাদর</th>
+                          <th className="p-2">স্টক</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-neutral-100 font-medium">
+                        {csvPreviewProducts.slice(0, 15).map((p, idx) => (
+                          <tr key={idx} className="hover:bg-neutral-50">
+                            <td className="p-2 font-bold text-neutral-900">{p.banglaName}</td>
+                            <td className="p-2 text-neutral-600">{p.category}</td>
+                            <td className="p-2 text-emerald-700 font-bold">৳{p.unitPrice}</td>
+                            <td className="p-2 text-neutral-600">৳{p.costPrice}</td>
+                            <td className="p-2 text-neutral-800">{p.stock} {p.unit}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {csvPreviewProducts.length > 15 && (
+                    <p className="text-[10px] text-neutral-400 text-right">
+                      ... আরও {csvPreviewProducts.length - 15}টি পণ্য তালিকায় যুক্ত হবে
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-neutral-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsBulkCsvModalOpen(false);
+                  setCsvFile(null);
+                  setCsvPreviewProducts([]);
+                  setCsvImportErrors([]);
+                }}
+                className="px-4 py-2 text-neutral-600 hover:bg-neutral-100 rounded-xl text-xs font-semibold"
+              >
+                বাতিল
+              </button>
+              <button
+                type="button"
+                disabled={csvPreviewProducts.length === 0 || isImportingCsv}
+                onClick={handleConfirmBulkImport}
+                className="px-5 py-2.5 bg-teal-800 hover:bg-teal-700 disabled:opacity-40 text-white rounded-xl text-xs font-bold shadow-md transition-colors flex items-center gap-1.5 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>
+                  {isImportingCsv
+                    ? 'আপলোড হচ্ছে...'
+                    : `একত্রে ${csvPreviewProducts.length}টি পণ্য যুক্ত করুন`}
+                </span>
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -302,6 +302,28 @@ export async function getIndexedDBStats(): Promise<{
 }
 
 /**
+ * 1-Click Clear / Refresh all offline cache data in IndexedDB
+ */
+export async function clearAllIndexedDBData(): Promise<boolean> {
+  if (!isIndexedDBSupported()) return false;
+  try {
+    const db = await openOfflineDatabase();
+    return new Promise((resolve) => {
+      const tx = db.transaction(INDEXED_DB_STORES as unknown as string[], 'readwrite');
+      for (const store of INDEXED_DB_STORES) {
+        if (db.objectStoreNames.contains(store)) {
+          tx.objectStore(store).clear();
+        }
+      }
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+    });
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Sync all core application data seamlessly to IndexedDB in the background.
  */
 export async function syncAppDataToIndexedDB(data: {

@@ -646,6 +646,181 @@ export function downloadInventoryCSV(products: Product[]): void {
 }
 
 /**
+ * Download sample product template CSV for bulk uploading 100+ items
+ */
+export function downloadProductTemplateCSV(): void {
+  const headers = [
+    'পণ্যের নাম (বাংলা) *',
+    'পণ্যের নাম (English)',
+    'এসকেইউ (SKU)',
+    'ক্যাটাগরি',
+    'সাপ্লায়ার',
+    'একক (Unit)',
+    'বিক্রয়মূল্য (৳) *',
+    'কেনাদর (৳)',
+    'প্রাথমিক স্টক',
+    'সর্বনিম্ন স্টক অ্যালার্ট',
+    'ট্রেড অফার',
+  ];
+
+  const sampleRows = [
+    ['তীর সয়াবিন তেল ৫ লিটার', 'Teer Soybean Oil 5L', 'OIL-5L-01', 'তেল ও ঘি', 'সিটি গ্রুপ', 'কার্টুন', 890, 840, 50, 10, '১০ কার্টুনে ১ লিটার ফ্রি'],
+    ['ফ্রেশ চিনি ১ কেজি', 'Fresh Sugar 1kg', 'SGR-1K-02', 'চিনি ও প্যাকেটজাত', 'মেঘনা গ্রুপ', 'বস্তা', 135, 128, 100, 20, ''],
+    ['প্রাণ গুঁড়া দুধ ৫০০ গ্রাম', 'Pran Milk Powder 500g', 'MLK-500-03', 'দুধ ও দুগ্ধজাত', 'প্রাণ-আরএফএল', 'প্যাকেট', 420, 395, 40, 5, ''],
+  ];
+
+  const blob = createCSVBlob(headers, sampleRows);
+  triggerBrowserDownload(blob, `MunsiStore_Product_Import_Template.csv`);
+}
+
+/**
+ * Robust CSV Line Parser that respects quoted values with commas
+ */
+function parseCSVLines(text: string): string[][] {
+  const cleanText = text.replace(/^\uFEFF/, '').trim(); // Remove UTF-8 BOM
+  const lines: string[][] = [];
+  let currentRow: string[] = [];
+  let currentField = '';
+  let insideQuotes = false;
+
+  for (let i = 0; i < cleanText.length; i++) {
+    const char = cleanText[i];
+    const nextChar = cleanText[i + 1];
+
+    if (char === '"') {
+      if (insideQuotes && nextChar === '"') {
+        currentField += '"';
+        i++; // skip escaped quote
+      } else {
+        insideQuotes = !insideQuotes;
+      }
+    } else if (char === ',' && !insideQuotes) {
+      currentRow.push(currentField.trim());
+      currentField = '';
+    } else if ((char === '\r' || char === '\n') && !insideQuotes) {
+      if (char === '\r' && nextChar === '\n') {
+        i++; // skip LF after CR
+      }
+      currentRow.push(currentField.trim());
+      if (currentRow.some((field) => field.length > 0)) {
+        lines.push(currentRow);
+      }
+      currentRow = [];
+      currentField = '';
+    } else {
+      currentField += char;
+    }
+  }
+
+  if (currentField.length > 0 || currentRow.length > 0) {
+    currentRow.push(currentField.trim());
+    if (currentRow.some((field) => field.length > 0)) {
+      lines.push(currentRow);
+    }
+  }
+
+  return lines;
+}
+
+/**
+ * Parse products from uploaded CSV file (Bulk Import 100+ products)
+ */
+export function parseProductsFromCSV(
+  csvContent: string,
+  existingCategories: string[] = [],
+  existingSuppliers: string[] = []
+): { products: Product[]; skippedCount: number; errors: string[] } {
+  const rows = parseCSVLines(csvContent);
+  const errors: string[] = [];
+  const products: Product[] = [];
+  let skippedCount = 0;
+
+  if (rows.length < 2) {
+    return { products: [], skippedCount: 0, errors: ['CSV ফাইলে পর্যাপ্ত ডাটা পাওয়া যায়নি'] };
+  }
+
+  // First row is headers
+  const headers = rows[0].map((h) => h.toLowerCase().trim());
+
+  // Detect column indexes flexibly
+  const findIdx = (keywords: string[]) => {
+    return headers.findIndex((h) => keywords.some((k) => h.includes(k.toLowerCase())));
+  };
+
+  const nameBnIdx = findIdx(['বাংলা', 'bangla', 'নাম']);
+  const nameEnIdx = findIdx(['english', 'ইংরেজি', 'name']);
+  const skuIdx = findIdx(['sku', 'এসকেইউ', 'কোড']);
+  const catIdx = findIdx(['ক্যাটাগরি', 'category']);
+  const supIdx = findIdx(['সাপ্লায়ার', 'supplier', 'কোম্পানি']);
+  const unitIdx = findIdx(['একক', 'unit']);
+  const unitPriceIdx = findIdx(['বিক্রয়মূল্য', 'বিক্রয়', 'সেল রেট', 'unitprice', 'price', 'রেট']);
+  const costPriceIdx = findIdx(['কেনাদর', 'কেনা', 'ক্রয়মূল্য', 'cost', 'costprice']);
+  const stockIdx = findIdx(['স্টক', 'stock', 'পরিমাণ', 'qty']);
+  const minStockIdx = findIdx(['সর্বনিম্ন', 'অ্যালার্ট', 'alert', 'min']);
+  const offerIdx = findIdx(['অফার', 'offer', 'trade']);
+
+  const now = Date.now();
+
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    if (!row || row.length === 0 || row.every((c) => !c || c.trim() === '')) {
+      continue;
+    }
+
+    const banglaName = (nameBnIdx >= 0 ? row[nameBnIdx] : row[0]) || '';
+    const englishName = (nameEnIdx >= 0 && nameEnIdx !== nameBnIdx ? row[nameEnIdx] : row[1]) || banglaName;
+    
+    if (!banglaName.trim() && !englishName.trim()) {
+      skippedCount++;
+      continue;
+    }
+
+    const rawUnitPrice = unitPriceIdx >= 0 ? row[unitPriceIdx] : (row[5] || row[4]);
+    const cleanUnitPrice = parseFloat(String(rawUnitPrice || '').replace(/[^0-9.]/g, ''));
+    if (isNaN(cleanUnitPrice) || cleanUnitPrice < 0) {
+      skippedCount++;
+      errors.push(`সারি #${r + 1}: "${banglaName || englishName}" এর সঠিক বিক্রয়মূল্য পাওয়া যায়নি`);
+      continue;
+    }
+
+    const rawCostPrice = costPriceIdx >= 0 ? row[costPriceIdx] : (row[6] || row[5]);
+    const costPrice = parseFloat(String(rawCostPrice || '').replace(/[^0-9.]/g, '')) || cleanUnitPrice;
+
+    const rawStock = stockIdx >= 0 ? row[stockIdx] : (row[7] || row[6]);
+    const stock = Math.max(0, parseInt(String(rawStock || '').replace(/[^0-9]/g, ''), 10) || 0);
+
+    const rawMin = minStockIdx >= 0 ? row[minStockIdx] : (row[8] || row[7]);
+    const minStockAlert = Math.max(0, parseInt(String(rawMin || '').replace(/[^0-9]/g, ''), 10) || 5);
+
+    const sku = (skuIdx >= 0 ? row[skuIdx] : '') || `SKU-${now}-${r}`;
+    const category = (catIdx >= 0 ? row[catIdx] : '') || (existingCategories[0] || 'তেল ও ঘি');
+    const supplier = (supIdx >= 0 ? row[supIdx] : '') || (existingSuppliers[0] || '');
+    const unit = (unitIdx >= 0 ? row[unitIdx] : '') || 'পিস';
+    const tradeOfferDesc = offerIdx >= 0 ? row[offerIdx] : '';
+
+    const newProd: Product = {
+      id: `prod-${now}-${r}-${Math.random().toString(36).substring(2, 6)}`,
+      name: englishName || banglaName,
+      banglaName: banglaName || englishName,
+      sku: sku.trim(),
+      category: category.trim(),
+      supplier: supplier.trim(),
+      unit: unit.trim(),
+      unitPrice: cleanUnitPrice,
+      costPrice: costPrice,
+      stock: stock,
+      minStockAlert: minStockAlert,
+      tradeOfferDesc: tradeOfferDesc.trim(),
+      imageUrl: '',
+    };
+
+    products.push(newProd);
+  }
+
+  return { products, skippedCount, errors };
+}
+
+/**
  * Download Shops Ledger as Excel-compatible CSV
  */
 export function downloadShopsCSV(shops: Shop[]): void {

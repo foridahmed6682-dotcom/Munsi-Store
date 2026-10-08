@@ -32,7 +32,7 @@ import {
   resetFirestoreQuotaCircuitBreakers,
   testFirestoreConnection,
 } from '../lib/firebase';
-import { getIndexedDBStats } from '../lib/indexedDb';
+import { getIndexedDBStats, clearAllIndexedDBData } from '../lib/indexedDb';
 
 interface AdminDiagnosticsMonitorProps {
   productsCount: number;
@@ -231,6 +231,32 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
     await refreshDiagnostics();
     if (onShowToast) {
       onShowToast('ডায়াগনস্টিক লগ পরিষ্কার করা হয়েছে', 'info');
+    }
+  };
+
+  const [isClearingIDB, setIsClearingIDB] = useState(false);
+  const handleRefreshIndexedDBCache = async () => {
+    if (!window.confirm('আপনি কি ব্রাউজারের IndexedDB অফলাইন ক্যাশ রিফ্রেশ করতে চান? (এটি ক্লাউড ডাটা মুছবে না, শুধুমাত্র ব্রাউজার ক্যাশ ক্লিন করে নতুন করে সিঙ্ক করবে)')) {
+      return;
+    }
+    setIsClearingIDB(true);
+    try {
+      await clearAllIndexedDBData();
+      // Re-trigger background sync from current in-memory / local storage
+      const prods = getProducts();
+      if (prods.length > 0) {
+        saveProducts(prods);
+      }
+      await refreshDiagnostics();
+      if (onShowToast) {
+        onShowToast('IndexedDB ক্যাশ সফলভাবে রিফ্রেশ ও অপ্টিমাইজ করা হয়েছে!', 'success');
+      }
+    } catch (err: any) {
+      if (onShowToast) {
+        onShowToast(`ক্যাশ রিফ্রেশ করতে সমস্যা হয়েছে: ${err?.message || 'Error'}`, 'error');
+      }
+    } finally {
+      setIsClearingIDB(false);
     }
   };
 
@@ -566,23 +592,55 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
         <div className="bg-white p-4 rounded-2xl border border-neutral-200 shadow-xs space-y-2 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-neutral-500">IndexedDB অফলাইন ভল্ট</span>
+              <span className="text-xs font-bold text-neutral-500">IndexedDB স্টোরেজ মিটার</span>
               <Database className="w-4 h-4 text-indigo-600" />
             </div>
             <div className="flex items-baseline justify-between pt-1">
               <span className="text-lg font-black text-neutral-900">
-                {idbStats.totalRecords} টি রেকর্ড
+                {idbStats.estimatedUsageMB !== undefined
+                  ? `${idbStats.estimatedUsageMB} MB ব্যবহৃত`
+                  : `${idbStats.totalRecords} টি রেকর্ড`}
               </span>
               <span className="px-2 py-0.5 rounded font-bold text-[10px] bg-indigo-100 text-indigo-800">
                 ✓ অফলাইন রেডি
               </span>
             </div>
             <div className="text-[11px] text-neutral-600 font-medium pt-1">
-              সীমা: {idbStats.estimatedQuotaMB ? `${idbStats.estimatedQuotaMB} MB` : '৫০ MB – ১ GB+'} • ৫ MB লিমিট নেই
+              ধারণক্ষমতা: {idbStats.estimatedUsageMB !== undefined ? `${idbStats.estimatedUsageMB} MB / ` : ''}{idbStats.estimatedQuotaMB ? `${idbStats.estimatedQuotaMB} MB` : '৫০ MB – ১ GB+'} • ({idbStats.totalRecords} টি রেকর্ড)
             </div>
-            <p className="text-[10px] text-neutral-400 pt-0.5">
-              অফলাইনেও সম্পূর্ণ অর্ডার, ইনভেন্টরি ও দোকান ডিভাইসে সুরক্ষিত থাকে।
+            {/* Storage Progress Bar */}
+            <div className="w-full bg-neutral-100 h-1.5 rounded-full overflow-hidden mt-1.5">
+              <div
+                className="bg-indigo-600 h-full rounded-full transition-all duration-500"
+                style={{
+                  width: `${Math.min(
+                    100,
+                    Math.max(
+                      3,
+                      idbStats.estimatedQuotaMB && idbStats.estimatedUsageMB
+                        ? (idbStats.estimatedUsageMB / idbStats.estimatedQuotaMB) * 100
+                        : 5
+                    )
+                  )}%`,
+                }}
+              />
+            </div>
+            <p className="text-[10px] text-neutral-400 pt-1">
+              ব্রাউজার মেমোরিতে সম্পূর্ণ অর্ডার, ইনভেন্টরি ও ভারী ছবি সুরক্ষিত।
             </p>
+          </div>
+          <div className="pt-2 border-t border-neutral-100 flex items-center justify-between">
+            <span className="text-[10px] text-neutral-500 font-medium">১-ক্লিক ক্যাশ টুল</span>
+            <button
+              type="button"
+              disabled={isClearingIDB}
+              onClick={handleRefreshIndexedDBCache}
+              className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50 text-indigo-900 font-bold text-[10px] flex items-center gap-1 cursor-pointer transition-colors"
+              title="ব্রাউজারের IndexedDB ক্যাশ রিফ্রেশ করুন"
+            >
+              <RefreshCw className={`w-3 h-3 ${isClearingIDB ? 'animate-spin' : ''}`} />
+              <span>{isClearingIDB ? 'রিফ্রেশ হচ্ছে...' : 'ক্যাশ রিফ্রেশ করুন'}</span>
+            </button>
           </div>
         </div>
 

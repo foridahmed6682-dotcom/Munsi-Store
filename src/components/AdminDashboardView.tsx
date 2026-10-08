@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   ShieldCheck,
   LayoutDashboard,
@@ -72,7 +72,8 @@ import {
 } from '../types';
 import { processImageFile } from '../lib/imageUtils';
 import { fetchAllUsers, updateUserRoleAndRoute, getBusinessInfo, saveBusinessInfoToCloud, subscribeToCloudBusinessInfo } from '../lib/firebase';
-import { saveBusinessInfoLocal, DEFAULT_BUSINESS_INFO, parseBanglaNumber, addOrUpdateSupplier } from '../lib/storage';
+import { saveBusinessInfoLocal, DEFAULT_BUSINESS_INFO, parseBanglaNumber, addOrUpdateSupplier, getProducts, saveProducts } from '../lib/storage';
+import { getIndexedDBStats, clearAllIndexedDBData } from '../lib/indexedDb';
 import { AddShopModal } from './AddShopModal';
 import { ProductImageLightboxModal } from './ProductImageLightboxModal';
 import {
@@ -637,6 +638,45 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   // Business Info Settings State
   const [bizInfo, setBizInfo] = useState<BusinessInfo>(getBusinessInfo());
   const [isSavingBiz, setIsSavingBiz] = useState(false);
+
+  // IndexedDB Settings Storage Stats & 1-Click Refresh State
+  const [idbSettingsStats, setIdbSettingsStats] = useState<{
+    supported: boolean;
+    totalRecords: number;
+    estimatedQuotaMB?: number;
+    estimatedUsageMB?: number;
+  }>({ supported: true, totalRecords: 0 });
+  const [isClearingIDBSettings, setIsClearingIDBSettings] = useState(false);
+
+  const refreshIDBSettingsStats = useCallback(() => {
+    getIndexedDBStats().then(setIdbSettingsStats).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (subTab === 'settings') {
+      refreshIDBSettingsStats();
+    }
+  }, [subTab, refreshIDBSettingsStats, products.length, shops.length, orders.length]);
+
+  const handle1ClickRefreshIDBCache = async () => {
+    if (!window.confirm('আপনি কি নিশ্চিত যে ব্রাউজারের IndexedDB ক্যাশ রিফ্রেশ করতে চান? (এটি ক্লাউডের কোনো তথ্য মুছবে না, শুধুমাত্র ব্রাউজার অফলাইন ক্যাশ ক্লিন ও রি-সিঙ্ক করবে)')) {
+      return;
+    }
+    setIsClearingIDBSettings(true);
+    try {
+      await clearAllIndexedDBData();
+      const currentProds = getProducts();
+      if (currentProds.length > 0) {
+        saveProducts(currentProds);
+      }
+      refreshIDBSettingsStats();
+      showToast('IndexedDB অফলাইন ক্যাশ সফলভাবে রিফ্রেশ ও অপ্টিমাইজ করা হয়েছে!', 'success');
+    } catch (err: any) {
+      showToast(`ক্যাশ রিফ্রেশ করতে সমস্যা: ${err?.message || 'Error'}`, 'error');
+    } finally {
+      setIsClearingIDBSettings(false);
+    }
+  };
 
   // Tool #6 & #8 State: Profit Analytics Period & Staff Target Editing
   const [profitPeriod, setProfitPeriod] = useState<'TODAY' | 'MONTH' | 'ALL'>('MONTH');
@@ -3732,6 +3772,98 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 </div>
               </div>
 
+              {/* Section 5: IndexedDB Offline Storage Meter & 1-Click Cache Cleaner */}
+              <div className="space-y-4 pt-3 border-t border-neutral-200">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-indigo-900 flex items-center gap-1.5">
+                      <Database className="w-4 h-4 text-indigo-600" />
+                      <span>৫. IndexedDB অফলাইন স্টোরেজ মিটার ও ১-ক্লিক ক্যাশ রিফ্রেশ</span>
+                    </h3>
+                    <p className="text-[11px] text-neutral-500 mt-0.5">
+                      ব্রাউজারে কতটুকু IndexedDB ব্যবহৃত হয়েছে তা দেখুন এবং প্রয়োজনে ১-ক্লিকে ক্যাশ রিফ্রেশ ও অপ্টিমাইজ করুন।
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={isClearingIDBSettings}
+                    onClick={handle1ClickRefreshIDBCache}
+                    className="px-3.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50 text-indigo-900 font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-colors border border-indigo-200 active:scale-95"
+                    title="ব্রাউজারের IndexedDB ক্যাশ রিফ্রেশ করুন"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isClearingIDBSettings ? 'animate-spin' : ''}`} />
+                    <span>{isClearingIDBSettings ? 'রিফ্রেশ হচ্ছে...' : '১-ক্লিকে ক্যাশ রিফ্রেশ করুন'}</span>
+                  </button>
+                </div>
+
+                <div className="p-4 bg-indigo-50/50 rounded-2xl border border-indigo-200 grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="p-3 bg-white rounded-xl border border-indigo-100 shadow-2xs">
+                    <span className="text-[11px] font-bold text-neutral-500 block">বর্তমান স্টোরেজ ব্যবহার</span>
+                    <span className="text-base font-black text-indigo-950 mt-1 block">
+                      {idbSettingsStats.estimatedUsageMB !== undefined
+                        ? `${idbSettingsStats.estimatedUsageMB} MB`
+                        : 'পরিমাপ হচ্ছে...'}
+                    </span>
+                    <span className="text-[10px] text-neutral-400 mt-0.5 block">
+                      ক্লিন ও অপ্টিমাইজড ডাটাবেস
+                    </span>
+                  </div>
+
+                  <div className="p-3 bg-white rounded-xl border border-indigo-100 shadow-2xs">
+                    <span className="text-[11px] font-bold text-neutral-500 block">মোট স্টোরেজ ক্যাপাসিটি (Quota)</span>
+                    <span className="text-base font-black text-indigo-950 mt-1 block">
+                      {idbSettingsStats.estimatedQuotaMB
+                        ? `${idbSettingsStats.estimatedQuotaMB} MB`
+                        : '৫০ MB – ১ GB+'}
+                    </span>
+                    <span className="text-[10px] text-emerald-600 font-bold mt-0.5 block">
+                      ✓ লোকালস্টোরেজ ৫ MB কোটা ছাড়িয়ে নিরাপদ
+                    </span>
+                  </div>
+
+                  <div className="p-3 bg-white rounded-xl border border-indigo-100 shadow-2xs">
+                    <span className="text-[11px] font-bold text-neutral-500 block">অফলাইনে সংরক্ষিত রেকর্ডস</span>
+                    <span className="text-base font-black text-indigo-950 mt-1 block">
+                      {idbSettingsStats.totalRecords} টি রেকর্ড
+                    </span>
+                    <span className="text-[10px] text-indigo-700 font-medium mt-0.5 block">
+                      অর্ডার, প্রোডাক্ট ও হাই-রেজ্যুলেশন ছবি
+                    </span>
+                  </div>
+                </div>
+
+                {/* Storage Meter Bar */}
+                <div className="space-y-1">
+                  <div className="flex justify-between text-[11px] font-bold text-neutral-600">
+                    <span>
+                      ব্যবহার: {idbSettingsStats.estimatedUsageMB !== undefined ? `${idbSettingsStats.estimatedUsageMB} MB` : '০ MB'} / {idbSettingsStats.estimatedQuotaMB ? `${idbSettingsStats.estimatedQuotaMB} MB` : '১ GB+'}
+                    </span>
+                    <span className="text-indigo-800">
+                      {idbSettingsStats.estimatedQuotaMB && idbSettingsStats.estimatedUsageMB
+                        ? `${((idbSettingsStats.estimatedUsageMB / idbSettingsStats.estimatedQuotaMB) * 100).toFixed(2)}% ব্যবহৃত`
+                        : '১% এর কম ব্যবহৃত'}
+                    </span>
+                  </div>
+                  <div className="w-full bg-neutral-200 h-2 rounded-full overflow-hidden">
+                    <div
+                      className="bg-indigo-600 h-full rounded-full transition-all duration-500"
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          Math.max(
+                            2,
+                            idbSettingsStats.estimatedQuotaMB && idbSettingsStats.estimatedUsageMB
+                              ? (idbSettingsStats.estimatedUsageMB / idbSettingsStats.estimatedQuotaMB) * 100
+                              : 3
+                          )
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+
               {/* Live Preview Card */}
               <div className="p-4 bg-neutral-50 rounded-2xl border border-neutral-200 space-y-3">
                 <span className="text-[10px] uppercase tracking-wider font-extrabold text-neutral-400 block">
@@ -5638,8 +5770,12 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
                 <div>
                   <label className="block text-xs font-bold text-neutral-700 mb-1">
-                    প্রোডাক্ট ছবি লিংক (Image URL) অথবা ডিভাইস থেকে সরাসরি আপলোড
+                    প্রোডাক্ট ছবি লিংক (Image URL) অথবা ক্যামেরা/গ্যালারি থেকে সরাসরি আপলোড
                   </label>
+                  <p className="text-[11px] text-emerald-800 font-medium mb-1.5 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 inline-block"></span>
+                    <span>ক্যামেরা বা গ্যালারি থেকে ৩-৫ MB বড় ছবি দিলেও ব্রাউজারে স্বয়ংক্রিয়ভাবে WebP/JPEG ফরম্যাটে অপ্টিমাইজড ও কম্প্রেস হয়ে যাবে (ডাটা সাশ্রয়ী)।</span>
+                  </p>
                   <div className="flex flex-col sm:flex-row gap-2 items-stretch">
                     <input
                       type="text"
