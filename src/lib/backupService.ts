@@ -10,6 +10,11 @@ import {
   AuthorizedUserEmail,
   BusinessInfo,
 } from '../types';
+import {
+  setKeyValToIndexedDB,
+  getKeyValFromIndexedDB,
+  isIndexedDBSupported,
+} from './indexedDb';
 
 export interface FullBackupData {
   version: string;
@@ -145,32 +150,19 @@ export function saveAutoBackupSnapshot(
     };
 
     const updated = [snapshot, ...existing].slice(0, MAX_SNAPSHOTS);
+    memorySnapshotsCache = updated;
 
-    // Compact base64 images for the browser localStorage copy so 10 snapshots never overflow 5MB browser quota
-    const slimLocalVault = updated.slice(0, 3).map((s) => ({
-      ...s,
-      data: s.data
-        ? {
-            ...s.data,
-            products: Array.isArray(s.data.products)
-              ? s.data.products.map((p) =>
-                  p && typeof p.imageUrl === 'string' && p.imageUrl.startsWith('data:') && p.imageUrl.length > 15000
-                    ? { ...p, imageUrl: '' }
-                    : p
-                )
-              : [],
-          }
-        : s.data,
-    }));
+    // High-capacity persistence: Save full snapshots safely to browser IndexedDB (50MB - 1GB capacity)
+    if (isIndexedDBSupported()) {
+      setKeyValToIndexedDB('auto_backup_vault', updated).catch(() => {});
+    }
 
+    // Keep localStorage clean to NEVER hit 5MB limit
     try {
-      localStorage.setItem(AUTO_BACKUP_VAULT_KEY, JSON.stringify(slimLocalVault));
+      localStorage.removeItem(AUTO_BACKUP_VAULT_KEY);
+      localStorage.removeItem('munsi_auto_backup_snapshots_v1');
     } catch {
-      try {
-        localStorage.setItem(AUTO_BACKUP_VAULT_KEY, JSON.stringify(slimLocalVault.slice(0, 1)));
-      } catch {
-        // ignore local vault quota error
-      }
+      // ignore
     }
 
     // Also push full snapshot asynchronously to server & cloud vault
@@ -187,18 +179,56 @@ export function saveAutoBackupSnapshot(
   }
 }
 
+let memorySnapshotsCache: AutoBackupSnapshot[] | null = null;
+
 export function getLocalAutoBackupSnapshots(): AutoBackupSnapshot[] {
+  if (memorySnapshotsCache && memorySnapshotsCache.length > 0) {
+    return memorySnapshotsCache;
+  }
+
+  // Attempt to load from IndexedDB in the background if supported
+  if (isIndexedDBSupported()) {
+    getKeyValFromIndexedDB<AutoBackupSnapshot[]>('auto_backup_vault')
+      .then((val) => {
+        if (Array.isArray(val) && val.length > 0) {
+          memorySnapshotsCache = val;
+        }
+      })
+      .catch(() => {});
+  }
+
   try {
     const raw = localStorage.getItem(AUTO_BACKUP_VAULT_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    const list = Array.isArray(parsed) ? parsed : [];
+    if (list.length > 0) {
+      memorySnapshotsCache = list;
+      // Migrate to IndexedDB and remove heavy payload from localStorage
+      if (isIndexedDBSupported()) {
+        setKeyValToIndexedDB('auto_backup_vault', list).catch(() => {});
+      }
+      try {
+        localStorage.removeItem(AUTO_BACKUP_VAULT_KEY);
+      } catch {}
+    }
+    return list;
   } catch {
     return [];
   }
 }
 
 export async function fetchAllAutoBackupSnapshots(): Promise<AutoBackupSnapshot[]> {
+  // Check IndexedDB first for fastest offline access
+  if (isIndexedDBSupported()) {
+    try {
+      const idbVal = await getKeyValFromIndexedDB<AutoBackupSnapshot[]>('auto_backup_vault');
+      if (Array.isArray(idbVal) && idbVal.length > 0) {
+        memorySnapshotsCache = idbVal;
+      }
+    } catch {}
+  }
+
   const local = getLocalAutoBackupSnapshots();
   try {
     const res = await fetch('/api/db/snapshots');
@@ -217,25 +247,11 @@ export async function fetchAllAutoBackupSnapshots(): Promise<AutoBackupSnapshot[
         const merged = Array.from(map.values())
           .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
           .slice(0, MAX_SNAPSHOTS);
-        try {
-          const slimMerged = merged.slice(0, 2).map((s) => ({
-            ...s,
-            data: s.data
-              ? {
-                  ...s.data,
-                  products: Array.isArray(s.data.products)
-                    ? s.data.products.map((p) =>
-                        p && typeof p.imageUrl === 'string' && p.imageUrl.startsWith('data:') && p.imageUrl.length > 15000
-                          ? { ...p, imageUrl: '' }
-                          : p
-                      )
-                    : [],
-                }
-              : s.data,
-          }));
-          localStorage.setItem(AUTO_BACKUP_VAULT_KEY, JSON.stringify(slimMerged));
-        } catch {
-          // ignore localStorage quota on snapshot cache
+
+        memorySnapshotsCache = merged;
+        // Persist full merged snapshots in IndexedDB
+        if (isIndexedDBSupported()) {
+          setKeyValToIndexedDB('auto_backup_vault', merged).catch(() => {});
         }
         return merged;
       }

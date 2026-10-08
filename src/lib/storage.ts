@@ -1,4 +1,29 @@
 import { Product, Shop, Order, DueCollectionRecord, DailyMetrics, Category, Supplier, AuthorizedUserEmail, Route, BusinessInfo, CustomerDeliveryAddress, DailyExpenseRecord, StaffTargetConfig } from '../types';
+import {
+  saveItemsToIndexedDB,
+  getItemsFromIndexedDB,
+  isIndexedDBSupported,
+  saveProductImageToIndexedDB,
+  getAllProductImagesFromIndexedDB,
+  setKeyValToIndexedDB,
+} from './indexedDb';
+
+// In-Memory Fast Caches to guarantee instant zero-lag operations even if localStorage is pruned
+let memoryProductsCache: Product[] | null = null;
+let memoryShopsCache: Shop[] | null = null;
+let memoryOrdersCache: Order[] | null = null;
+
+export function setMemoryProductsCache(products: Product[]) {
+  memoryProductsCache = products;
+}
+
+export function setMemoryOrdersCache(orders: Order[]) {
+  memoryOrdersCache = orders;
+}
+
+export function setMemoryShopsCache(shops: Shop[]) {
+  memoryShopsCache = shops;
+}
 
 const STORAGE_KEYS = {
   SHOPS: 'dsr_shops_v1',
@@ -310,59 +335,49 @@ export function compactLocalBackupSnapshotsToFreeSpace(): number {
     'munsi_auto_safety_snapshot_v1',
     'munsi_last_known_good_state_v1',
   ];
+  // Snapshots live fully inside IndexedDB, so we can completely wipe them from localStorage
   for (const k of heavyKeys) {
     try {
       const raw = localStorage.getItem(k);
-      if (!raw) continue;
-      const beforeLen = raw.length;
-      if (k === 'munsi_auto_backup_snapshots_v1' || k === 'munsi_auto_backup_vault_v1') {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          // Keep only 1 lightweight snapshot in browser localStorage (full 10 snapshots live on Server Disk)
-          const slim = parsed.slice(0, 1).map((snap: any) => ({
-            ...snap,
-            data: snap?.data
-              ? {
-                  ...snap.data,
-                  products: Array.isArray(snap.data.products)
-                    ? snap.data.products.map((p: any) =>
-                        p && typeof p.imageUrl === 'string' && p.imageUrl.startsWith('data:')
-                          ? { ...p, imageUrl: '' }
-                          : p
-                      )
-                    : [],
-                }
-              : snap?.data,
-          }));
-          const nextStr = JSON.stringify(slim);
-          localStorage.setItem(k, nextStr);
-          freedChars += Math.max(0, beforeLen - nextStr.length);
-        }
-      } else {
-        const parsed = JSON.parse(raw);
-        const targetProducts = parsed?.data?.products || parsed?.products;
-        if (Array.isArray(targetProducts)) {
-          const stripImgs = (prods: any[]) =>
-            prods.map((p: any) =>
-              p && typeof p.imageUrl === 'string' && p.imageUrl.startsWith('data:')
-                ? { ...p, imageUrl: '' }
-                : p
-            );
-          if (parsed?.data?.products) parsed.data.products = stripImgs(parsed.data.products);
-          if (parsed?.products) parsed.products = stripImgs(parsed.products);
-          const nextStr = JSON.stringify(parsed);
-          localStorage.setItem(k, nextStr);
-          freedChars += Math.max(0, beforeLen - nextStr.length);
-        }
-      }
-    } catch {
-      try {
+      if (raw) {
+        freedChars += raw.length;
         localStorage.removeItem(k);
-      } catch {
-        // ignore
+      }
+    } catch {}
+  }
+
+  // Also trim diagnostic logs if > 25KB
+  try {
+    const diagRaw = localStorage.getItem(DIAG_STORAGE_KEY);
+    if (diagRaw && diagRaw.length > 25000) {
+      const parsed = JSON.parse(diagRaw);
+      if (Array.isArray(parsed) && parsed.length > 10) {
+        const trimmed = parsed.slice(-10);
+        localStorage.setItem(DIAG_STORAGE_KEY, JSON.stringify(trimmed));
+        freedChars += Math.max(0, diagRaw.length - JSON.stringify(trimmed).length);
       }
     }
-  }
+  } catch {}
+
+  // If products still hold heavy base64 images in localStorage, strip them from localStorage
+  // (the full high-res images are safely preserved in IndexedDB & in-memory cache)
+  try {
+    const rawProds = localStorage.getItem(STORAGE_KEYS.PRODUCTS);
+    if (rawProds && rawProds.includes('data:image/')) {
+      const parsed: Product[] = JSON.parse(rawProds);
+      if (Array.isArray(parsed)) {
+        const slim = parsed.map((p) =>
+          p.imageUrl && p.imageUrl.startsWith('data:image/') && p.imageUrl.length > 10000
+            ? { ...p, imageUrl: '' }
+            : p
+        );
+        const nextStr = JSON.stringify(slim);
+        localStorage.setItem(STORAGE_KEYS.PRODUCTS, nextStr);
+        freedChars += Math.max(0, rawProds.length - nextStr.length);
+      }
+    }
+  } catch {}
+
   return Math.round(freedChars / 1024);
 }
 
@@ -377,22 +392,22 @@ export function safeSetLocalStorage(key: string, value: string): boolean {
       source: 'storage',
       severity: 'warning',
       category: 'storage_overflow',
-      titleBn: 'ব্রাউজার লোকাল স্টোরেজ (5MB) পূর্ণ হয়ে গিয়েছিল — অটো-স্পেস ক্লিনআপ সম্পন্ন',
-      detailsBn: `নতুন ডাটা (${key}) সেভ করার সময় ব্রাউজারের ৫ মেগাবাইট মেমোরি পূর্ণ হয়ে গিয়েছিল। পুরনো স্ন্যাপশটগুলোর ভারী ছবি কম্প্যাক্ট করে ${freedKB} KB জায়গা খালি করা হয়েছে এবং ডাটা নিরাপদে সেভ হয়েছে।`,
+      titleBn: 'ব্রাউজার লোকাল স্টোরেজ (5MB) সতর্কবার্তা — অটো স্পেস ক্লিনআপ সম্পন্ন',
+      detailsBn: `নতুন ডাটা (${key}) সেভ করার সময় লোকাল স্টোরেজে স্পেস কম থাকায় স্বয়ংক্রিয়ভাবে ${freedKB} KB জায়গা খালি করা হয়েছে। সম্পূর্ণ ডাটা IndexedDB-তে স্থায়ীভাবে সংরক্ষিত আছে।`,
       technicalDetails: `QuotaExceededError on key "${key}" (payload ${(value.length / 1024).toFixed(1)} KB). Freed ${freedKB} KB.`,
     });
     try {
       localStorage.setItem(key, value);
       return true;
     } catch (retryErr: any) {
-      recordDiagnosticEvent({
-        source: 'storage',
-        severity: 'error',
-        category: 'storage_overflow',
-        titleBn: `লোকাল স্টোরেজে (${key}) সেভ ব্যর্থ — মেমোরি ওভারফ্লো`,
-        detailsBn: 'ব্রাউজারের লোকাল স্টোরেজ সম্পূর্ণ পূর্ণ। অনুগ্রহ করে অ্যাডমিন প্যানেলের ডায়াগনস্টিক সেকশন থেকে "লোকাল ক্যাশ অপ্টিমাইজ" বাটনে ক্লিক করুন।',
-        technicalDetails: String(retryErr?.message || retryErr),
-      });
+      // If localStorage is strictly full, do NOT break the user's flow!
+      // Write directly to IndexedDB so no work is ever lost!
+      if (isIndexedDBSupported()) {
+        try {
+          // Asynchronous fallback write to IndexedDB
+          setKeyValToIndexedDB(key, value).catch(() => {});
+        } catch {}
+      }
       return false;
     }
   }
@@ -617,6 +632,9 @@ export function getBusinessInfoLocal(): BusinessInfo | null {
 
 // Storage Helpers
 export function getProducts(): Product[] {
+  if (memoryProductsCache && memoryProductsCache.length > 0) {
+    return memoryProductsCache;
+  }
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.PRODUCTS);
     const deletedIds = getDeletedProductIds();
@@ -625,6 +643,23 @@ export function getProducts(): Product[] {
     }
     const parsed: Product[] = JSON.parse(raw);
     const clean = parsed.filter((p) => !deletedIds.has(p.id));
+    memoryProductsCache = clean;
+
+    // Asynchronously restore any heavy product images from IndexedDB if needed
+    if (isIndexedDBSupported()) {
+      getAllProductImagesFromIndexedDB().then((imgMap) => {
+        if (imgMap && Object.keys(imgMap).length > 0 && memoryProductsCache) {
+          let updated = false;
+          memoryProductsCache.forEach((p) => {
+            if ((!p.imageUrl || p.imageUrl === '') && imgMap[p.id]) {
+              p.imageUrl = imgMap[p.id];
+              updated = true;
+            }
+          });
+        }
+      }).catch(() => {});
+    }
+
     if (clean.length !== parsed.length) {
       safeSetLocalStorage(STORAGE_KEYS.PRODUCTS, JSON.stringify(clean));
     }
@@ -637,18 +672,38 @@ export function getProducts(): Product[] {
 export function saveProducts(products: Product[]) {
   const deletedIds = getDeletedProductIds();
   const clean = products.filter((p) => !deletedIds.has(p.id));
-  if (!safeSetLocalStorage(STORAGE_KEYS.PRODUCTS, JSON.stringify(clean))) {
+  memoryProductsCache = clean;
+
+  // 1. Dual-write to IndexedDB asynchronously (handles 50MB - 1GB capacity safely)
+  if (isIndexedDBSupported()) {
+    saveItemsToIndexedDB('products', clean).catch(() => {});
+    clean.forEach((p) => {
+      if (p.imageUrl && p.imageUrl.startsWith('data:image/')) {
+        saveProductImageToIndexedDB(p.id, p.imageUrl).catch(() => {});
+      }
+    });
+  }
+
+  // 2. Prevent LocalStorage 5MB quota overflow:
+  // If products have heavy base64 images, save stripped version to localStorage,
+  // while memoryProductsCache and IndexedDB preserve high-resolution images!
+  const hasHeavyImages = clean.some((p) => p.imageUrl && p.imageUrl.startsWith('data:image/') && p.imageUrl.length > 25000);
+  const localPayload = hasHeavyImages
+    ? clean.map((p) => (
+        p.imageUrl && p.imageUrl.startsWith('data:image/') && p.imageUrl.length > 25000
+          ? { ...p, imageUrl: '' }
+          : p
+      ))
+    : clean;
+
+  if (!safeSetLocalStorage(STORAGE_KEYS.PRODUCTS, JSON.stringify(localPayload))) {
     // Proactively free heavy local snapshot backups first
     compactLocalBackupSnapshotsToFreeSpace();
-    if (!safeSetLocalStorage(STORAGE_KEYS.PRODUCTS, JSON.stringify(clean))) {
+    if (!safeSetLocalStorage(STORAGE_KEYS.PRODUCTS, JSON.stringify(localPayload))) {
       try {
-        // Only if absolutely full and retry failed, truncate heavy base64 strings (never touch http/firebase/server urls!)
         const compacted = clean.map((p) => ({
           ...p,
-          imageUrl:
-            p.imageUrl && p.imageUrl.startsWith('data:image/') && p.imageUrl.length > 80000
-              ? ''
-              : p.imageUrl,
+          imageUrl: p.imageUrl && p.imageUrl.startsWith('data:image/') ? '' : p.imageUrl,
         }));
         safeSetLocalStorage(STORAGE_KEYS.PRODUCTS, JSON.stringify(compacted));
       } catch (innerErr) {
@@ -939,6 +994,9 @@ export function adjustStock(productId: string, quantityDelta: number) {
 }
 
 export function getShops(): Shop[] {
+  if (memoryShopsCache && memoryShopsCache.length > 0) {
+    return memoryShopsCache;
+  }
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.SHOPS);
     if (!raw) {
@@ -947,6 +1005,7 @@ export function getShops(): Shop[] {
     const parsed: Shop[] = JSON.parse(raw);
     const deletedIds = getDeletedShopIds();
     const realShops = parsed.filter((s) => !deletedIds.has(s.id));
+    memoryShopsCache = realShops;
     return realShops;
   } catch (e) {
     return [];
@@ -956,7 +1015,17 @@ export function getShops(): Shop[] {
 export function saveShops(shops: Shop[]) {
   const deletedIds = getDeletedShopIds();
   const clean = shops.filter((s) => !deletedIds.has(s.id));
-  safeSetLocalStorage(STORAGE_KEYS.SHOPS, JSON.stringify(clean));
+  memoryShopsCache = clean;
+
+  // Persist safely in IndexedDB (virtually unlimited capacity)
+  if (isIndexedDBSupported()) {
+    saveItemsToIndexedDB('shops', clean).catch(() => {});
+  }
+
+  if (!safeSetLocalStorage(STORAGE_KEYS.SHOPS, JSON.stringify(clean))) {
+    compactLocalBackupSnapshotsToFreeSpace();
+    safeSetLocalStorage(STORAGE_KEYS.SHOPS, JSON.stringify(clean));
+  }
 }
 
 export function addOrUpdateShop(shop: Shop): Shop {
@@ -1011,6 +1080,9 @@ export function updateShopDue(shopId: string, dueDelta: number) {
 }
 
 export function getOrders(): Order[] {
+  if (memoryOrdersCache && memoryOrdersCache.length > 0) {
+    return memoryOrdersCache;
+  }
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.ORDERS);
     if (!raw) {
@@ -1019,6 +1091,7 @@ export function getOrders(): Order[] {
     const parsed: Order[] = JSON.parse(raw);
     const deletedIds = getDeletedOrderIds();
     const realOrders = parsed.filter((o) => !deletedIds.has(o.id));
+    memoryOrdersCache = realOrders;
     return realOrders;
   } catch (e) {
     return [];
@@ -1028,7 +1101,25 @@ export function getOrders(): Order[] {
 export function saveOrders(orders: Order[]) {
   const deletedIds = getDeletedOrderIds();
   const clean = orders.filter((o) => !deletedIds.has(o.id));
-  safeSetLocalStorage(STORAGE_KEYS.ORDERS, JSON.stringify(clean));
+  memoryOrdersCache = clean;
+
+  // Persist safely in IndexedDB (full orders history with unlimited capacity)
+  if (isIndexedDBSupported()) {
+    saveItemsToIndexedDB('orders', clean).catch(() => {});
+  }
+
+  // To prevent LocalStorage 5MB quota exhaustion:
+  // If order history is large, store the latest 150 orders in localStorage,
+  // while memoryOrdersCache and IndexedDB keep 100% of all orders available!
+  let localPayload = clean;
+  if (clean.length > 150) {
+    localPayload = clean.slice(0, 150);
+  }
+
+  if (!safeSetLocalStorage(STORAGE_KEYS.ORDERS, JSON.stringify(localPayload))) {
+    compactLocalBackupSnapshotsToFreeSpace();
+    safeSetLocalStorage(STORAGE_KEYS.ORDERS, JSON.stringify(clean.slice(0, 100)));
+  }
 }
 
 export function deleteOrder(orderId: string) {

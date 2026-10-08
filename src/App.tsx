@@ -163,7 +163,9 @@ import {
   syncAppDataToIndexedDB,
   getItemsFromIndexedDB,
   isIndexedDBSupported,
+  getAllProductImagesFromIndexedDB,
 } from './lib/indexedDb';
+import { setMemoryOrdersCache } from './lib/storage';
 
 export default function App() {
   // PWA Install Hook
@@ -302,32 +304,42 @@ export default function App() {
     initializeDefaultData();
     reloadData();
 
-    // If browser localStorage was emptied, restore seamlessly from IndexedDB
+    // Seamless IndexedDB hydration to ensure complete order history and product images without filling LocalStorage
     if (isIndexedDBSupported()) {
       const localProds = getProducts();
-      if (localProds.length === 0) {
-        Promise.all([
-          getItemsFromIndexedDB<Product>('products'),
-          getItemsFromIndexedDB<Shop>('shops'),
-          getItemsFromIndexedDB<Order>('orders'),
-        ]).then(([idbProds, idbShops, idbOrders]) => {
-          if (idbProds.length > 0 || idbShops.length > 0 || idbOrders.length > 0) {
-            if (idbProds.length > 0) {
-              saveProducts(idbProds);
-              setProducts(idbProds);
-            }
-            if (idbShops.length > 0) {
-              saveShops(idbShops);
-              setShops(idbShops);
-            }
-            if (idbOrders.length > 0) {
-              saveOrders(idbOrders);
-              setOrders(idbOrders);
-            }
-            showToast('IndexedDB অফলাইন ভল্ট থেকে ডাটা সফলভাবে রিস্টোর হয়েছে', 'info');
-          }
-        }).catch(() => {});
-      }
+      const localOrders = getOrders();
+      const localShops = getShops();
+      Promise.all([
+        getItemsFromIndexedDB<Product>('products'),
+        getItemsFromIndexedDB<Shop>('shops'),
+        getItemsFromIndexedDB<Order>('orders'),
+        getAllProductImagesFromIndexedDB(),
+      ]).then(([idbProds, idbShops, idbOrders, idbImages]) => {
+        let prodsToSet = localProds.length === 0 ? idbProds : localProds;
+        if (idbImages && Object.keys(idbImages).length > 0) {
+          prodsToSet = prodsToSet.map((p) => (!p.imageUrl && idbImages[p.id] ? { ...p, imageUrl: idbImages[p.id] } : p));
+        }
+        if (localProds.length === 0 && idbProds.length > 0) {
+          saveProducts(prodsToSet);
+          setProducts(prodsToSet);
+        } else if (idbImages && Object.keys(idbImages).length > 0) {
+          setProducts(prodsToSet);
+        }
+
+        if (localShops.length === 0 && idbShops.length > 0) {
+          saveShops(idbShops);
+          setShops(idbShops);
+        }
+
+        // If IndexedDB contains more orders than LocalStorage (because LocalStorage was pruned to prevent 5MB overflow)
+        if (idbOrders.length > localOrders.length) {
+          setOrders(idbOrders);
+          setMemoryOrdersCache(idbOrders);
+        } else if (localOrders.length === 0 && idbOrders.length > 0) {
+          saveOrders(idbOrders);
+          setOrders(idbOrders);
+        }
+      }).catch(() => {});
     }
 
     const handleOnline = () => {

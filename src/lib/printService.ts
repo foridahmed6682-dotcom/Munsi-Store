@@ -519,8 +519,7 @@ export function printOrdersBatch(
                   pair.length > 1
                     ? renderHalfMemo(pair[1], 2, 'landscape')
                     : `
-                    <div style="flex: 1; border: 1.5px dashed #cbd5e1; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #94a3b8; font-size: 11px; font-weight: 700; padding: 24px; box-sizing: border-box; text-align: center;">
-                      ✂️ খালি অংশ (কাগজটি কেটে অন্য কোনো মেমো বা কাজের জন্য ব্যবহার করতে পারবেন)
+                    <div style="flex: 1; border: 1.5px dashed #e2e8f0; border-radius: 8px; display: flex; align-items: center; justify-content: center; min-height: 120px;">
                     </div>
                   `
                 }
@@ -529,7 +528,7 @@ export function printOrdersBatch(
           `;
         }
 
-        // Default Portrait: Top and bottom memos with horizontal dashed line
+        // Default Portrait: Top and bottom memos with horizontal dashed line (only line, no text)
         const dividerHtml = `
           <div style="border-top: 1.5px dashed #475569; margin: 8px 0; width: 100%;"></div>
         `;
@@ -544,8 +543,7 @@ export function printOrdersBatch(
               pair.length > 1
                 ? renderHalfMemo(pair[1], 2, 'portrait')
                 : `
-                <div style="flex: 1; border: 1.5px dashed #cbd5e1; border-radius: 8px; margin-top: 6px; display: flex; align-items: center; justify-content: center; color: #94a3b8; font-size: 11px; font-weight: 700; padding: 24px; box-sizing: border-box;">
-                  ✂️ খালি অংশ (কাগজটি কেটে অন্য কোনো মেমো বা কাজের জন্য ব্যবহার করতে পারবেন)
+                <div style="flex: 1; border: 1.5px dashed #e2e8f0; border-radius: 8px; margin-top: 6px; display: flex; align-items: center; justify-content: center; min-height: 120px;">
                 </div>
               `
             }

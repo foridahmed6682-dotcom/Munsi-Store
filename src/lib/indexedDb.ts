@@ -4,7 +4,7 @@
  */
 
 const DB_NAME = 'MunsiAppOfflineDB';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 export const INDEXED_DB_STORES = [
   'products',
@@ -17,6 +17,8 @@ export const INDEXED_DB_STORES = [
   'dailyExpenses',
   'offlineQueue',
   'metadata',
+  'productImages',
+  'snapshots',
 ] as const;
 
 export type StoreName = (typeof INDEXED_DB_STORES)[number];
@@ -125,6 +127,119 @@ export async function getItemsFromIndexedDB<T>(storeName: StoreName): Promise<T[
     });
   } catch {
     return [];
+  }
+}
+
+export async function setKeyValToIndexedDB<T = any>(key: string, value: T): Promise<boolean> {
+  if (!isIndexedDBSupported()) return false;
+  try {
+    const db = await openOfflineDatabase();
+    return new Promise((resolve) => {
+      const tx = db.transaction('metadata', 'readwrite');
+      const store = tx.objectStore('metadata');
+      store.put({ key, value, updatedAt: Date.now() });
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+    });
+  } catch {
+    return false;
+  }
+}
+
+export async function getKeyValFromIndexedDB<T = any>(key: string): Promise<T | null> {
+  if (!isIndexedDBSupported()) return null;
+  try {
+    const db = await openOfflineDatabase();
+    return new Promise((resolve) => {
+      const tx = db.transaction('metadata', 'readonly');
+      const store = tx.objectStore('metadata');
+      const req = store.get(key);
+      req.onsuccess = () => {
+        resolve(req.result ? (req.result.value as T) : null);
+      };
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function removeKeyValFromIndexedDB(key: string): Promise<boolean> {
+  if (!isIndexedDBSupported()) return false;
+  try {
+    const db = await openOfflineDatabase();
+    return new Promise((resolve) => {
+      const tx = db.transaction('metadata', 'readwrite');
+      const store = tx.objectStore('metadata');
+      store.delete(key);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+    });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Save large product image data URLs in IndexedDB so localStorage never overflows
+ */
+export async function saveProductImageToIndexedDB(productId: string, dataUrl: string): Promise<boolean> {
+  if (!isIndexedDBSupported() || !productId) return false;
+  try {
+    const db = await openOfflineDatabase();
+    return new Promise((resolve) => {
+      const tx = db.transaction('productImages', 'readwrite');
+      const store = tx.objectStore('productImages');
+      store.put({ id: productId, dataUrl, updatedAt: Date.now() });
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+    });
+  } catch {
+    return false;
+  }
+}
+
+export async function getProductImageFromIndexedDB(productId: string): Promise<string | null> {
+  if (!isIndexedDBSupported() || !productId) return null;
+  try {
+    const db = await openOfflineDatabase();
+    return new Promise((resolve) => {
+      const tx = db.transaction('productImages', 'readonly');
+      const store = tx.objectStore('productImages');
+      const req = store.get(productId);
+      req.onsuccess = () => {
+        resolve(req.result ? (req.result.dataUrl as string) : null);
+      };
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function getAllProductImagesFromIndexedDB(): Promise<Record<string, string>> {
+  if (!isIndexedDBSupported()) return {};
+  try {
+    const db = await openOfflineDatabase();
+    return new Promise((resolve) => {
+      const tx = db.transaction('productImages', 'readonly');
+      const store = tx.objectStore('productImages');
+      const req = store.getAll();
+      req.onsuccess = () => {
+        const res: Record<string, string> = {};
+        if (Array.isArray(req.result)) {
+          for (const item of req.result) {
+            if (item && item.id && item.dataUrl) {
+              res[item.id] = item.dataUrl;
+            }
+          }
+        }
+        resolve(res);
+      };
+      req.onerror = () => resolve({});
+    });
+  } catch {
+    return {};
   }
 }
 
