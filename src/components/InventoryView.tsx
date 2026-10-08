@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import {
   Package,
   Search,
@@ -22,6 +22,11 @@ import {
   FileSpreadsheet,
   Download,
   FileUp,
+  Camera,
+  Image as ImageIcon,
+  Sparkles,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { Product, Category, Supplier } from '../types';
 import { DEMO_PRODUCT_IDS, parseBanglaNumber, getSuppliers, addOrUpdateSupplier } from '../lib/storage';
@@ -40,6 +45,7 @@ interface InventoryViewProps {
   categoriesList?: Category[];
   suppliersList?: Supplier[];
   onAddProduct: (product: Product) => void;
+  onBatchAddProducts?: (products: Product[]) => void;
   onUpdateProduct?: (product: Product) => void;
   onDeleteProduct?: (productId: string) => void;
   onAdjustStock: (productId: string, delta: number) => void;
@@ -52,6 +58,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   categoriesList,
   suppliersList,
   onAddProduct,
+  onBatchAddProducts,
   onUpdateProduct,
   onDeleteProduct,
   onAdjustStock,
@@ -74,6 +81,17 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [csvSkippedCount, setCsvSkippedCount] = useState(0);
   const [isImportingCsv, setIsImportingCsv] = useState(false);
   const [importSuccessMsg, setImportSuccessMsg] = useState<string | null>(null);
+
+  // Bulk Image Upload & Matching in Preview Table
+  const bulkPhotosInputRef = useRef<HTMLInputElement>(null);
+  const singleRowPhotoInputRef = useRef<HTMLInputElement>(null);
+  const activePhotoRowProdId = useRef<string | null>(null);
+  const [isProcessingBulkPhotos, setIsProcessingBulkPhotos] = useState(false);
+  const [bulkPhotoResult, setBulkPhotoResult] = useState<{ matched: number; total: number } | null>(null);
+  const [previewSearchQuery, setPreviewSearchQuery] = useState('');
+  const [previewFilter, setPreviewFilter] = useState<'all' | 'with-img' | 'without-img'>('all');
+  const [previewPage, setPreviewPage] = useState(1);
+  const [previewPerPage, setPreviewPerPage] = useState(25);
 
   const toggleSelectProduct = (id: string) => {
     setSelectedProductIds((prev) => {
@@ -240,6 +258,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     setCsvFile(file);
     setCsvImportErrors([]);
     setImportSuccessMsg(null);
+    setBulkPhotoResult(null);
+    setPreviewSearchQuery('');
+    setPreviewFilter('all');
+    setPreviewPage(1);
 
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -260,20 +282,124 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     reader.readAsText(file);
   };
 
+  // Bulk Photos Auto-Matcher: Matches multiple selected photos to preview products by SKU or Name
+  const handleBulkPhotosSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (files.length === 0 || csvPreviewProducts.length === 0) return;
+
+    setIsProcessingBulkPhotos(true);
+    let matchedCount = 0;
+    const updated = [...csvPreviewProducts];
+
+    for (const file of files) {
+      try {
+        const compressedDataUrl = await processImageFile(file, 400, 32 * 1024);
+        const fileNameWithoutExt = file.name
+          .substring(0, file.name.lastIndexOf('.') !== -1 ? file.name.lastIndexOf('.') : file.name.length)
+          .toLowerCase()
+          .trim();
+
+        // 1. Try match by exact or partial SKU
+        let targetIdx = updated.findIndex((p) => {
+          if (!p.sku) return false;
+          const cleanSku = p.sku.toLowerCase().trim();
+          return fileNameWithoutExt === cleanSku || fileNameWithoutExt.includes(cleanSku) || cleanSku.includes(fileNameWithoutExt);
+        });
+
+        // 2. Try match by Bangla name or English name
+        if (targetIdx === -1) {
+          targetIdx = updated.findIndex((p) => {
+            const bn = (p.banglaName || '').toLowerCase().trim();
+            const en = (p.name || '').toLowerCase().trim();
+            return (
+              (bn && (fileNameWithoutExt.includes(bn) || bn.includes(fileNameWithoutExt))) ||
+              (en && (fileNameWithoutExt.includes(en) || en.includes(fileNameWithoutExt)))
+            );
+          });
+        }
+
+        // 3. Try match by row sequence number (e.g., 1.jpg, row-1.png, 12.jpg)
+        if (targetIdx === -1) {
+          const numOnly = parseInt(fileNameWithoutExt.replace(/[^0-9]/g, ''), 10);
+          if (!isNaN(numOnly) && numOnly >= 1 && numOnly <= updated.length) {
+            targetIdx = numOnly - 1;
+          }
+        }
+
+        // 4. Fallback: match first product that doesn't have an image
+        if (targetIdx === -1) {
+          targetIdx = updated.findIndex((p) => !p.imageUrl);
+        }
+
+        if (targetIdx !== -1) {
+          updated[targetIdx] = {
+            ...updated[targetIdx],
+            imageUrl: compressedDataUrl,
+          };
+          matchedCount++;
+        }
+      } catch (err) {
+        console.warn('Error processing image:', file.name, err);
+      }
+    }
+
+    setCsvPreviewProducts(updated);
+    setIsProcessingBulkPhotos(false);
+    setBulkPhotoResult({ matched: matchedCount, total: files.length });
+  };
+
+  // Single row photo upload trigger
+  const triggerSingleRowPhotoUpload = (prodId: string) => {
+    activePhotoRowProdId.current = prodId;
+    singleRowPhotoInputRef.current?.click();
+  };
+
+  const handleSingleRowPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    const targetId = activePhotoRowProdId.current;
+    if (!file || !targetId) return;
+
+    try {
+      const compressedDataUrl = await processImageFile(file, 400, 32 * 1024);
+      setCsvPreviewProducts((prev) =>
+        prev.map((p) => (p.id === targetId ? { ...p, imageUrl: compressedDataUrl } : p))
+      );
+    } catch (err) {
+      console.warn('Failed to compress row photo:', err);
+    }
+  };
+
+  const handleRemovePhotoFromPreview = (prodId: string) => {
+    setCsvPreviewProducts((prev) =>
+      prev.map((p) => (p.id === prodId ? { ...p, imageUrl: '' } : p))
+    );
+  };
+
+  const handleDeletePreviewProduct = (prodId: string) => {
+    setCsvPreviewProducts((prev) => prev.filter((p) => p.id !== prodId));
+  };
+
   const handleConfirmBulkImport = () => {
     if (csvPreviewProducts.length === 0) return;
     setIsImportingCsv(true);
 
     try {
-      csvPreviewProducts.forEach((prod) => {
-        onAddProduct(prod);
-      });
+      if (onBatchAddProducts) {
+        onBatchAddProducts(csvPreviewProducts);
+      } else {
+        csvPreviewProducts.forEach((prod) => {
+          onAddProduct(prod);
+        });
+      }
       setImportSuccessMsg(`সফলভাবে ${csvPreviewProducts.length}টি পণ্য ইনভেন্টরিতে যুক্ত করা হয়েছে!`);
       setTimeout(() => {
         setIsBulkCsvModalOpen(false);
         setCsvFile(null);
         setCsvPreviewProducts([]);
         setImportSuccessMsg(null);
+        setBulkPhotoResult(null);
       }, 1500);
     } catch {
       setCsvImportErrors(['পণ্যগুলো সংরক্ষণ করতে সমস্যা হয়েছে']);
@@ -281,6 +407,37 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       setIsImportingCsv(false);
     }
   };
+
+  const previewStats = useMemo(() => {
+    const total = csvPreviewProducts.length;
+    const withImg = csvPreviewProducts.filter((p) => Boolean(p.imageUrl)).length;
+    const withoutImg = total - withImg;
+    return { total, withImg, withoutImg };
+  }, [csvPreviewProducts]);
+
+  const filteredPreviewProducts = useMemo(() => {
+    return csvPreviewProducts.filter((p) => {
+      if (previewSearchQuery.trim()) {
+        const q = previewSearchQuery.toLowerCase().trim();
+        const matchName =
+          (p.banglaName || '').toLowerCase().includes(q) ||
+          (p.name || '').toLowerCase().includes(q);
+        const matchSku = (p.sku || '').toLowerCase().includes(q);
+        const matchCat = (p.category || '').toLowerCase().includes(q);
+        if (!matchName && !matchSku && !matchCat) return false;
+      }
+      if (previewFilter === 'with-img') return Boolean(p.imageUrl);
+      if (previewFilter === 'without-img') return !p.imageUrl;
+      return true;
+    });
+  }, [csvPreviewProducts, previewSearchQuery, previewFilter]);
+
+  const totalPreviewPages = Math.ceil(filteredPreviewProducts.length / previewPerPage) || 1;
+  const paginatedPreviewProducts = useMemo(() => {
+    if (previewPerPage >= 9999) return filteredPreviewProducts;
+    const start = (previewPage - 1) * previewPerPage;
+    return filteredPreviewProducts.slice(start, start + previewPerPage);
+  }, [filteredPreviewProducts, previewPage, previewPerPage]);
 
   const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -469,6 +626,16 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
           <button
             type="button"
+            onClick={downloadProductTemplateCSV}
+            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+            title="১০০+ পণ্য বাল্ক আপলোডের নমুনা এক্সেল/CSV টেমপ্লেট ডাউনলোড করুন"
+          >
+            <Download className="w-3.5 h-3.5 text-teal-600" />
+            <span>নমুনা টেমপ্লেট</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => {
               setCsvFile(null);
               setCsvPreviewProducts([]);
@@ -476,10 +643,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               setImportSuccessMsg(null);
               setIsBulkCsvModalOpen(true);
             }}
-            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-teal-700 hover:bg-teal-800 text-white border border-teal-800 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
             title="এক্সেল বা CSV ফাইল থেকে একসাথে ১০০+ পণ্য আপলোড করুন"
           >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-teal-600" />
+            <FileSpreadsheet className="w-3.5 h-3.5 text-teal-100" />
             <span>বাল্ক আপলোড (CSV)</span>
           </button>
 
@@ -1178,19 +1345,37 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
       {/* Bulk CSV Import Modal */}
       {isBulkCsvModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fadeIn">
-          <div className="bg-white rounded-3xl max-w-2xl w-full p-5 sm:p-6 shadow-2xl border border-neutral-200 my-8">
-            <div className="flex items-center justify-between pb-3 border-b border-neutral-100">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto animate-fadeIn">
+          {/* Hidden inputs for photo selection */}
+          <input
+            ref={bulkPhotosInputRef}
+            type="file"
+            multiple
+            accept="image/*"
+            onChange={handleBulkPhotosSelect}
+            className="hidden"
+          />
+          <input
+            ref={singleRowPhotoInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleSingleRowPhotoUpload}
+            className="hidden"
+          />
+
+          <div className="bg-white rounded-3xl max-w-5xl w-full p-4 sm:p-6 shadow-2xl border border-neutral-200 my-4 max-h-[92vh] flex flex-col">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-neutral-100 shrink-0">
               <div className="flex items-center gap-2.5">
                 <div className="w-10 h-10 rounded-2xl bg-teal-100 text-teal-800 flex items-center justify-center font-bold">
                   <FileSpreadsheet className="w-5 h-5" />
                 </div>
                 <div>
                   <h3 className="font-extrabold text-base text-neutral-900">
-                    এক্সেল / CSV দিয়ে ১০০+ পণ্য বাল্ক আপলোড
+                    এক্সেল / CSV দিয়ে ১০০+ পণ্য বাল্ক আপলোড ও ছবি যুক্তকরণ
                   </h3>
                   <p className="text-xs text-neutral-500">
-                    এক্সেল স্প্রেডশীট থেকে একসাথে বহুসংখ্যক পণ্য দ্রুত ইনভেন্টরিতে যুক্ত করুন
+                    স্প্রেডশীট ফাইল থেকে একসাথে বহুসংখ্যক পণ্য প্রিভিউ করুন ও প্রতিটিতে সহজে ছবি যুক্ত করুন
                   </p>
                 </div>
               </div>
@@ -1201,40 +1386,45 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   setCsvFile(null);
                   setCsvPreviewProducts([]);
                   setCsvImportErrors([]);
+                  setBulkPhotoResult(null);
                 }}
-                className="p-2 text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 rounded-xl transition-colors"
+                className="p-2 text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 rounded-xl transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="py-4 space-y-4">
+            {/* Modal Body - Scrollable */}
+            <div className="py-4 space-y-4 overflow-y-auto flex-1 pr-1">
               {/* Step 1: Download Sample Template */}
               <div className="p-3.5 bg-neutral-50 rounded-2xl border border-neutral-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                  <h4 className="text-xs font-bold text-neutral-800">
-                    ১. ডেমো এক্সেল টেমপ্লেট ডাউনলোড করুন
+                  <h4 className="text-xs font-bold text-neutral-800 flex items-center gap-1.5">
+                    <span>১. ডেমো এক্সেল টেমপ্লেট ডাউনলোড করুন</span>
+                    <span className="text-[10px] bg-teal-100 text-teal-800 px-2 py-0.5 rounded-full font-bold">
+                      ছবির লিংক কলাম সহ
+                    </span>
                   </h4>
                   <p className="text-[11px] text-neutral-500">
-                    সঠিক কলাম ফরম্যাট দেখতে এই টেমপ্লেটটি ডাউনলোড করে এতে পণ্য পূরণ করুন।
+                    টেমপ্লেটে পণ্যের বাংলা নাম, ক্যাটাগরি, বিক্রয়মূল্য, কেনাদর, স্টক এবং <b>&quot;ছবির লিংক (Image URL)&quot;</b> কলাম দেওয়া আছে।
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={downloadProductTemplateCSV}
-                  className="px-3 py-1.5 bg-white hover:bg-neutral-100 text-teal-800 border border-teal-300 rounded-xl text-xs font-bold flex items-center gap-1.5 shrink-0 shadow-2xs cursor-pointer transition-colors"
+                  className="px-3.5 py-1.5 bg-white hover:bg-neutral-100 text-teal-800 border border-teal-300 rounded-xl text-xs font-bold flex items-center gap-1.5 shrink-0 shadow-2xs cursor-pointer transition-colors"
                 >
                   <Download className="w-3.5 h-3.5 text-teal-600" />
-                  <span>নমুনা টেমপ্লেট CSV</span>
+                  <span>নমুনা টেমপ্লেট CSV ডাউনলোড</span>
                 </button>
               </div>
 
               {/* Step 2: Choose File */}
               <div>
                 <label className="block text-xs font-bold text-neutral-700 mb-1.5">
-                  ২. আপনার প্রস্তুতকৃত CSV ফাইল আপলোড করুন (.csv ফরম্যাট)
+                  ২. প্রস্তুতকৃত CSV বা এক্সেল ফাইল আপলোড করুন
                 </label>
-                <div className="border-2 border-dashed border-teal-300 hover:border-teal-500 rounded-2xl p-6 text-center bg-teal-50/30 transition-colors">
+                <div className="border-2 border-dashed border-teal-300 hover:border-teal-500 rounded-2xl p-5 text-center bg-teal-50/20 transition-colors">
                   <input
                     type="file"
                     accept=".csv,text/csv"
@@ -1244,11 +1434,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   />
                   <label
                     htmlFor="bulk-product-csv-input"
-                    className="cursor-pointer flex flex-col items-center justify-center gap-2"
+                    className="cursor-pointer flex flex-col items-center justify-center gap-1.5"
                   >
-                    <FileUp className="w-8 h-8 text-teal-600 animate-bounce" />
+                    <FileUp className="w-7 h-7 text-teal-600" />
                     <span className="text-xs font-bold text-teal-900">
-                      {csvFile ? `ফাইল সিলেক্ট হয়েছে: ${csvFile.name}` : 'ফাইল সিলেক্ট করতে এখানে ক্লিক করুন'}
+                      {csvFile ? `ফাইল সিলেক্ট হয়েছে: ${csvFile.name}` : 'ফাইল সিলেক্ট করতে এখানে ক্লিক করুন (.csv)'}
                     </span>
                     <span className="text-[11px] text-neutral-500">
                       Excel থেকে &quot;Save As &rarr; CSV (Comma delimited)&quot; হিসেবে সেভ করা ফাইল নির্বাচন করুন
@@ -1282,78 +1472,370 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 </div>
               )}
 
-              {/* Step 3: Preview Data */}
+              {/* Photo Options Info Banner */}
               {csvPreviewProducts.length > 0 && (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs font-bold text-neutral-700">
-                    <span className="text-teal-900 font-extrabold">
-                      ✅ প্রিভিউ: মোট {csvPreviewProducts.length}টি পণ্য সফলভাবে রিড করা হয়েছে
-                    </span>
-                    {csvSkippedCount > 0 && (
-                      <span className="text-amber-700 text-[11px]">
-                        (খালি লাইন বাদ: {csvSkippedCount})
+                <div className="bg-gradient-to-r from-teal-50 via-emerald-50 to-blue-50 border border-teal-200/80 rounded-2xl p-3 sm:p-3.5 space-y-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-teal-600 text-white flex items-center justify-center shrink-0">
+                        <Camera className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-extrabold text-teal-950 flex items-center gap-1.5">
+                          <span>বাল্ক আপলোডে ছবি যুক্ত করার ৩টি সুবিধা</span>
+                          <span className="text-[10px] bg-emerald-600 text-white px-2 py-0.5 rounded-full font-bold">
+                            WebP অপ্টিমাইজড
+                          </span>
+                        </h4>
+                        <p className="text-[11px] text-teal-800">
+                          ছবি যুক্ত: <span className="font-bold text-teal-950">{previewStats.withImg}</span> / {previewStats.total}টি পণ্য
+                          {previewStats.withoutImg > 0 && ` (${previewStats.withoutImg}টিতে ছবি বাকি)`}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Bulk Photo Match Action Button */}
+                    <button
+                      type="button"
+                      disabled={isProcessingBulkPhotos}
+                      onClick={() => bulkPhotosInputRef.current?.click()}
+                      className="px-3.5 py-2 bg-teal-800 hover:bg-teal-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer shrink-0"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                      <span>
+                        {isProcessingBulkPhotos
+                          ? 'ছবিগুলো অপ্টিমাইজ হচ্ছে...'
+                          : '📸 এক ক্লিকে সব ছবি অটো-ম্যাচ করুন'}
                       </span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] text-neutral-600 pt-1.5 border-t border-teal-200/60">
+                    <div className="bg-white/80 p-2 rounded-xl border border-teal-100">
+                      <span className="font-bold text-teal-900 block mb-0.5">১. CSV ফাইলে ছবির লিংক:</span>
+                      স্প্রেডশীটের &quot;ছবির লিংক&quot; কলামে পণ্যের অনলাইন ইউআরএল দিলেই ছবি স্বয়ংক্রিয়ভাবে লোড হবে।
+                    </div>
+                    <div className="bg-white/80 p-2 rounded-xl border border-teal-100">
+                      <span className="font-bold text-teal-900 block mb-0.5">২. একসাথে সব ছবি অটো-ম্যাচ:</span>
+                      ডিভাইস থেকে ৫০-১০০টি ছবি একসাথে সিলেক্ট করুন। ফাইলের নাম (SKU / নাম / ক্রমিক নম্বর) অনুযায়ী ক্লায়েন্ট-সাইডেই WebP কম্প্রেস হয়ে বসে যাবে।
+                    </div>
+                    <div className="bg-white/80 p-2 rounded-xl border border-teal-100">
+                      <span className="font-bold text-teal-900 block mb-0.5">৩. টেবিলে সরাসরি ছবি তোলা:</span>
+                      নিচের টেবিলে যেকোনো পণ্যের পাশে থাকা &quot;+ ছবি&quot; বাটনে ক্লিক করে ক্যামেরা দিয়ে ছবি তুলতে বা সিলেক্ট করতে পারেন।
+                    </div>
+                  </div>
+
+                  {bulkPhotoResult && (
+                    <div className="p-2.5 bg-emerald-100 text-emerald-900 rounded-xl text-xs font-bold flex items-center justify-between">
+                      <span>
+                        🎉 {bulkPhotoResult.total}টি ছবির মধ্যে {bulkPhotoResult.matched}টি পণ্যে ছবি সফলভাবে ম্যাচ ও কম্প্রেস হয়েছে!
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setBulkPhotoResult(null)}
+                        className="text-emerald-700 hover:text-emerald-950 text-[11px] underline cursor-pointer"
+                      >
+                        বন্ধ করুন
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Step 3: Interactive Preview Table for 100+ Products */}
+              {csvPreviewProducts.length > 0 && (
+                <div className="space-y-3">
+                  {/* Filter and Search Bar inside Preview */}
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 bg-neutral-50 p-2.5 rounded-2xl border border-neutral-200">
+                    {/* Search */}
+                    <div className="relative flex-1">
+                      <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
+                      <input
+                        type="text"
+                        value={previewSearchQuery}
+                        onChange={(e) => {
+                          setPreviewSearchQuery(e.target.value);
+                          setPreviewPage(1);
+                        }}
+                        placeholder="১০০+ পণ্যের মধ্যে নাম, SKU বা ক্যাটাগরি দিয়ে খুঁজুন..."
+                        className="w-full pl-8 pr-3 py-1.5 text-xs bg-white rounded-xl border border-neutral-200 focus:outline-hidden focus:border-teal-500"
+                      />
+                    </div>
+
+                    {/* Filter Chips */}
+                    <div className="flex items-center gap-1.5 shrink-0 overflow-x-auto">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPreviewFilter('all');
+                          setPreviewPage(1);
+                        }}
+                        className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
+                          previewFilter === 'all'
+                            ? 'bg-teal-800 text-white'
+                            : 'bg-white text-neutral-600 border border-neutral-200 hover:bg-neutral-100'
+                        }`}
+                      >
+                        সব ({previewStats.total})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPreviewFilter('with-img');
+                          setPreviewPage(1);
+                        }}
+                        className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
+                          previewFilter === 'with-img'
+                            ? 'bg-emerald-700 text-white'
+                            : 'bg-white text-neutral-600 border border-neutral-200 hover:bg-neutral-100'
+                        }`}
+                      >
+                        ছবি যুক্ত ({previewStats.withImg})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPreviewFilter('without-img');
+                          setPreviewPage(1);
+                        }}
+                        className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
+                          previewFilter === 'without-img'
+                            ? 'bg-amber-700 text-white'
+                            : 'bg-white text-neutral-600 border border-neutral-200 hover:bg-neutral-100'
+                        }`}
+                      >
+                        ছবি ছাড়া ({previewStats.withoutImg})
+                      </button>
+                    </div>
+
+                    {/* Per Page Selector */}
+                    <div className="flex items-center gap-1 shrink-0 text-xs text-neutral-600">
+                      <span className="hidden sm:inline text-[11px]">প্রতি পেজে:</span>
+                      <select
+                        value={previewPerPage}
+                        onChange={(e) => {
+                          setPreviewPerPage(parseInt(e.target.value, 10));
+                          setPreviewPage(1);
+                        }}
+                        className="px-2 py-1 text-xs bg-white border border-neutral-200 rounded-xl focus:outline-hidden"
+                      >
+                        <option value={25}>২৫টি</option>
+                        <option value={50}>৫০টি</option>
+                        <option value={100}>১০০টি</option>
+                        <option value={9999}>সব একসাথে ({csvPreviewProducts.length})</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* The Preview Table */}
+                  <div className="border border-neutral-200 rounded-2xl overflow-hidden shadow-2xs">
+                    <div className="max-h-72 overflow-y-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-neutral-100/90 backdrop-blur-xs text-neutral-700 font-extrabold sticky top-0 border-b border-neutral-200 z-10">
+                          <tr>
+                            <th className="p-2.5 w-10 text-center">#</th>
+                            <th className="p-2.5 w-24 text-center">ছবি (Photo)</th>
+                            <th className="p-2.5 min-w-[160px]">পণ্যের বাংলা ও ইংরেজি নাম</th>
+                            <th className="p-2.5 min-w-[90px]">এসকেইউ (SKU)</th>
+                            <th className="p-2.5 min-w-[100px]">ক্যাটাগরি</th>
+                            <th className="p-2.5 min-w-[85px] text-right">বিক্রয় রেট</th>
+                            <th className="p-2.5 min-w-[80px] text-right">কেনাদর</th>
+                            <th className="p-2.5 min-w-[85px] text-center">স্টক ও একক</th>
+                            <th className="p-2.5 w-12 text-center">মুছুন</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-neutral-100 font-medium bg-white">
+                          {paginatedPreviewProducts.length === 0 ? (
+                            <tr>
+                              <td colSpan={9} className="p-6 text-center text-neutral-400">
+                                কোনো পণ্য পাওয়া যায়নি
+                              </td>
+                            </tr>
+                          ) : (
+                            paginatedPreviewProducts.map((p, idx) => {
+                              const globalIndex = (previewPage - 1) * (previewPerPage === 9999 ? 0 : previewPerPage) + idx + 1;
+                              return (
+                                <tr key={p.id} className="hover:bg-neutral-50/80 transition-colors">
+                                  {/* # */}
+                                  <td className="p-2.5 text-center text-neutral-400 font-mono text-[11px]">
+                                    {globalIndex}
+                                  </td>
+
+                                  {/* Image with Direct Upload / Replace / Remove */}
+                                  <td className="p-2 text-center">
+                                    {p.imageUrl ? (
+                                      <div className="relative inline-block group">
+                                        <img
+                                          src={p.imageUrl}
+                                          alt={p.banglaName}
+                                          className="w-10 h-10 rounded-xl object-cover border border-teal-200 shadow-2xs mx-auto"
+                                        />
+                                        <div className="absolute inset-0 bg-black/60 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1">
+                                          <button
+                                            type="button"
+                                            title="ছবি পরিবর্তন করুন"
+                                            onClick={() => triggerSingleRowPhotoUpload(p.id)}
+                                            className="p-1 bg-white/90 text-teal-800 rounded-lg hover:bg-white cursor-pointer"
+                                          >
+                                            <Camera className="w-3 h-3" />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            title="ছবি মুছুন"
+                                            onClick={() => handleRemovePhotoFromPreview(p.id)}
+                                            className="p-1 bg-white/90 text-rose-600 rounded-lg hover:bg-white cursor-pointer"
+                                          >
+                                            <X className="w-3 h-3" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => triggerSingleRowPhotoUpload(p.id)}
+                                        className="px-2 py-1.5 rounded-xl border border-dashed border-teal-300 bg-teal-50/60 hover:bg-teal-100 text-teal-800 text-[11px] font-bold flex items-center justify-center gap-1 mx-auto cursor-pointer transition-colors shadow-2xs"
+                                        title="এই পণ্যের ছবি তুলুন বা গ্যালারি থেকে সিলেক্ট করুন"
+                                      >
+                                        <Camera className="w-3 h-3 text-teal-600" />
+                                        <span>+ ছবি</span>
+                                      </button>
+                                    )}
+                                  </td>
+
+                                  {/* Product Name */}
+                                  <td className="p-2.5">
+                                    <div className="font-extrabold text-neutral-900 leading-tight">
+                                      {p.banglaName}
+                                    </div>
+                                    {p.name && p.name !== p.banglaName && (
+                                      <div className="text-[11px] text-neutral-400 font-normal">
+                                        {p.name}
+                                      </div>
+                                    )}
+                                  </td>
+
+                                  {/* SKU */}
+                                  <td className="p-2.5">
+                                    <span className="font-mono text-[10px] bg-neutral-100 text-neutral-600 px-1.5 py-0.5 rounded border border-neutral-200">
+                                      {p.sku || '-'}
+                                    </span>
+                                  </td>
+
+                                  {/* Category */}
+                                  <td className="p-2.5">
+                                    <span className="inline-block px-2 py-0.5 rounded-lg text-[11px] font-medium bg-neutral-100 text-neutral-700">
+                                      {p.category}
+                                    </span>
+                                  </td>
+
+                                  {/* Selling Rate */}
+                                  <td className="p-2.5 text-right font-extrabold text-emerald-700">
+                                    ৳{p.unitPrice.toLocaleString('bn-BD')}
+                                  </td>
+
+                                  {/* Cost Price */}
+                                  <td className="p-2.5 text-right text-neutral-600">
+                                    ৳{p.costPrice.toLocaleString('bn-BD')}
+                                  </td>
+
+                                  {/* Stock & Unit */}
+                                  <td className="p-2.5 text-center text-neutral-800 font-bold">
+                                    {p.stock} <span className="text-[10px] font-normal text-neutral-500">{p.unit}</span>
+                                  </td>
+
+                                  {/* Delete row */}
+                                  <td className="p-2.5 text-center">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeletePreviewProduct(p.id)}
+                                      title="এই সারিটি তালিকা থেকে বাদ দিন"
+                                      className="p-1 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Pagination Bar */}
+                    {totalPreviewPages > 1 && previewPerPage !== 9999 && (
+                      <div className="bg-neutral-50 px-3 py-2 border-t border-neutral-200 flex items-center justify-between text-xs text-neutral-600">
+                        <div className="text-[11px]">
+                          দেখাচ্ছে {(previewPage - 1) * previewPerPage + 1} থেকে{' '}
+                          {Math.min(previewPage * previewPerPage, filteredPreviewProducts.length)} (মোট{' '}
+                          {filteredPreviewProducts.length}টি পণ্য)
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={previewPage === 1}
+                            onClick={() => setPreviewPage((p) => Math.max(1, p - 1))}
+                            className="p-1 rounded-lg border border-neutral-200 bg-white disabled:opacity-30 hover:bg-neutral-100 cursor-pointer"
+                          >
+                            <ChevronLeft className="w-3.5 h-3.5" />
+                          </button>
+                          <span className="font-bold text-neutral-800 text-xs">
+                            {previewPage} / {totalPreviewPages}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={previewPage === totalPreviewPages}
+                            onClick={() => setPreviewPage((p) => Math.min(totalPreviewPages, p + 1))}
+                            className="p-1 rounded-lg border border-neutral-200 bg-white disabled:opacity-30 hover:bg-neutral-100 cursor-pointer"
+                          >
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
                     )}
                   </div>
-                  <div className="max-h-48 overflow-y-auto border border-neutral-200 rounded-xl">
-                    <table className="w-full text-left text-xs">
-                      <thead className="bg-neutral-100 text-neutral-700 font-bold sticky top-0">
-                        <tr>
-                          <th className="p-2">পণ্যের নাম</th>
-                          <th className="p-2">ক্যাটাগরি</th>
-                          <th className="p-2">বিক্রয় রেট</th>
-                          <th className="p-2">কেনাদর</th>
-                          <th className="p-2">স্টক</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-neutral-100 font-medium">
-                        {csvPreviewProducts.slice(0, 15).map((p, idx) => (
-                          <tr key={idx} className="hover:bg-neutral-50">
-                            <td className="p-2 font-bold text-neutral-900">{p.banglaName}</td>
-                            <td className="p-2 text-neutral-600">{p.category}</td>
-                            <td className="p-2 text-emerald-700 font-bold">৳{p.unitPrice}</td>
-                            <td className="p-2 text-neutral-600">৳{p.costPrice}</td>
-                            <td className="p-2 text-neutral-800">{p.stock} {p.unit}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  {csvPreviewProducts.length > 15 && (
-                    <p className="text-[10px] text-neutral-400 text-right">
-                      ... আরও {csvPreviewProducts.length - 15}টি পণ্য তালিকায় যুক্ত হবে
-                    </p>
-                  )}
                 </div>
               )}
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-neutral-100">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsBulkCsvModalOpen(false);
-                  setCsvFile(null);
-                  setCsvPreviewProducts([]);
-                  setCsvImportErrors([]);
-                }}
-                className="px-4 py-2 text-neutral-600 hover:bg-neutral-100 rounded-xl text-xs font-semibold"
-              >
-                বাতিল
-              </button>
-              <button
-                type="button"
-                disabled={csvPreviewProducts.length === 0 || isImportingCsv}
-                onClick={handleConfirmBulkImport}
-                className="px-5 py-2.5 bg-teal-800 hover:bg-teal-700 disabled:opacity-40 text-white rounded-xl text-xs font-bold shadow-md transition-colors flex items-center gap-1.5 cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                <span>
-                  {isImportingCsv
-                    ? 'আপলোড হচ্ছে...'
-                    : `একত্রে ${csvPreviewProducts.length}টি পণ্য যুক্ত করুন`}
-                </span>
-              </button>
+            {/* Modal Footer */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-neutral-100 shrink-0">
+              <div className="text-xs text-neutral-500">
+                {csvPreviewProducts.length > 0 && (
+                  <span>
+                    মোট <b>{csvPreviewProducts.length}টি</b> পণ্যের মধ্যে{' '}
+                    <b className="text-teal-800">{previewStats.withImg}টি</b> পণ্যে ছবি যুক্ত রয়েছে।
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsBulkCsvModalOpen(false);
+                    setCsvFile(null);
+                    setCsvPreviewProducts([]);
+                    setCsvImportErrors([]);
+                    setBulkPhotoResult(null);
+                  }}
+                  className="px-4 py-2 text-neutral-600 hover:bg-neutral-100 rounded-xl text-xs font-semibold cursor-pointer"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="button"
+                  disabled={csvPreviewProducts.length === 0 || isImportingCsv}
+                  onClick={handleConfirmBulkImport}
+                  className="px-5 py-2.5 bg-teal-800 hover:bg-teal-700 disabled:opacity-40 text-white rounded-xl text-xs font-bold shadow-md transition-colors flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>
+                    {isImportingCsv
+                      ? 'ইনভেন্টরিতে সংরক্ষণ হচ্ছে...'
+                      : `একত্রে ${csvPreviewProducts.length}টি পণ্য ইনভেন্টরিতে সংরক্ষণ করুন`}
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

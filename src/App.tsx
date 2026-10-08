@@ -1087,6 +1087,46 @@ export default function App() {
     showToast(`পণ্য "${product.banglaName}" সফলভাবে যুক্ত হয়েছে!`, 'success');
   };
 
+  // Bulk / Batch Add Products Handler
+  const handleBatchAddProducts = (newProducts: Product[]) => {
+    if (!newProducts || newProducts.length === 0) return;
+    const existing = getProducts();
+    const existingMap = new Map(existing.map((p) => [p.id, p]));
+    newProducts.forEach((p) => {
+      existingMap.set(p.id, p);
+      saveProductToCloud(p).catch((err) => {
+        console.warn('Could not sync bulk product to cloud:', p.banglaName, err);
+      });
+      // Auto register category if new
+      if (p.category && p.category.trim()) {
+        const cleanCat = p.category.trim();
+        const catExists = categories.some(
+          (c) =>
+            c.banglaName.trim() === cleanCat ||
+            c.name.trim().toLowerCase() === cleanCat.toLowerCase()
+        );
+        if (!catExists) {
+          const newCat: Category = {
+            id: `cat-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            name: cleanCat,
+            banglaName: cleanCat,
+            description: `${cleanCat} পণ্য সমূহ`,
+            color: '#10b981',
+            createdAt: new Date().toISOString(),
+          };
+          addOrUpdateCategory(newCat);
+          saveCategoryToCloud(newCat).catch(() => {});
+        }
+      }
+    });
+
+    const combined = Array.from(existingMap.values());
+    saveProducts(combined);
+    setProducts(combined);
+    reloadData();
+    showToast(`একত্রে ${newProducts.length}টি পণ্য সফলভাবে ইনভেন্টরিতে যুক্ত করা হয়েছে!`, 'success');
+  };
+
   // Update Product Handler
   const handleUpdateProduct = (product: Product) => {
     saveProduct(product);
@@ -2521,6 +2561,7 @@ export default function App() {
                 categoriesList={categories}
                 suppliersList={suppliers}
                 onAddProduct={handleAddProduct}
+                onBatchAddProducts={handleBatchAddProducts}
                 onUpdateProduct={handleUpdateProduct}
                 onDeleteProduct={handleDeleteProduct}
                 onAdjustStock={handleAdjustStock}

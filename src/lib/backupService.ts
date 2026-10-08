@@ -626,6 +626,7 @@ export function downloadInventoryCSV(products: Product[]): void {
     'বর্তমান স্টক',
     'সর্বনিম্ন স্টক অ্যালার্ট',
     'ট্রেড অফার স্কিম',
+    'ছবির লিংক (Image URL)',
   ];
 
   const rows = products.map((p) => [
@@ -639,6 +640,7 @@ export function downloadInventoryCSV(products: Product[]): void {
     p.stock,
     p.minStockAlert,
     p.tradeOfferDesc || '',
+    p.imageUrl || '',
   ]);
 
   const blob = createCSVBlob(headers, rows);
@@ -661,12 +663,13 @@ export function downloadProductTemplateCSV(): void {
     'প্রাথমিক স্টক',
     'সর্বনিম্ন স্টক অ্যালার্ট',
     'ট্রেড অফার',
+    'ছবির লিংক (Image URL)',
   ];
 
   const sampleRows = [
-    ['তীর সয়াবিন তেল ৫ লিটার', 'Teer Soybean Oil 5L', 'OIL-5L-01', 'তেল ও ঘি', 'সিটি গ্রুপ', 'কার্টুন', 890, 840, 50, 10, '১০ কার্টুনে ১ লিটার ফ্রি'],
-    ['ফ্রেশ চিনি ১ কেজি', 'Fresh Sugar 1kg', 'SGR-1K-02', 'চিনি ও প্যাকেটজাত', 'মেঘনা গ্রুপ', 'বস্তা', 135, 128, 100, 20, ''],
-    ['প্রাণ গুঁড়া দুধ ৫০০ গ্রাম', 'Pran Milk Powder 500g', 'MLK-500-03', 'দুধ ও দুগ্ধজাত', 'প্রাণ-আরএফএল', 'প্যাকেট', 420, 395, 40, 5, ''],
+    ['তীর সয়াবিন তেল ৫ লিটার', 'Teer Soybean Oil 5L', 'OIL-5L-01', 'তেল ও ঘি', 'সিটি গ্রুপ', 'কার্টুন', 890, 840, 50, 10, '১০ কার্টুনে ১ লিটার ফ্রি', 'https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?w=200'],
+    ['ফ্রেশ চিনি ১ কেজি', 'Fresh Sugar 1kg', 'SGR-1K-02', 'চিনি ও প্যাকেটজাত', 'মেঘনা গ্রুপ', 'বস্তা', 135, 128, 100, 20, '', 'https://images.unsplash.com/photo-1581441363689-1f3c3c414635?w=200'],
+    ['প্রাণ গুঁড়া দুধ ৫০০ গ্রাম', 'Pran Milk Powder 500g', 'MLK-500-03', 'দুধ ও দুগ্ধজাত', 'প্রাণ-আরএফএল', 'প্যাকেট', 420, 395, 40, 5, '', ''],
   ];
 
   const blob = createCSVBlob(headers, sampleRows);
@@ -758,6 +761,7 @@ export function parseProductsFromCSV(
   const stockIdx = findIdx(['স্টক', 'stock', 'পরিমাণ', 'qty']);
   const minStockIdx = findIdx(['সর্বনিম্ন', 'অ্যালার্ট', 'alert', 'min']);
   const offerIdx = findIdx(['অফার', 'offer', 'trade']);
+  const imgUrlIdx = findIdx(['ছবি', 'image', 'photo', 'url', 'লিংক', 'চিত্র', 'img']);
 
   const now = Date.now();
 
@@ -797,6 +801,7 @@ export function parseProductsFromCSV(
     const supplier = (supIdx >= 0 ? row[supIdx] : '') || (existingSuppliers[0] || '');
     const unit = (unitIdx >= 0 ? row[unitIdx] : '') || 'পিস';
     const tradeOfferDesc = offerIdx >= 0 ? row[offerIdx] : '';
+    const imageUrl = (imgUrlIdx >= 0 ? row[imgUrlIdx] : '') || '';
 
     const newProd: Product = {
       id: `prod-${now}-${r}-${Math.random().toString(36).substring(2, 6)}`,
@@ -811,7 +816,7 @@ export function parseProductsFromCSV(
       stock: stock,
       minStockAlert: minStockAlert,
       tradeOfferDesc: tradeOfferDesc.trim(),
-      imageUrl: '',
+      imageUrl: imageUrl.trim(),
     };
 
     products.push(newProd);
