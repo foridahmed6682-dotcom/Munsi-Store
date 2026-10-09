@@ -30,6 +30,10 @@ import {
   List,
   X,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
+  Maximize2,
+  Minimize2,
   Sparkles,
 } from 'lucide-react';
 import { Shop, PaymentMethod, Route } from '../types';
@@ -224,6 +228,8 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
 
   // Turn-by-Turn GPS Navigation Mode (Driver Mode)
   const [isTurnByTurnActive, setIsTurnByTurnActive] = useState<boolean>(false);
+  const [isBottomCardMinimized, setIsBottomCardMinimized] = useState<boolean>(false);
+  const [isFullScreenMap, setIsFullScreenMap] = useState<boolean>(false);
   const [turnSteps, setTurnSteps] = useState<NavigationTurnStep[]>([]);
   const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
   const [isVoiceMuted, setIsVoiceMuted] = useState<boolean>(false);
@@ -316,6 +322,11 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
       map.on('dragstart', () => {
         setAutoFollow(false);
       });
+
+      // When user taps on map, minimize card so the route and map are fully visible
+      map.on('click', () => {
+        setIsBottomCardMinimized(true);
+      });
     }
 
     return () => {
@@ -326,6 +337,16 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
       }
     };
   }, []);
+
+  // Invalidate map size whenever fullscreen, turn-by-turn or card minimize state changes
+  useEffect(() => {
+    if (mapInstanceRef.current) {
+      const timer = setTimeout(() => {
+        mapInstanceRef.current?.invalidateSize();
+      }, 200);
+      return () => clearTimeout(timer);
+    }
+  }, [isFullScreenMap, isTurnByTurnActive, isBottomCardMinimized]);
 
   // Switch Tile Layer between Free Street Map and Free Satellite (shows actual houses, roofs & roads)
   useEffect(() => {
@@ -729,6 +750,7 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
           setSelectedRoute('all');
         }
         setSelectedShop(found);
+        setIsBottomCardMinimized(true); // Auto-minimize card so turn-by-turn navigation is clearly visible on mobile!
         const [fLat, fLng] = getShopCoordinates(found, 0);
         if (mapInstanceRef.current) {
           mapInstanceRef.current.setView([fLat, fLng], 16, { animate: true });
@@ -737,7 +759,7 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
           const dist = calculateDistanceKm(userLocation.lat, userLocation.lng, fLat, fLng);
           const text = dist < 1 ? `${Math.round(dist * 1000)} মিটার` : `${dist.toFixed(2)} কিমি`;
           setDirectionDistanceText(text);
-          drawDirectionRoute({ ...found, lat: fLat, lng: fLng });
+          drawDirectionRoute({ ...found, lat: fLat, lng: fLng }, true);
         }
       }
     }
@@ -895,10 +917,14 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
 
     if (activateTurnByTurn) {
       setIsTurnByTurnActive(true);
+      setIsBottomCardMinimized(true); // Auto-minimize shop card to ensure turn-by-turn navigation is clearly visible on mobile!
       playTurnChime();
       if (steps.length > 0) {
         speakInstruction(`যাত্রা শুরু করুন। ${steps[0].instruction}`, isVoiceMuted);
       }
+      setTimeout(() => {
+        map.invalidateSize();
+      }, 150);
     }
 
     const dist = calculateDistanceKm(userLocation.lat, userLocation.lng, sLat, sLng);
@@ -918,6 +944,7 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
     setLiveDistanceMeters(null);
     setLiveHeadingDeg(null);
     setIsTurnByTurnActive(false);
+    setIsBottomCardMinimized(false);
     setTurnSteps([]);
     setCurrentStepIndex(0);
     setShowStepsModal(false);
@@ -932,6 +959,7 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
   // Focus a specific shop on the map
   const handleFocusShop = (shop: Shop) => {
     setSelectedShop(shop);
+    setIsBottomCardMinimized(false);
     const [sLat, sLng] = getShopCoordinates(shop, 0);
     if (mapInstanceRef.current) {
       mapInstanceRef.current.setView([sLat, sLng], 16, { animate: true });
@@ -1099,11 +1127,25 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
       {/* Main Map & Side List Container */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
         {/* Map Canvas */}
-        <div className="lg:col-span-8 xl:col-span-9 relative bg-neutral-200 rounded-3xl overflow-hidden border border-neutral-300 shadow-sm h-[460px] sm:h-[520px]">
+        <div
+          className={`transition-all duration-300 ${
+            isFullScreenMap
+              ? 'fixed inset-0 z-50 w-screen h-screen rounded-none border-0'
+              : `lg:col-span-8 xl:col-span-9 relative bg-neutral-200 rounded-3xl overflow-hidden border border-neutral-300 shadow-sm ${
+                  isTurnByTurnActive ? 'h-[580px] sm:h-[660px]' : 'h-[460px] sm:h-[520px]'
+                }`
+          }`}
+        >
           <div ref={mapContainerRef} className="w-full h-full z-0" />
 
           {/* Map Layer Switcher & Legend */}
-          <div className="absolute top-3 right-3 z-10 flex flex-col items-end gap-1.5 pointer-events-auto">
+          <div
+            className={`absolute z-10 flex flex-col items-end gap-1.5 pointer-events-auto transition-all duration-200 ${
+              isTurnByTurnActive
+                ? 'top-[96px] sm:top-3 right-2 sm:right-3'
+                : 'top-3 right-3'
+            }`}
+          >
             {/* Satellite vs Street Map Mode */}
             <div className="bg-white/95 backdrop-blur-xs p-1 rounded-xl border border-neutral-200 shadow-md flex items-center gap-1 text-[11px] font-bold">
               <button
@@ -1155,7 +1197,7 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
 
           {/* TURN-BY-TURN LIVE GPS NAVIGATION DRIVER HUD (TOP) */}
           {selectedShop && userLocation && isTurnByTurnActive && (
-            <div className="absolute top-3 left-3 right-3 sm:right-auto sm:max-w-md z-20 animate-in fade-in slide-in-from-top duration-200">
+            <div className="absolute top-2 left-2 right-2 sm:left-3 sm:right-auto sm:max-w-md z-20 animate-in fade-in slide-in-from-top duration-200">
               <div className="bg-neutral-900/98 backdrop-blur-md text-white p-3 rounded-2xl border-2 border-emerald-500 shadow-2xl flex flex-col gap-2">
                 <div className="flex items-center justify-between gap-2.5">
                   {/* Giant Maneuver Arrow Box */}
@@ -1189,7 +1231,7 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
                     )}
                   </div>
 
-                  {/* Actions: Voice & Steps list & Auto-follow & Close */}
+                  {/* Actions: Voice & Steps list & Auto-follow & Fullscreen & Close */}
                   <div className="flex items-center gap-1 shrink-0">
                     <button
                       type="button"
@@ -1239,7 +1281,20 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
 
                     <button
                       type="button"
-                      onClick={() => setIsTurnByTurnActive(false)}
+                      onClick={() => setIsFullScreenMap((prev) => !prev)}
+                      className={`p-1.5 rounded-lg border text-xs cursor-pointer transition-all ${
+                        isFullScreenMap
+                          ? 'bg-blue-600 border-blue-400 text-white'
+                          : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-white'
+                      }`}
+                      title={isFullScreenMap ? 'ফুল-স্ক্রিন মোড বন্ধ করুন' : 'ফুল-স্ক্রিন ড্রাইভার মোড চালু করুন'}
+                    >
+                      {isFullScreenMap ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleCloseSelectedShop()}
                       className="p-1.5 rounded-lg bg-neutral-800 hover:bg-rose-900 border border-neutral-700 text-neutral-300 hover:text-white text-xs cursor-pointer"
                       title="টার্ন-বাই-টার্ন নেভিগেশন বন্ধ করুন"
                     >
@@ -1327,9 +1382,91 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
             </div>
           )}
 
-          {/* Selected Shop Action Card & 2-Second Live Navigation HUD */}
-          {selectedShop && (
-            <div className="absolute bottom-3 left-3 right-3 z-10 bg-white/98 backdrop-blur-md rounded-2xl p-3.5 border border-neutral-200 shadow-xl max-w-xl mx-auto animate-in fade-in slide-in-from-bottom duration-200">
+          {/* 1. COMPACT GOOGLE MAPS NAVIGATION DOCK (BOTTOM) when turn-by-turn is active & minimized */}
+          {selectedShop && isTurnByTurnActive && isBottomCardMinimized && (
+            <div className="absolute bottom-2.5 left-2 right-2 sm:left-4 sm:right-4 z-20 max-w-xl mx-auto animate-in fade-in slide-in-from-bottom duration-200">
+              <div className="bg-neutral-900/95 backdrop-blur-md text-white rounded-2xl p-2.5 sm:p-3 border border-emerald-500/80 shadow-2xl">
+                <div className="flex items-center justify-between gap-2">
+                  {/* Left: Live ETA & Remaining Distance */}
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-9 h-9 rounded-xl bg-emerald-600/30 border border-emerald-500/60 flex items-center justify-center shrink-0">
+                      <NavIcon className="w-5 h-5 text-emerald-400 fill-emerald-400 animate-pulse" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-baseline gap-1.5 flex-wrap">
+                        <span className="text-base sm:text-lg font-black text-emerald-400 font-mono leading-none">
+                          {liveDistanceMeters !== null
+                            ? liveDistanceMeters < 1000
+                              ? `${liveDistanceMeters} মি.`
+                              : `${(liveDistanceMeters / 1000).toFixed(2)} কিমি`
+                            : directionDistanceText || 'নির্ণয় হচ্ছে...'}
+                        </span>
+                        <span className="text-xs text-neutral-300 font-bold">
+                          ~ {liveDistanceMeters !== null ? Math.max(1, Math.ceil((liveDistanceMeters / 1000 / 22) * 60)) : 1} মি.
+                        </span>
+                        {liveSpeedKmh > 0 && (
+                          <span className="text-[10px] text-blue-300 font-mono font-bold hidden xs:inline">
+                            • {liveSpeedKmh} কিমি/ঘ
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-neutral-200 font-bold truncate flex items-center gap-1 mt-0.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0"></span>
+                        <span className="truncate">{selectedShop.name}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right: Quick actions */}
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => onSelectShopForOrder(selectedShop.id)}
+                      className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center gap-1 shadow-xs cursor-pointer active:scale-95"
+                      title="অর্ডার কাটুন"
+                    >
+                      <Store className="w-3.5 h-3.5" />
+                      <span className="hidden xs:inline">অর্ডার</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setIsDueModalOpen(true)}
+                      className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-neutral-950 rounded-xl text-xs font-black flex items-center gap-1 shadow-xs cursor-pointer active:scale-95"
+                      title="বকেয়া আদায়"
+                    >
+                      <DollarSign className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">বকেয়া</span>
+                    </button>
+
+                    {/* Expand details button */}
+                    <button
+                      type="button"
+                      onClick={() => setIsBottomCardMinimized(false)}
+                      className="p-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white rounded-xl border border-neutral-700 text-xs font-bold flex items-center gap-1 cursor-pointer transition-all"
+                      title="দোকানের বিস্তারিত তথ্য দেখুন"
+                    >
+                      <ChevronUp className="w-4 h-4 text-emerald-400" />
+                    </button>
+
+                    {/* Exit Navigation button */}
+                    <button
+                      type="button"
+                      onClick={handleCloseSelectedShop}
+                      className="p-1.5 bg-neutral-800 hover:bg-rose-900 border border-neutral-700 text-neutral-400 hover:text-white rounded-xl text-xs font-bold cursor-pointer"
+                      title="নেভিগেশন সমাপ্ত করুন"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 2. FULL SHOP ACTION CARD when NOT minimized (or when navigation hasn't started yet) */}
+          {selectedShop && (!isTurnByTurnActive || !isBottomCardMinimized) && (
+            <div className="absolute bottom-2.5 left-2 right-2 sm:left-4 sm:right-4 z-20 bg-white/98 backdrop-blur-md rounded-2xl p-3 sm:p-3.5 border border-neutral-200 shadow-2xl max-w-xl mx-auto animate-in fade-in slide-in-from-bottom duration-200 max-h-[75vh] overflow-y-auto">
               {/* Live 2-Second Navigation Tracker Banner */}
               <div className="mb-2.5 p-2.5 rounded-xl bg-gradient-to-r from-emerald-50 via-teal-50 to-blue-50 border border-emerald-200/90 shadow-2xs">
                 <div className="flex items-center justify-between gap-2">
@@ -1446,13 +1583,36 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
                   </p>
                 </div>
 
-                <button
-                  onClick={handleCloseSelectedShop}
-                  className="w-6 h-6 rounded-full bg-neutral-100 text-neutral-500 hover:bg-neutral-200 flex items-center justify-center text-xs font-bold cursor-pointer"
-                  title="বন্ধ করুন"
-                >
-                  ✕
-                </button>
+                {/* Card Header Actions: Minimize to see map vs Close */}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {isTurnByTurnActive && (
+                    <button
+                      type="button"
+                      onClick={() => setIsBottomCardMinimized(true)}
+                      className="px-2.5 py-1 rounded-xl bg-emerald-100 hover:bg-emerald-200 text-emerald-900 text-xs font-black flex items-center gap-1 cursor-pointer transition-all shadow-2xs"
+                      title="ম্যাপ দেখার জন্য কার্ড লুকান (ডিরেকশন চালু থাকবে)"
+                    >
+                      <Eye className="w-3.5 h-3.5 text-emerald-700" />
+                      <span>ম্যাপ দেখুন</span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isTurnByTurnActive) {
+                        // Crucial fix: Clicking cross while navigating minimizes card so direction stays on the map!
+                        setIsBottomCardMinimized(true);
+                      } else {
+                        handleCloseSelectedShop();
+                      }
+                    }}
+                    className="w-7 h-7 rounded-full bg-neutral-100 text-neutral-600 hover:bg-neutral-200 flex items-center justify-center text-xs font-bold cursor-pointer transition-colors"
+                    title={isTurnByTurnActive ? 'ম্যাপ বড় করে দেখুন (মিনিমাইজ)' : 'বন্ধ করুন'}
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
 
               {/* Action Buttons */}
@@ -1462,12 +1622,13 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
                   type="button"
                   onClick={() => {
                     if (isTurnByTurnActive) {
-                      setIsTurnByTurnActive(false);
+                      setIsBottomCardMinimized(true); // Minimize card to immediately reveal map & direction!
                     } else {
                       drawDirectionRoute(selectedShop, true);
+                      setIsBottomCardMinimized(true); // Auto-minimize upon starting navigation!
                     }
                   }}
-                  className={`col-span-2 sm:col-span-4 flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-black shadow-sm transition-all cursor-pointer active:scale-95 ${
+                  className={`col-span-2 sm:col-span-4 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-black shadow-sm transition-all cursor-pointer active:scale-95 ${
                     isTurnByTurnActive
                       ? 'bg-neutral-900 text-emerald-400 border border-emerald-500'
                       : 'bg-gradient-to-r from-emerald-700 to-teal-700 hover:from-emerald-600 hover:to-teal-600 text-white shadow-emerald-900/20'
@@ -1476,7 +1637,7 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
                   <NavIcon className={`w-4 h-4 ${isTurnByTurnActive ? 'text-emerald-400 animate-spin' : 'text-white'}`} />
                   <span>
                     {isTurnByTurnActive
-                      ? '🧭 টার্ন-বাই-টার্ন নেভিগেশন চলছে (বন্ধ করতে ক্লিক)'
+                      ? '🗺️ ম্যাপ স্ক্রিনে টার্ন-বাই-টার্ন নেভিগেশন দেখুন (মিনিমাইজ)'
                       : '🧭 টার্ন-বাই-টার্ন লাইভ জিপিএস নেভিগেশন শুরু করুন'}
                   </span>
                   {turnSteps.length > 0 && !isTurnByTurnActive && (
@@ -1485,6 +1646,19 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
                     </span>
                   )}
                 </button>
+
+                {/* Explicit End Navigation Button when turn-by-turn is active */}
+                {isTurnByTurnActive && (
+                  <button
+                    type="button"
+                    onClick={handleCloseSelectedShop}
+                    className="col-span-2 sm:col-span-4 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-xl text-xs font-bold bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200 transition-colors cursor-pointer active:scale-95"
+                    title="টার্ন-বাই-টার্ন নেভিগেশন পুরোপুরি শেষ করুন"
+                  >
+                    <X className="w-3.5 h-3.5 text-rose-600" />
+                    <span>🛑 টার্ন-বাই-টার্ন নেভিগেশন সমাপ্ত করুন</span>
+                  </button>
+                )}
 
                 {/* 1. Book Order */}
                 <button
