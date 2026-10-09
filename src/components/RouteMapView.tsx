@@ -19,7 +19,9 @@ import {
   Pause,
   Zap,
   Bike,
-  Footprints
+  Footprints,
+  Target,
+  Eye
 } from 'lucide-react';
 import { Shop, PaymentMethod, Route } from '../types';
 
@@ -137,6 +139,7 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
 
   // 2-Second Live Navigation & Direction tracking
   const [isLiveTracking, setIsLiveTracking] = useState<boolean>(true);
+  const [autoFollow, setAutoFollow] = useState<boolean>(true);
   const [liveDistanceMeters, setLiveDistanceMeters] = useState<number | null>(null);
   const [liveSpeedKmh, setLiveSpeedKmh] = useState<number>(0);
   const [liveHeadingDeg, setLiveHeadingDeg] = useState<number | null>(null);
@@ -224,6 +227,11 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
       const markersGroup = L.layerGroup().addTo(map);
       markersLayerRef.current = markersGroup;
       mapInstanceRef.current = map;
+
+      // When user manually drags the map, pause auto-follow camera
+      map.on('dragstart', () => {
+        setAutoFollow(false);
+      });
     }
 
     return () => {
@@ -358,7 +366,7 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
         userMarkerRef.current = marker;
       }
 
-      if (shouldCenter) {
+      if (shouldCenter || (autoFollow && selectedShop)) {
         map.panTo([latitude, longitude], { animate: true });
       }
     }
@@ -603,6 +611,7 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
     const map = mapInstanceRef.current;
 
     setIsLiveTracking(true); // Automatically ensure 2-second live GPS tracking is active
+    setAutoFollow(true); // Automatically lock camera to user's movement for live turn-by-turn tracking
 
     const [sLat, sLng] = getShopCoordinates(shop, 0);
 
@@ -670,14 +679,12 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
     }
   };
 
-  // Get Safe Google Maps Directions URL
+  // Get Safe Google Maps Turn-by-Turn GPS Navigation URL
   const getDirectionsUrl = (shop: Shop) => {
-    if (shop.lat !== undefined && shop.lng !== undefined) {
-      const originParam = userLocation ? `&origin=${userLocation.lat},${userLocation.lng}` : '';
-      return `https://www.google.com/maps/dir/?api=1&destination=${shop.lat},${shop.lng}${originParam}`;
-    }
-    const query = encodeURIComponent(`${shop.name} ${shop.address || shop.routeArea || ''}`);
-    return `https://www.google.com/maps/search/?api=1&query=${query}`;
+    const [sLat, sLng] = getShopCoordinates(shop, 0);
+    const originParam = userLocation ? `&origin=${userLocation.lat},${userLocation.lng}` : '';
+    // &dir_action=navigate triggers instant turn-by-turn voice guidance on Google Maps mobile app
+    return `https://www.google.com/maps/dir/?api=1&destination=${sLat},${sLng}${originParam}&dir_action=navigate`;
   };
 
   // Open Google Maps Directions
@@ -847,6 +854,69 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
               </span>
             )}
           </div>
+
+          {/* Live Turn Direction & Auto-Follow Heads-Up Display */}
+          {selectedShop && userLocation && (
+            <div className="absolute top-3 left-3 z-10 flex flex-col gap-1.5 max-w-[270px] sm:max-w-xs animate-in fade-in slide-in-from-top duration-200">
+              <div className="bg-neutral-900/95 backdrop-blur-md text-white p-2.5 rounded-2xl border border-neutral-700/80 shadow-xl">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <div
+                      className="w-7 h-7 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center shrink-0 transition-transform duration-500"
+                      style={{
+                        transform: `rotate(${liveHeadingDeg || 0}deg)`,
+                      }}
+                      title="দোকানের দিকে কম্পাস অভিমুখ"
+                    >
+                      <NavIcon className="w-4 h-4 fill-emerald-400 text-emerald-400" />
+                    </div>
+                    <div>
+                      <div className="text-[11px] font-black text-white flex items-center gap-1 leading-tight">
+                        <span>
+                          {liveDistanceMeters !== null && liveDistanceMeters <= 35
+                            ? 'দোকানের সামনে আছেন'
+                            : liveHeadingDeg !== null
+                            ? getCompassDirectionName(liveHeadingDeg)
+                            : 'অগ্রসর হোন'}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-emerald-400 font-bold font-mono">
+                        {liveDistanceMeters !== null
+                          ? liveDistanceMeters < 1000
+                            ? `${liveDistanceMeters} মিটার বাকি`
+                            : `${(liveDistanceMeters / 1000).toFixed(2)} কিমি বাকি`
+                          : ''}
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAutoFollow(true);
+                      if (mapInstanceRef.current && userLocation) {
+                        mapInstanceRef.current.setView([userLocation.lat, userLocation.lng], 16, { animate: true });
+                      }
+                    }}
+                    className={`px-2 py-1 rounded-xl text-[10px] font-extrabold flex items-center gap-1 cursor-pointer transition-all active:scale-95 ${
+                      autoFollow
+                        ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs'
+                        : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300 border border-neutral-600'
+                    }`}
+                    title={autoFollow ? 'অটো-ফলো মোড চালু: চলার সাথে সাথে ক্যামেরা সেন্টারে থাকবে' : 'ক্যামেরা কেন্দ্রে লক করতে ক্লিক করুন'}
+                  >
+                    <Target className={`w-3 h-3 ${autoFollow ? 'text-white' : 'text-neutral-400'}`} />
+                    <span>{autoFollow ? 'অটো-লক' : 'লক করুন'}</span>
+                  </button>
+                </div>
+
+                <div className="text-[10px] text-neutral-300 mt-1 pt-1 border-t border-neutral-800 flex items-center justify-between">
+                  <span className="truncate">গন্তব্য: <b className="text-white">{selectedShop.name}</b></span>
+                  <span className="text-[9px] text-emerald-400 font-mono shrink-0">২ সে. লাইভ</span>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Selected Shop Action Card & 2-Second Live Navigation HUD */}
           {selectedShop && (

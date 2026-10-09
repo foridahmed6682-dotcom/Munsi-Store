@@ -543,16 +543,16 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
                   <a
                     href={
                       shop.lat !== undefined && shop.lng !== undefined
-                        ? `https://www.google.com/maps/dir/?api=1&destination=${shop.lat},${shop.lng}`
+                        ? `https://www.google.com/maps/dir/?api=1&destination=${shop.lat},${shop.lng}&dir_action=navigate`
                         : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(shop.name + ' ' + (shop.address || shop.routeArea || ''))}`
                     }
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="py-1.5 px-2 rounded-xl text-[11px] font-bold bg-neutral-900 hover:bg-neutral-800 text-white transition-colors flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
-                    title="গুগল ম্যাপে দিকনির্দেশনা দেখুন"
+                    className="py-1.5 px-2 rounded-xl text-[11px] font-bold bg-neutral-900 hover:bg-neutral-800 text-white transition-colors flex items-center justify-center gap-1 active:scale-95 cursor-pointer shadow-2xs"
+                    title="গুগল ম্যাপে লাইভ টার্ন-বাই-টার্ন জিপিএস নেভিগেশন খুলুন"
                   >
                     <NavIcon className="w-3.5 h-3.5 text-blue-400" />
-                    <span>ডিরেকশন</span>
+                    <span>গুগল নেভিগেশন</span>
                   </a>
                 </div>
               </div>
