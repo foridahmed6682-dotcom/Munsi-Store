@@ -34,8 +34,11 @@ import { processImageFile } from '../lib/imageUtils';
 import { printProductsBatch } from '../lib/printService';
 import {
   downloadInventoryCSV,
+  downloadInventoryXLSX,
   downloadProductTemplateCSV,
+  downloadProductTemplateXLSX,
   parseProductsFromCSV,
+  parseSpreadsheetFile,
 } from '../lib/backupService';
 import { ProductImageLightboxModal } from './ProductImageLightboxModal';
 import { SupplierSummaryModal } from './SupplierSummaryModal';
@@ -92,6 +95,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [previewFilter, setPreviewFilter] = useState<'all' | 'with-img' | 'without-img'>('all');
   const [previewPage, setPreviewPage] = useState(1);
   const [previewPerPage, setPreviewPerPage] = useState(25);
+  const [duplicateMode, setDuplicateMode] = useState<'update' | 'skip' | 'add_new'>('update');
 
   const toggleSelectProduct = (id: string) => {
     setSelectedProductIds((prev) => {
@@ -265,10 +269,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
     const reader = new FileReader();
     reader.onload = (event) => {
-      const content = event.target?.result as string;
-      if (!content) return;
-      const { products: parsedProds, skippedCount, errors } = parseProductsFromCSV(
-        content,
+      const buffer = event.target?.result;
+      if (!buffer) return;
+      const { products: parsedProds, skippedCount, errors } = parseSpreadsheetFile(
+        buffer as ArrayBuffer,
+        file.name,
         categories,
         suppliers
       );
@@ -279,7 +284,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     reader.onerror = () => {
       setCsvImportErrors(['ফাইলটি পড়তে সমস্যা হয়েছে']);
     };
-    reader.readAsText(file);
+    reader.readAsArrayBuffer(file);
   };
 
   // Bulk Photos Auto-Matcher: Matches multiple selected photos to preview products by SKU or Name
@@ -381,26 +386,110 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     setCsvPreviewProducts((prev) => prev.filter((p) => p.id !== prodId));
   };
 
+  // Quick cell update in preview table
+  const handleUpdatePreviewCell = (
+    prodId: string,
+    field: 'unitPrice' | 'costPrice' | 'stock' | 'banglaName',
+    val: string | number
+  ) => {
+    setCsvPreviewProducts((prev) =>
+      prev.map((p) => {
+        if (p.id !== prodId) return p;
+        if (field === 'unitPrice' || field === 'costPrice') {
+          const num = typeof val === 'number' ? val : parseBanglaNumber(val, p[field]);
+          return { ...p, [field]: isNaN(num) ? p[field] : num };
+        }
+        if (field === 'stock') {
+          const num =
+            typeof val === 'number'
+              ? val
+              : Math.max(0, Math.round(parseBanglaNumber(val, p.stock)));
+          return { ...p, stock: num };
+        }
+        return { ...p, [field]: String(val) };
+      })
+    );
+  };
+
+  // Check if preview product matches an existing product in inventory
+  const checkExistingMatch = (p: Product): Product | undefined => {
+    const sku = (p.sku || '').toLowerCase().trim();
+    const name = (p.banglaName || '').toLowerCase().trim();
+    return products.find(
+      (existing) =>
+        (sku && existing.sku && existing.sku.toLowerCase().trim() === sku) ||
+        (name && existing.banglaName && existing.banglaName.toLowerCase().trim() === name)
+    );
+  };
+
   const handleConfirmBulkImport = () => {
     if (csvPreviewProducts.length === 0) return;
     setIsImportingCsv(true);
 
     try {
-      if (onBatchAddProducts) {
-        onBatchAddProducts(csvPreviewProducts);
-      } else {
-        csvPreviewProducts.forEach((prod) => {
-          onAddProduct(prod);
+      const existingBySku = new Map(products.map((p) => [p.sku.toLowerCase().trim(), p]));
+      const existingByName = new Map(products.map((p) => [p.banglaName.toLowerCase().trim(), p]));
+
+      const toAdd: Product[] = [];
+      const toUpdate: Product[] = [];
+
+      csvPreviewProducts.forEach((newProd) => {
+        const skuKey = (newProd.sku || '').toLowerCase().trim();
+        const nameKey = (newProd.banglaName || '').toLowerCase().trim();
+        const matched = (skuKey && existingBySku.get(skuKey)) || (nameKey && existingByName.get(nameKey));
+
+        if (matched) {
+          if (duplicateMode === 'skip') {
+            return;
+          }
+          if (duplicateMode === 'update') {
+            toUpdate.push({
+              ...matched,
+              unitPrice: newProd.unitPrice,
+              costPrice: newProd.costPrice,
+              stock: newProd.stock,
+              unit: newProd.unit || matched.unit,
+              category: newProd.category || matched.category,
+              supplier: newProd.supplier || matched.supplier,
+              tradeOfferDesc: newProd.tradeOfferDesc || matched.tradeOfferDesc,
+              imageUrl: newProd.imageUrl || matched.imageUrl,
+            });
+            return;
+          }
+        }
+        toAdd.push(newProd);
+      });
+
+      if (toUpdate.length > 0) {
+        toUpdate.forEach((p) => {
+          if (onUpdateProduct) onUpdateProduct(p);
+          else onAddProduct(p);
         });
       }
-      setImportSuccessMsg(`সফলভাবে ${csvPreviewProducts.length}টি পণ্য ইনভেন্টরিতে যুক্ত করা হয়েছে!`);
+
+      if (toAdd.length > 0) {
+        if (onBatchAddProducts) {
+          onBatchAddProducts(toAdd);
+        } else {
+          toAdd.forEach((p) => onAddProduct(p));
+        }
+      }
+
+      const summaryParts: string[] = [];
+      if (toAdd.length > 0) summaryParts.push(`${toAdd.length}টি নতুন পণ্য যুক্ত`);
+      if (toUpdate.length > 0) summaryParts.push(`${toUpdate.length}টি বিদ্যমান পণ্য আপডেট`);
+      if (duplicateMode === 'skip' && csvPreviewProducts.length > toAdd.length) {
+        summaryParts.push(`${csvPreviewProducts.length - toAdd.length}টি বিদ্যমান স্কিপ`);
+      }
+
+      setImportSuccessMsg(`সফলভাবে সম্পন্ন হয়েছে! (${summaryParts.join(', ')})`);
       setTimeout(() => {
         setIsBulkCsvModalOpen(false);
         setCsvFile(null);
         setCsvPreviewProducts([]);
         setImportSuccessMsg(null);
         setBulkPhotoResult(null);
-      }, 1500);
+      }, 1600);
     } catch {
       setCsvImportErrors(['পণ্যগুলো সংরক্ষণ করতে সমস্যা হয়েছে']);
     } finally {
@@ -412,8 +501,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     const total = csvPreviewProducts.length;
     const withImg = csvPreviewProducts.filter((p) => Boolean(p.imageUrl)).length;
     const withoutImg = total - withImg;
-    return { total, withImg, withoutImg };
-  }, [csvPreviewProducts]);
+    const existingCount = csvPreviewProducts.filter((p) => Boolean(checkExistingMatch(p))).length;
+    const newCount = total - existingCount;
+    return { total, withImg, withoutImg, existingCount, newCount };
+  }, [csvPreviewProducts, products]);
 
   const filteredPreviewProducts = useMemo(() => {
     return csvPreviewProducts.filter((p) => {
@@ -616,22 +707,41 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end flex-wrap">
           <button
             type="button"
-            onClick={() => downloadInventoryCSV(products)}
-            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
-            title="সকল প্রোডাক্ট ও ইনভেন্টরি এক্সেল (CSV) ফাইলে ডাউনলোড করুন"
+            onClick={() => downloadInventoryXLSX(products)}
+            className="px-3 py-2 rounded-xl text-xs font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+            title="সকল প্রোডাক্ট ও ইনভেন্টরি মাইক্রোসফট এক্সেল (.xlsx) ফাইলে ডাউনলোড করুন"
           >
             <Download className="w-3.5 h-3.5 text-emerald-600" />
-            <span>এক্সেল এক্সপোর্ট</span>
+            <span>এক্সেল (.xlsx)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => downloadInventoryCSV(products)}
+            className="px-2.5 py-2 rounded-xl text-xs font-bold bg-neutral-50 hover:bg-neutral-100 text-neutral-700 border border-neutral-200 transition-colors flex items-center gap-1 cursor-pointer shadow-xs active:scale-95"
+            title="CSV ফরম্যাটে ইনভেন্টরি ডাউনলোড"
+          >
+            <span>CSV</span>
           </button>
 
           <button
             type="button"
             onClick={downloadProductTemplateCSV}
-            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
-            title="১০০+ পণ্য বাল্ক আপলোডের নমুনা এক্সেল/CSV টেমপ্লেট ডাউনলোড করুন"
+            className="px-3 py-2 rounded-xl text-xs font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+            title="১০০+ পণ্য আমদানির MunsiStore_Product_Import_Template.csv টেমপ্লেট ডাউনলোড করুন"
+          >
+            <Download className="w-3.5 h-3.5 text-emerald-600" />
+            <span>নমুনা CSV (.csv)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={downloadProductTemplateXLSX}
+            className="px-3 py-2 rounded-xl text-xs font-bold bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+            title="১০০+ পণ্য বাল্ক আপলোডের নমুনা এক্সেল (.xlsx) টেমপ্লেট ডাউনলোড করুন"
           >
             <Download className="w-3.5 h-3.5 text-teal-600" />
-            <span>নমুনা টেমপ্লেট</span>
+            <span>নমুনা এক্সেল</span>
           </button>
 
           <button
@@ -644,10 +754,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               setIsBulkCsvModalOpen(true);
             }}
             className="px-3.5 py-2 rounded-xl text-xs font-bold bg-teal-700 hover:bg-teal-800 text-white border border-teal-800 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
-            title="এক্সেল বা CSV ফাইল থেকে একসাথে ১০০+ পণ্য আপলোড করুন"
+            title="এক্সেল (.xlsx/.xls) বা CSV ফাইল থেকে একসাথে ১০০+ পণ্য আপলোড করুন"
           >
             <FileSpreadsheet className="w-3.5 h-3.5 text-teal-100" />
-            <span>বাল্ক আপলোড (CSV)</span>
+            <span>বাল্ক আপলোড (Excel/CSV)</span>
           </button>
 
           <button
@@ -1400,7 +1510,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               <div className="p-3.5 bg-neutral-50 rounded-2xl border border-neutral-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h4 className="text-xs font-bold text-neutral-800 flex items-center gap-1.5">
-                    <span>১. ডেমো এক্সেল টেমপ্লেট ডাউনলোড করুন</span>
+                    <span>১. ডেমো এক্সেল / CSV টেমপ্লেট ডাউনলোড করুন</span>
                     <span className="text-[10px] bg-teal-100 text-teal-800 px-2 py-0.5 rounded-full font-bold">
                       ছবির লিংক কলাম সহ
                     </span>
@@ -1409,25 +1519,36 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                     টেমপ্লেটে পণ্যের বাংলা নাম, ক্যাটাগরি, বিক্রয়মূল্য, কেনাদর, স্টক এবং <b>&quot;ছবির লিংক (Image URL)&quot;</b> কলাম দেওয়া আছে।
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={downloadProductTemplateCSV}
-                  className="px-3.5 py-1.5 bg-white hover:bg-neutral-100 text-teal-800 border border-teal-300 rounded-xl text-xs font-bold flex items-center gap-1.5 shrink-0 shadow-2xs cursor-pointer transition-colors"
-                >
-                  <Download className="w-3.5 h-3.5 text-teal-600" />
-                  <span>নমুনা টেমপ্লেট CSV ডাউনলোড</span>
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={downloadProductTemplateCSV}
+                    className="px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs cursor-pointer transition-colors"
+                    title="MunsiStore_Product_Import_Template.csv ডাউনলোড করুন"
+                  >
+                    <Download className="w-3.5 h-3.5 text-emerald-200" />
+                    <span>নমুনা CSV (.csv)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={downloadProductTemplateXLSX}
+                    className="px-3.5 py-1.5 bg-white hover:bg-neutral-100 text-teal-800 border border-teal-300 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs cursor-pointer transition-colors"
+                    title="MunsiStore_Product_Import_Template.xlsx ডাউনলোড করুন"
+                  >
+                    <span>এক্সেল (.xlsx)</span>
+                  </button>
+                </div>
               </div>
 
               {/* Step 2: Choose File */}
               <div>
                 <label className="block text-xs font-bold text-neutral-700 mb-1.5">
-                  ২. প্রস্তুতকৃত CSV বা এক্সেল ফাইল আপলোড করুন
+                  ২. প্রস্তুতকৃত Excel (.xlsx / .xls) বা CSV ফাইল আপলোড করুন
                 </label>
                 <div className="border-2 border-dashed border-teal-300 hover:border-teal-500 rounded-2xl p-5 text-center bg-teal-50/20 transition-colors">
                   <input
                     type="file"
-                    accept=".csv,text/csv"
+                    accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
                     id="bulk-product-csv-input"
                     onChange={handleCsvFileSelect}
                     className="hidden"
@@ -1438,10 +1559,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   >
                     <FileUp className="w-7 h-7 text-teal-600" />
                     <span className="text-xs font-bold text-teal-900">
-                      {csvFile ? `ফাইল সিলেক্ট হয়েছে: ${csvFile.name}` : 'ফাইল সিলেক্ট করতে এখানে ক্লিক করুন (.csv)'}
+                      {csvFile ? `ফাইল সিলেক্ট হয়েছে: ${csvFile.name}` : 'ফাইল সিলেক্ট করতে এখানে ক্লিক করুন (.xlsx বা .csv)'}
                     </span>
                     <span className="text-[11px] text-neutral-500">
-                      Excel থেকে &quot;Save As &rarr; CSV (Comma delimited)&quot; হিসেবে সেভ করা ফাইল নির্বাচন করুন
+                      Microsoft Excel (.xlsx/.xls) অথবা CSV ফাইল সরাসরি ড্রপ করুন
                     </span>
                   </label>
                 </div>
@@ -1512,7 +1633,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] text-neutral-600 pt-1.5 border-t border-teal-200/60">
                     <div className="bg-white/80 p-2 rounded-xl border border-teal-100">
-                      <span className="font-bold text-teal-900 block mb-0.5">১. CSV ফাইলে ছবির লিংক:</span>
+                      <span className="font-bold text-teal-900 block mb-0.5">১. ফাইলে ছবির লিংক:</span>
                       স্প্রেডশীটের &quot;ছবির লিংক&quot; কলামে পণ্যের অনলাইন ইউআরএল দিলেই ছবি স্বয়ংক্রিয়ভাবে লোড হবে।
                     </div>
                     <div className="bg-white/80 p-2 rounded-xl border border-teal-100">
@@ -1539,6 +1660,58 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                       </button>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Duplicate Handling Policy */}
+              {csvPreviewProducts.length > 0 && (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 bg-blue-50/80 rounded-2xl border border-blue-200">
+                  <div>
+                    <span className="text-xs font-extrabold text-blue-950 flex items-center gap-1.5">
+                      <span>স্মার্ট ডুপ্লিকেট পলিসি:</span>
+                      <span className="text-[10px] bg-blue-200/80 text-blue-900 px-2 py-0.5 rounded-full font-bold">
+                        {previewStats.existingCount}টি পণ্য আগে থেকেই ইনভেন্টরিতে আছে
+                      </span>
+                    </span>
+                    <span className="text-[11px] text-blue-800 block">
+                      একই SKU বা বাংলা নামের পণ্য পাওয়া গেলে আপনি কী করতে চান?
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setDuplicateMode('update')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        duplicateMode === 'update'
+                          ? 'bg-blue-800 text-white shadow-xs'
+                          : 'bg-white text-blue-900 border border-blue-200 hover:bg-blue-50'
+                      }`}
+                    >
+                      🔄 বিদ্যমানগুলো আপডেট (রেট ও স্টক)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDuplicateMode('skip')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        duplicateMode === 'skip'
+                          ? 'bg-amber-700 text-white shadow-xs'
+                          : 'bg-white text-amber-900 border border-amber-200 hover:bg-amber-50'
+                      }`}
+                    >
+                      ⏭️ বিদ্যমানগুলো স্কিপ
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDuplicateMode('add_new')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        duplicateMode === 'add_new'
+                          ? 'bg-purple-700 text-white shadow-xs'
+                          : 'bg-white text-purple-900 border border-purple-200 hover:bg-purple-50'
+                      }`}
+                    >
+                      ➕ সব নতুন হিসেবে যোগ
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -1635,12 +1808,12 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                           <tr>
                             <th className="p-2.5 w-10 text-center">#</th>
                             <th className="p-2.5 w-24 text-center">ছবি (Photo)</th>
-                            <th className="p-2.5 min-w-[160px]">পণ্যের বাংলা ও ইংরেজি নাম</th>
+                            <th className="p-2.5 min-w-[160px]">পণ্যের নাম ও স্ট্যাটাস</th>
                             <th className="p-2.5 min-w-[90px]">এসকেইউ (SKU)</th>
                             <th className="p-2.5 min-w-[100px]">ক্যাটাগরি</th>
-                            <th className="p-2.5 min-w-[85px] text-right">বিক্রয় রেট</th>
+                            <th className="p-2.5 min-w-[95px] text-right">বিক্রয় রেট (৳)</th>
                             <th className="p-2.5 min-w-[80px] text-right">কেনাদর</th>
-                            <th className="p-2.5 min-w-[85px] text-center">স্টক ও একক</th>
+                            <th className="p-2.5 min-w-[95px] text-center">স্টক ও একক</th>
                             <th className="p-2.5 w-12 text-center">মুছুন</th>
                           </tr>
                         </thead>
@@ -1654,6 +1827,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                           ) : (
                             paginatedPreviewProducts.map((p, idx) => {
                               const globalIndex = (previewPage - 1) * (previewPerPage === 9999 ? 0 : previewPerPage) + idx + 1;
+                              const existingMatch = checkExistingMatch(p);
                               return (
                                 <tr key={p.id} className="hover:bg-neutral-50/80 transition-colors">
                                   {/* # */}
@@ -1702,16 +1876,40 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                                     )}
                                   </td>
 
-                                  {/* Product Name */}
+                                  {/* Product Name & Existing Status */}
                                   <td className="p-2.5">
                                     <div className="font-extrabold text-neutral-900 leading-tight">
                                       {p.banglaName}
                                     </div>
-                                    {p.name && p.name !== p.banglaName && (
-                                      <div className="text-[11px] text-neutral-400 font-normal">
-                                        {p.name}
-                                      </div>
-                                    )}
+                                    <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                      {p.name && p.name !== p.banglaName && (
+                                        <span className="text-[11px] text-neutral-400 font-normal">
+                                          {p.name}
+                                        </span>
+                                      )}
+                                      {existingMatch ? (
+                                        <span
+                                          className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
+                                            duplicateMode === 'update'
+                                              ? 'bg-blue-100 text-blue-800'
+                                              : duplicateMode === 'skip'
+                                              ? 'bg-amber-100 text-amber-800'
+                                              : 'bg-purple-100 text-purple-800'
+                                          }`}
+                                          title={`ইনভেন্টরিতে স্টক: ${existingMatch.stock}, পূর্বের রেট: ৳${existingMatch.unitPrice}`}
+                                        >
+                                          {duplicateMode === 'update'
+                                            ? `বিদ্যমান (স্টক: ${existingMatch.stock})`
+                                            : duplicateMode === 'skip'
+                                            ? 'স্কিপ হবে'
+                                            : 'ডুপ্লিকেট'}
+                                        </span>
+                                      ) : (
+                                        <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800">
+                                          নতুন পণ্য
+                                        </span>
+                                      )}
+                                    </div>
                                   </td>
 
                                   {/* SKU */}
@@ -1728,19 +1926,49 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                                     </span>
                                   </td>
 
-                                  {/* Selling Rate */}
-                                  <td className="p-2.5 text-right font-extrabold text-emerald-700">
-                                    ৳{p.unitPrice.toLocaleString('bn-BD')}
+                                  {/* Inline Editable Selling Rate */}
+                                  <td className="p-2 text-right">
+                                    <div className="flex items-center justify-end gap-0.5">
+                                      <span className="text-emerald-700 font-bold text-xs">৳</span>
+                                      <input
+                                        type="text"
+                                        value={p.unitPrice}
+                                        onChange={(e) =>
+                                          handleUpdatePreviewCell(p.id, 'unitPrice', e.target.value)
+                                        }
+                                        className="w-16 text-right font-extrabold text-emerald-700 bg-emerald-50/40 hover:bg-emerald-50 focus:bg-white border border-transparent hover:border-emerald-300 focus:border-emerald-600 rounded px-1.5 py-0.5 text-xs transition-colors"
+                                        title="ক্লিক করে বিক্রয়মূল্য এডিট করুন"
+                                      />
+                                    </div>
                                   </td>
 
                                   {/* Cost Price */}
-                                  <td className="p-2.5 text-right text-neutral-600">
-                                    ৳{p.costPrice.toLocaleString('bn-BD')}
+                                  <td className="p-2 text-right">
+                                    <input
+                                      type="text"
+                                      value={p.costPrice}
+                                      onChange={(e) =>
+                                        handleUpdatePreviewCell(p.id, 'costPrice', e.target.value)
+                                      }
+                                      className="w-14 text-right text-neutral-600 bg-transparent hover:bg-neutral-100 focus:bg-white border border-transparent hover:border-neutral-300 focus:border-teal-500 rounded px-1 py-0.5 text-xs transition-colors"
+                                      title="ক্লিক করে কেনাদর এডিট করুন"
+                                    />
                                   </td>
 
-                                  {/* Stock & Unit */}
-                                  <td className="p-2.5 text-center text-neutral-800 font-bold">
-                                    {p.stock} <span className="text-[10px] font-normal text-neutral-500">{p.unit}</span>
+                                  {/* Inline Editable Stock & Unit */}
+                                  <td className="p-2 text-center">
+                                    <div className="flex items-center justify-center gap-1">
+                                      <input
+                                        type="text"
+                                        value={p.stock}
+                                        onChange={(e) =>
+                                          handleUpdatePreviewCell(p.id, 'stock', e.target.value)
+                                        }
+                                        className="w-14 text-center font-bold text-neutral-800 bg-neutral-100/60 hover:bg-neutral-100 focus:bg-white border border-transparent hover:border-neutral-300 focus:border-teal-600 rounded px-1 py-0.5 text-xs transition-colors"
+                                        title="ক্লিক করে স্টক এডিট করুন"
+                                      />
+                                      <span className="text-[10px] text-neutral-500">{p.unit}</span>
+                                    </div>
                                   </td>
 
                                   {/* Delete row */}

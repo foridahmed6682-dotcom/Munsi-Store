@@ -533,10 +533,11 @@ export const ShopsListView: React.FC<ShopsListViewProps> = ({
                     <button
                       type="button"
                       onClick={() => onOpenMapForShop(shop.id)}
-                      className="py-1.5 px-2 rounded-xl text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200/80 transition-colors flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
+                      className="py-1.5 px-2 rounded-xl text-[11px] font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-850 border border-emerald-300 transition-colors flex items-center justify-center gap-1 active:scale-95 cursor-pointer shadow-2xs"
+                      title="ম্যাপে দোকানের অবস্থান ও ২ সেকেন্ড পর পর লাইভ দূরত্বের ডিরেকশন দেখুন"
                     >
                       <MapPin className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>ম্যাপে অবস্থান</span>
+                      <span>ম্যাপ ও ২ সে. দূরত্ব</span>
                     </button>
                   )}
                   <a

@@ -15,6 +15,8 @@ import {
   getKeyValFromIndexedDB,
   isIndexedDBSupported,
 } from './indexedDb';
+import { parseBanglaNumber } from './storage';
+import * as XLSX from 'xlsx';
 
 export interface FullBackupData {
   version: string;
@@ -677,6 +679,111 @@ export function downloadProductTemplateCSV(): void {
 }
 
 /**
+ * Download native Microsoft Excel (.xlsx) Product Import Template
+ */
+export function downloadProductTemplateXLSX(): void {
+  const headers = [
+    'পণ্যের নাম (বাংলা) *',
+    'পণ্যের নাম (English)',
+    'এসকেইউ (SKU)',
+    'ক্যাটাগরি',
+    'সাপ্লায়ার',
+    'একক (Unit)',
+    'বিক্রয়মূল্য (৳) *',
+    'কেনাদর (৳)',
+    'প্রাথমিক স্টক',
+    'সর্বনিম্ন স্টক অ্যালার্ট',
+    'ট্রেড অফার',
+    'ছবির লিংক (Image URL)',
+  ];
+
+  const sampleRows = [
+    ['তীর সয়াবিন তেল ৫ লিটার', 'Teer Soybean Oil 5L', 'OIL-5L-01', 'তেল ও ঘি', 'সিটি গ্রুপ', 'কার্টুন', 890, 840, 50, 10, '১০ কার্টুনে ১ লিটার ফ্রি', 'https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?w=200'],
+    ['ফ্রেশ চিনি ১ কেজি', 'Fresh Sugar 1kg', 'SGR-1K-02', 'চিনি ও প্যাকেটজাত', 'মেঘনা গ্রুপ', 'বস্তা', 135, 128, 100, 20, '', 'https://images.unsplash.com/photo-1581441363689-1f3c3c414635?w=200'],
+    ['প্রাণ গুঁড়া দুধ ৫০০ গ্রাম', 'Pran Milk Powder 500g', 'MLK-500-03', 'দুধ ও দুগ্ধজাত', 'প্রাণ-আরএফএল', 'প্যাকেট', 420, 395, 40, 5, '', ''],
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleRows]);
+  ws['!cols'] = [
+    { wch: 25 },
+    { wch: 22 },
+    { wch: 14 },
+    { wch: 15 },
+    { wch: 15 },
+    { wch: 10 },
+    { wch: 15 },
+    { wch: 12 },
+    { wch: 14 },
+    { wch: 20 },
+    { wch: 25 },
+    { wch: 35 },
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Template');
+  const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  const blob = new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  triggerBrowserDownload(blob, `MunsiStore_Product_Import_Template.xlsx`);
+}
+
+/**
+ * Download inventory as native Microsoft Excel (.xlsx) file
+ */
+export function downloadInventoryXLSX(products: Product[]): void {
+  const today = new Date().toISOString().split('T')[0];
+  const headers = [
+    'এসকেইউ (SKU)',
+    'পণ্যের নাম (বাংলা)',
+    'পণ্যের নাম (English)',
+    'ক্যাটাগরি',
+    'একক (Unit)',
+    'বিক্রয়মূল্য (৳)',
+    'কেনাদর (৳)',
+    'বর্তমান স্টক',
+    'সর্বনিম্ন স্টক অ্যালার্ট',
+    'ট্রেড অফার স্কিম',
+    'ছবির লিংক (Image URL)',
+  ];
+
+  const rows = products.map((p) => [
+    p.sku,
+    p.banglaName || p.name,
+    p.name,
+    p.category,
+    p.unit,
+    p.unitPrice,
+    p.costPrice,
+    p.stock,
+    p.minStockAlert,
+    p.tradeOfferDesc || '',
+    p.imageUrl || '',
+  ]);
+
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  ws['!cols'] = [
+    { wch: 14 },
+    { wch: 26 },
+    { wch: 22 },
+    { wch: 15 },
+    { wch: 10 },
+    { wch: 14 },
+    { wch: 12 },
+    { wch: 14 },
+    { wch: 20 },
+    { wch: 24 },
+    { wch: 35 },
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Inventory');
+  const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  const blob = new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  triggerBrowserDownload(blob, `MunsiStore_Inventory_${today}.xlsx`);
+}
+
+/**
  * Robust CSV Line Parser that respects quoted values with commas
  */
 function parseCSVLines(text: string): string[][] {
@@ -726,24 +833,24 @@ function parseCSVLines(text: string): string[][] {
 }
 
 /**
- * Parse products from uploaded CSV file (Bulk Import 100+ products)
+ * Robust 2D Spreadsheet Rows Parser
+ * Supports both English and Bengali numerals (যেমন: ৮৯০, ৫০, ১০৫)
  */
-export function parseProductsFromCSV(
-  csvContent: string,
+export function parseSpreadsheetRows(
+  rows: (string | number)[][],
   existingCategories: string[] = [],
   existingSuppliers: string[] = []
 ): { products: Product[]; skippedCount: number; errors: string[] } {
-  const rows = parseCSVLines(csvContent);
   const errors: string[] = [];
   const products: Product[] = [];
   let skippedCount = 0;
 
-  if (rows.length < 2) {
-    return { products: [], skippedCount: 0, errors: ['CSV ফাইলে পর্যাপ্ত ডাটা পাওয়া যায়নি'] };
+  if (!rows || rows.length < 2) {
+    return { products: [], skippedCount: 0, errors: ['ফাইলে পর্যাপ্ত পণ্যের তথ্য পাওয়া যায়নি'] };
   }
 
   // First row is headers
-  const headers = rows[0].map((h) => h.toLowerCase().trim());
+  const headers = (rows[0] || []).map((h) => String(h ?? '').toLowerCase().trim());
 
   // Detect column indexes flexibly
   const findIdx = (keywords: string[]) => {
@@ -767,62 +874,112 @@ export function parseProductsFromCSV(
 
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
-    if (!row || row.length === 0 || row.every((c) => !c || c.trim() === '')) {
+    if (!row || row.length === 0 || row.every((c) => c === undefined || c === null || String(c).trim() === '')) {
       continue;
     }
 
-    const banglaName = (nameBnIdx >= 0 ? row[nameBnIdx] : row[0]) || '';
-    const englishName = (nameEnIdx >= 0 && nameEnIdx !== nameBnIdx ? row[nameEnIdx] : row[1]) || banglaName;
-    
-    if (!banglaName.trim() && !englishName.trim()) {
+    const banglaName = String((nameBnIdx >= 0 ? row[nameBnIdx] : row[0]) ?? '').trim();
+    const englishName = String((nameEnIdx >= 0 && nameEnIdx !== nameBnIdx ? row[nameEnIdx] : row[1]) ?? '').trim() || banglaName;
+
+    if (!banglaName && !englishName) {
       skippedCount++;
       continue;
     }
 
-    const rawUnitPrice = unitPriceIdx >= 0 ? row[unitPriceIdx] : (row[5] || row[4]);
-    const cleanUnitPrice = parseFloat(String(rawUnitPrice || '').replace(/[^0-9.]/g, ''));
+    const rawUnitPrice = unitPriceIdx >= 0 ? row[unitPriceIdx] : (row[5] ?? row[4]);
+    // Uses parseBanglaNumber to seamlessly support both English '890' and Bangla '৮৯০'
+    const cleanUnitPrice = parseBanglaNumber(rawUnitPrice, NaN);
     if (isNaN(cleanUnitPrice) || cleanUnitPrice < 0) {
       skippedCount++;
       errors.push(`সারি #${r + 1}: "${banglaName || englishName}" এর সঠিক বিক্রয়মূল্য পাওয়া যায়নি`);
       continue;
     }
 
-    const rawCostPrice = costPriceIdx >= 0 ? row[costPriceIdx] : (row[6] || row[5]);
-    const costPrice = parseFloat(String(rawCostPrice || '').replace(/[^0-9.]/g, '')) || cleanUnitPrice;
+    const rawCostPrice = costPriceIdx >= 0 ? row[costPriceIdx] : (row[6] ?? row[5]);
+    const costPrice = parseBanglaNumber(rawCostPrice, cleanUnitPrice);
 
-    const rawStock = stockIdx >= 0 ? row[stockIdx] : (row[7] || row[6]);
-    const stock = Math.max(0, parseInt(String(rawStock || '').replace(/[^0-9]/g, ''), 10) || 0);
+    const rawStock = stockIdx >= 0 ? row[stockIdx] : (row[7] ?? row[6]);
+    const stock = Math.max(0, Math.round(parseBanglaNumber(rawStock, 0)));
 
-    const rawMin = minStockIdx >= 0 ? row[minStockIdx] : (row[8] || row[7]);
-    const minStockAlert = Math.max(0, parseInt(String(rawMin || '').replace(/[^0-9]/g, ''), 10) || 5);
+    const rawMin = minStockIdx >= 0 ? row[minStockIdx] : (row[8] ?? row[7]);
+    const minStockAlert = Math.max(0, Math.round(parseBanglaNumber(rawMin, 5)));
 
-    const sku = (skuIdx >= 0 ? row[skuIdx] : '') || `SKU-${now}-${r}`;
-    const category = (catIdx >= 0 ? row[catIdx] : '') || (existingCategories[0] || 'তেল ও ঘি');
-    const supplier = (supIdx >= 0 ? row[supIdx] : '') || (existingSuppliers[0] || '');
-    const unit = (unitIdx >= 0 ? row[unitIdx] : '') || 'পিস';
-    const tradeOfferDesc = offerIdx >= 0 ? row[offerIdx] : '';
-    const imageUrl = (imgUrlIdx >= 0 ? row[imgUrlIdx] : '') || '';
+    const sku = String((skuIdx >= 0 ? row[skuIdx] : '') ?? '').trim() || `SKU-${now}-${r}`;
+    const category = String((catIdx >= 0 ? row[catIdx] : '') ?? '').trim() || (existingCategories[0] || 'তেল ও ঘি');
+    const supplier = String((supIdx >= 0 ? row[supIdx] : '') ?? '').trim() || (existingSuppliers[0] || '');
+    const unit = String((unitIdx >= 0 ? row[unitIdx] : '') ?? '').trim() || 'পিস';
+    const tradeOfferDesc = String((offerIdx >= 0 ? row[offerIdx] : '') ?? '').trim();
+    const imageUrl = String((imgUrlIdx >= 0 ? row[imgUrlIdx] : '') ?? '').trim();
 
     const newProd: Product = {
       id: `prod-${now}-${r}-${Math.random().toString(36).substring(2, 6)}`,
       name: englishName || banglaName,
       banglaName: banglaName || englishName,
-      sku: sku.trim(),
-      category: category.trim(),
-      supplier: supplier.trim(),
-      unit: unit.trim(),
+      sku: sku,
+      category: category,
+      supplier: supplier,
+      unit: unit,
       unitPrice: cleanUnitPrice,
       costPrice: costPrice,
       stock: stock,
       minStockAlert: minStockAlert,
-      tradeOfferDesc: tradeOfferDesc.trim(),
-      imageUrl: imageUrl.trim(),
+      tradeOfferDesc: tradeOfferDesc,
+      imageUrl: imageUrl,
     };
 
     products.push(newProd);
   }
 
   return { products, skippedCount, errors };
+}
+
+/**
+ * Universal Spreadsheet File Parser (.xlsx, .xls, .csv)
+ */
+export function parseSpreadsheetFile(
+  data: ArrayBuffer | string,
+  fileName: string,
+  existingCategories: string[] = [],
+  existingSuppliers: string[] = []
+): { products: Product[]; skippedCount: number; errors: string[] } {
+  try {
+    const isBinaryExcel =
+      fileName.endsWith('.xlsx') ||
+      fileName.endsWith('.xls') ||
+      data instanceof ArrayBuffer;
+
+    if (isBinaryExcel) {
+      const workbook = XLSX.read(data, {
+        type: data instanceof ArrayBuffer ? 'array' : 'string',
+        cellDates: false,
+      });
+      const sheetName = workbook.SheetNames[0];
+      if (!sheetName || !workbook.Sheets[sheetName]) {
+        return { products: [], skippedCount: 0, errors: ['এক্সেল ফাইলে কোনো শিট পাওয়া যায়নি'] };
+      }
+      const sheet = workbook.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false }) as (string | number)[][];
+      return parseSpreadsheetRows(rows, existingCategories, existingSuppliers);
+    }
+
+    // CSV text content
+    const text = typeof data === 'string' ? data : new TextDecoder('utf-8').decode(data);
+    const rows = parseCSVLines(text);
+    return parseSpreadsheetRows(rows, existingCategories, existingSuppliers);
+  } catch (err: any) {
+    return { products: [], skippedCount: 0, errors: [err?.message || 'ফাইলটি পড়তে সমস্যা হয়েছে'] };
+  }
+}
+
+/**
+ * Parse products from uploaded CSV file (Bulk Import 100+ products) - Backwards Compatible
+ */
+export function parseProductsFromCSV(
+  csvContent: string,
+  existingCategories: string[] = [],
+  existingSuppliers: string[] = []
+): { products: Product[]; skippedCount: number; errors: string[] } {
+  return parseSpreadsheetFile(csvContent, 'file.csv', existingCategories, existingSuppliers);
 }
 
 /**

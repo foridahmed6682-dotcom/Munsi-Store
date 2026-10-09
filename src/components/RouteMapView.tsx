@@ -13,7 +13,13 @@ import {
   CheckCircle2,
   AlertTriangle,
   ExternalLink,
-  LocateFixed
+  LocateFixed,
+  Radio,
+  Play,
+  Pause,
+  Zap,
+  Bike,
+  Footprints
 } from 'lucide-react';
 import { Shop, PaymentMethod, Route } from '../types';
 
@@ -81,6 +87,33 @@ function calculateDistanceKm(lat1: number, lon1: number, lat2: number, lon2: num
   return R * c;
 }
 
+// Calculate compass bearing from point 1 to point 2 in degrees (0 = North, 90 = East)
+function calculateBearingDegrees(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const y = Math.sin(dLon) * Math.cos((lat2 * Math.PI) / 180);
+  const x =
+    Math.cos((lat1 * Math.PI) / 180) * Math.sin((lat2 * Math.PI) / 180) -
+    Math.sin((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.cos(dLon);
+  const brng = (Math.atan2(y, x) * 180) / Math.PI;
+  return (brng + 360) % 360;
+}
+
+// Convert bearing degrees to Bengali compass direction name
+function getCompassDirectionName(deg: number): string {
+  const directions = [
+    'উত্তর (North)',
+    'উত্তর-পূর্ব (NE)',
+    'পূর্ব (East)',
+    'দক্ষিণ-পূর্ব (SE)',
+    'দক্ষিণ (South)',
+    'দক্ষিণ-পশ্চিম (SW)',
+    'পশ্চিম (West)',
+    'উত্তর-পশ্চিম (NW)',
+  ];
+  const index = Math.round(deg / 45) % 8;
+  return directions[index];
+}
+
 export const RouteMapView: React.FC<RouteMapViewProps> = ({
   shops,
   routes: configuredRoutes = [],
@@ -101,6 +134,16 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedShop, setSelectedShop] = useState<Shop | null>(null);
   const [directionDistanceText, setDirectionDistanceText] = useState<string | null>(null);
+
+  // 2-Second Live Navigation & Direction tracking
+  const [isLiveTracking, setIsLiveTracking] = useState<boolean>(true);
+  const [liveDistanceMeters, setLiveDistanceMeters] = useState<number | null>(null);
+  const [liveSpeedKmh, setLiveSpeedKmh] = useState<number>(0);
+  const [liveHeadingDeg, setLiveHeadingDeg] = useState<number | null>(null);
+  const [lastTickTime, setLastTickTime] = useState<number>(() => Date.now());
+  const [liveHeartbeat, setLiveHeartbeat] = useState<boolean>(false);
+  const liveIntervalRef = useRef<any>(null);
+  const watchIdRef = useRef<number | null>(null);
 
   // User live geolocation
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -274,11 +317,14 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
     }
   }, [filteredShops, selectedRoute]);
 
-  const applyUserLocationOnMap = (latitude: number, longitude: number) => {
+  const applyUserLocationOnMap = (latitude: number, longitude: number, speedKm = 0, shouldCenter = false) => {
     setUserLocation({ lat: latitude, lng: longitude });
+    setLiveSpeedKmh(speedKm);
+    setLastTickTime(Date.now());
+    setLiveHeartbeat((p) => !p);
+
     const map = mapInstanceRef.current;
     if (map) {
-      map.setView([latitude, longitude], 15);
       if (userMarkerRef.current) {
         userMarkerRef.current.setLatLng([latitude, longitude]);
       } else {
@@ -308,11 +354,121 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
         });
 
         const marker = L.marker([latitude, longitude], { icon: userIcon }).addTo(map);
-        marker.bindPopup('<b>আপনার বর্তমান অবস্থান</b>').openPopup();
+        marker.bindPopup('<b>আপনার বর্তমান অবস্থান (Live GPS)</b>');
         userMarkerRef.current = marker;
+      }
+
+      if (shouldCenter) {
+        map.panTo([latitude, longitude], { animate: true });
+      }
+    }
+
+    // Auto-update live distance and direction polyline if a shop is currently active!
+    if (selectedShop) {
+      const [sLat, sLng] = getShopCoordinates(selectedShop, 0);
+      const distKm = calculateDistanceKm(latitude, longitude, sLat, sLng);
+      const meters = Math.round(distKm * 1000);
+      setLiveDistanceMeters(meters);
+      const text = meters < 1000 ? `${meters} মিটার` : `${distKm.toFixed(2)} কিমি`;
+      setDirectionDistanceText(text);
+
+      const bearing = calculateBearingDegrees(latitude, longitude, sLat, sLng);
+      setLiveHeadingDeg(bearing);
+
+      if (routePolylineRef.current) {
+        routePolylineRef.current.setLatLngs([
+          [latitude, longitude],
+          [sLat, sLng],
+        ]);
+      } else if (map) {
+        const polyline = L.polyline(
+          [
+            [latitude, longitude],
+            [sLat, sLng],
+          ],
+          {
+            color: '#2563eb',
+            weight: 5,
+            opacity: 0.9,
+            dashArray: '8, 8',
+          }
+        );
+        polyline.addTo(map);
+        routePolylineRef.current = polyline;
       }
     }
   };
+
+  // 2-Second Live Navigation & Direction GPS Update Engine
+  useEffect(() => {
+    if (!isLiveTracking) {
+      if (watchIdRef.current !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+      if (liveIntervalRef.current) {
+        clearInterval(liveIntervalRef.current);
+        liveIntervalRef.current = null;
+      }
+      return;
+    }
+
+    const fetchGpsTick = (highAcc = true) => {
+      if (typeof navigator === 'undefined' || !navigator.geolocation) return;
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const spd = pos.coords.speed ? Math.round(pos.coords.speed * 3.6) : 0;
+          applyUserLocationOnMap(pos.coords.latitude, pos.coords.longitude, spd);
+        },
+        () => {
+          // Low accuracy retry on timeout
+          navigator.geolocation?.getCurrentPosition(
+            (pos2) => {
+              applyUserLocationOnMap(pos2.coords.latitude, pos2.coords.longitude);
+            },
+            () => {},
+            { enableHighAccuracy: false, timeout: 3500, maximumAge: 10000 }
+          );
+        },
+        { enableHighAccuracy: highAcc, timeout: 3500, maximumAge: 1800 }
+      );
+    };
+
+    // Immediate initial ping
+    fetchGpsTick(true);
+
+    // Watch position for OS-level movement updates
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      try {
+        watchIdRef.current = navigator.geolocation.watchPosition(
+          (pos) => {
+            const spd = pos.coords.speed ? Math.round(pos.coords.speed * 3.6) : 0;
+            applyUserLocationOnMap(pos.coords.latitude, pos.coords.longitude, spd);
+          },
+          () => {},
+          { enableHighAccuracy: true, timeout: 5000, maximumAge: 1800 }
+        );
+      } catch {
+        // ignore
+      }
+    }
+
+    // 2-Second Interval: guaranteed update every 2000 milliseconds
+    liveIntervalRef.current = setInterval(() => {
+      fetchGpsTick(true);
+    }, 2000);
+
+    return () => {
+      if (watchIdRef.current !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+      if (liveIntervalRef.current) {
+        clearInterval(liveIntervalRef.current);
+        liveIntervalRef.current = null;
+      }
+    };
+  }, [isLiveTracking, selectedShop?.id]);
 
   // Locate User with multi-stage fallback
   const handleLocateMe = () => {
@@ -441,10 +597,14 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
     }
   }, [targetShopId, shops, userLocation]);
 
-  // Draw visual navigation polyline on map
+  // Draw visual navigation polyline on map and start 2-second live updates
   const drawDirectionRoute = (shop: Shop) => {
     if (!mapInstanceRef.current) return;
     const map = mapInstanceRef.current;
+
+    setIsLiveTracking(true); // Automatically ensure 2-second live GPS tracking is active
+
+    const [sLat, sLng] = getShopCoordinates(shop, 0);
 
     // Clear previous polyline
     if (routePolylineRef.current) {
@@ -457,32 +617,37 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
       return;
     }
 
-    if (shop.lat !== undefined && shop.lng !== undefined) {
-      const startPoint: L.LatLngTuple = [userLocation.lat, userLocation.lng];
-      const endPoint: L.LatLngTuple = [shop.lat, shop.lng];
+    const startPoint: L.LatLngTuple = [userLocation.lat, userLocation.lng];
+    const endPoint: L.LatLngTuple = [sLat, sLng];
 
-      const polyline = L.polyline([startPoint, endPoint], {
-        color: '#2563eb',
-        weight: 5,
-        opacity: 0.9,
-        dashArray: '8, 8',
-      });
+    const polyline = L.polyline([startPoint, endPoint], {
+      color: '#2563eb',
+      weight: 5,
+      opacity: 0.9,
+      dashArray: '8, 8',
+    });
 
-      polyline.addTo(map);
-      routePolylineRef.current = polyline;
+    polyline.addTo(map);
+    routePolylineRef.current = polyline;
 
-      map.fitBounds([startPoint, endPoint], { padding: [60, 60], maxZoom: 16 });
+    map.fitBounds([startPoint, endPoint], { padding: [60, 60], maxZoom: 16 });
 
-      const dist = calculateDistanceKm(userLocation.lat, userLocation.lng, shop.lat, shop.lng);
-      const text = dist < 1 ? `${Math.round(dist * 1000)} মিটার` : `${dist.toFixed(2)} কিমি`;
-      setDirectionDistanceText(text);
-    }
+    const dist = calculateDistanceKm(userLocation.lat, userLocation.lng, sLat, sLng);
+    const meters = Math.round(dist * 1000);
+    setLiveDistanceMeters(meters);
+    const text = meters < 1000 ? `${meters} মিটার` : `${dist.toFixed(2)} কিমি`;
+    setDirectionDistanceText(text);
+
+    const bearing = calculateBearingDegrees(userLocation.lat, userLocation.lng, sLat, sLng);
+    setLiveHeadingDeg(bearing);
   };
 
   // Close selected shop drawer and clear polyline
   const handleCloseSelectedShop = () => {
     setSelectedShop(null);
     setDirectionDistanceText(null);
+    setLiveDistanceMeters(null);
+    setLiveHeadingDeg(null);
     if (onClearTargetShop) onClearTargetShop();
     if (mapInstanceRef.current && routePolylineRef.current) {
       mapInstanceRef.current.removeLayer(routePolylineRef.current);
@@ -683,9 +848,98 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
             )}
           </div>
 
-          {/* Selected Shop Action Card Overlay */}
+          {/* Selected Shop Action Card & 2-Second Live Navigation HUD */}
           {selectedShop && (
-            <div className="absolute bottom-3 left-3 right-3 z-10 bg-white/98 backdrop-blur-md rounded-2xl p-3.5 border border-neutral-200 shadow-xl max-w-lg mx-auto animate-in fade-in slide-in-from-bottom duration-200">
+            <div className="absolute bottom-3 left-3 right-3 z-10 bg-white/98 backdrop-blur-md rounded-2xl p-3.5 border border-neutral-200 shadow-xl max-w-xl mx-auto animate-in fade-in slide-in-from-bottom duration-200">
+              {/* Live 2-Second Navigation Tracker Banner */}
+              <div className="mb-2.5 p-2.5 rounded-xl bg-gradient-to-r from-emerald-50 via-teal-50 to-blue-50 border border-emerald-200/90 shadow-2xs">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="relative flex h-3 w-3">
+                      {isLiveTracking && (
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      )}
+                      <span className={`relative inline-flex rounded-full h-3 w-3 ${isLiveTracking ? 'bg-emerald-600' : 'bg-neutral-400'}`}></span>
+                    </span>
+                    <span className="text-[11px] font-black text-emerald-950 flex items-center gap-1">
+                      <Radio className="w-3.5 h-3.5 text-emerald-700 animate-pulse" />
+                      {isLiveTracking ? 'লাইভ ডিরেকশন সক্রিয় (প্রতি ২ সেকেন্ডে আপডেট হচ্ছে)' : 'লাইভ ট্র্যাকিং স্থগিত'}
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsLiveTracking((prev) => !prev)}
+                    className="px-2 py-0.5 rounded-lg text-[10px] font-extrabold border bg-white hover:bg-neutral-50 text-neutral-800 border-neutral-300 flex items-center gap-1 shadow-2xs cursor-pointer active:scale-95 transition-all"
+                    title={isLiveTracking ? '২ সেকেন্ড পর পর লাইভ ট্র্যাকিং বন্ধ করুন' : '২ সেকেন্ড পর পর লাইভ ট্র্যাকিং চালু করুন'}
+                  >
+                    {isLiveTracking ? (
+                      <>
+                        <Pause className="w-3 h-3 text-neutral-600" />
+                        <span>পজ</span>
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-3 h-3 text-emerald-600" />
+                        <span>২ সে. ট্র্যাকিং চালু</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* Distance & Real-Time Direction Details */}
+                <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-center">
+                  <div className="bg-white/90 p-1.5 rounded-lg border border-emerald-200/60 shadow-2xs">
+                    <span className="text-[9px] text-neutral-500 font-bold block">দোকানের দূরত্ব</span>
+                    <span className="text-xs sm:text-sm font-black font-mono text-emerald-700">
+                      {liveDistanceMeters !== null
+                        ? liveDistanceMeters < 1000
+                          ? `${liveDistanceMeters} মিটার`
+                          : `${(liveDistanceMeters / 1000).toFixed(2)} কিমি`
+                        : directionDistanceText || 'নির্ণয় হচ্ছে...'}
+                    </span>
+                  </div>
+
+                  <div className="bg-white/90 p-1.5 rounded-lg border border-emerald-200/60 shadow-2xs">
+                    <span className="text-[9px] text-neutral-500 font-bold block flex items-center justify-center gap-0.5">
+                      <Bike className="w-2.5 h-2.5 text-blue-600" />
+                      বাইকে আনুমানিক
+                    </span>
+                    <span className="text-xs font-black text-blue-700">
+                      ~ {liveDistanceMeters !== null ? Math.max(1, Math.ceil((liveDistanceMeters / 1000 / 22) * 60)) : 1} মিনিট
+                    </span>
+                  </div>
+
+                  <div className="bg-white/90 p-1.5 rounded-lg border border-emerald-200/60 shadow-2xs">
+                    <span className="text-[9px] text-neutral-500 font-bold block flex items-center justify-center gap-0.5">
+                      <Footprints className="w-2.5 h-2.5 text-amber-600" />
+                      হেঁটে আনুমানিক
+                    </span>
+                    <span className="text-xs font-black text-amber-700">
+                      ~ {liveDistanceMeters !== null ? Math.max(1, Math.ceil((liveDistanceMeters / 1000 / 4.5) * 60)) : 3} মিনিট
+                    </span>
+                  </div>
+
+                  <div className="bg-white/90 p-1.5 rounded-lg border border-emerald-200/60 shadow-2xs">
+                    <span className="text-[9px] text-neutral-500 font-bold block flex items-center justify-center gap-0.5">
+                      <Compass className="w-2.5 h-2.5 text-purple-600" />
+                      অভিমুখ (দিক)
+                    </span>
+                    <span className="text-[11px] font-black text-purple-800 truncate block">
+                      {liveHeadingDeg !== null ? getCompassDirectionName(liveHeadingDeg) : 'সোজা'}
+                    </span>
+                  </div>
+                </div>
+
+                {liveDistanceMeters !== null && liveDistanceMeters <= 35 && (
+                  <div className="mt-1.5 px-2 py-1 rounded-lg bg-emerald-600 text-white text-[11px] font-extrabold flex items-center justify-center gap-1 animate-pulse">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>🎉 আপনি দোকানে পৌঁছেছেন! বকেয়া আদায় বা অর্ডার সংগ্রহ করুন।</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Shop Header & Info */}
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
@@ -703,12 +957,6 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
                         ? `বকেয়া: ৳${selectedShop.previousDue.toLocaleString()}`
                         : 'পরিশোধিত'}
                     </span>
-                    {directionDistanceText && (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 flex items-center gap-0.5">
-                        <NavIcon className="w-2.5 h-2.5" />
-                        <span>দূরত্ব: {directionDistanceText}</span>
-                      </span>
-                    )}
                   </div>
                   <p className="text-xs text-neutral-500 mt-0.5">
                     মালিক: {selectedShop.ownerName} | {selectedShop.routeArea}
@@ -755,10 +1003,10 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
                   rel="noopener noreferrer"
                   onClick={() => drawDirectionRoute(selectedShop)}
                   className="flex items-center justify-center gap-1 py-2 px-1 bg-neutral-900 hover:bg-neutral-800 text-white font-bold rounded-xl text-[11px] shadow-xs transition-colors cursor-pointer active:scale-95"
-                  title="গুগল ম্যাপে দিকনির্দেশনা ও লাইভ নেভিগেশন খুলুন"
+                  title="গুগল ম্যাপে লাইভ টার্ন-বাই-টার্ন নেভিগেশন খুলুন"
                 >
                   <NavIcon className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                  <span>ডিরেকশন</span>
+                  <span>গুগল নেভিগেশন</span>
                 </a>
 
                 {/* 4. Update Current GPS Location */}
@@ -770,7 +1018,7 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
                     title="দোকানের সামনে দাঁড়িয়ে লাইভ জিপিএস লোকেশন আপডেট করুন"
                   >
                     <LocateFixed className={`w-3.5 h-3.5 text-blue-200 shrink-0 ${isUpdatingGPS ? 'animate-spin' : ''}`} />
-                    <span>{isUpdatingGPS ? 'সেট হচ্ছে...' : 'জিপিএস সেট'}</span>
+                    <span>{isUpdatingGPS ? 'সেট হচ্ছে...' : 'জিপিএস পিন'}</span>
                   </button>
                 )}
               </div>
