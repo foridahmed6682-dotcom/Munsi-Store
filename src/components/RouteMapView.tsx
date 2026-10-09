@@ -21,9 +21,78 @@ import {
   Bike,
   Footprints,
   Target,
-  Eye
+  Eye,
+  Volume2,
+  VolumeX,
+  CornerUpLeft,
+  CornerUpRight,
+  MoveUp,
+  List,
+  X,
+  ChevronRight,
+  Sparkles,
 } from 'lucide-react';
 import { Shop, PaymentMethod, Route } from '../types';
+
+export interface NavigationTurnStep {
+  id: string;
+  instruction: string;
+  modifier: string; // 'left' | 'right' | 'slight-left' | 'slight-right' | 'straight' | 'uturn' | 'arrive'
+  distanceMeters: number;
+  roadName: string;
+  lat: number;
+  lng: number;
+}
+
+// Gentle audio chime for turn announcements
+const playTurnChime = () => {
+  try {
+    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+    osc.frequency.exponentialRampToValueAtTime(783.99, audioCtx.currentTime + 0.15); // G5
+    gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.35);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.35);
+  } catch {}
+};
+
+// Bengali speech synthesis for turn-by-turn guidance
+const speakInstruction = (text: string, isMuted: boolean) => {
+  if (isMuted || typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+  try {
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'bn-BD';
+    utterance.rate = 1.0;
+    const voices = window.speechSynthesis.getVoices();
+    const bn = voices.find((v) => v.lang.includes('bn') || v.lang.includes('BD'));
+    if (bn) utterance.voice = bn;
+    window.speechSynthesis.speak(utterance);
+  } catch {}
+};
+
+// Maneuver Turn Arrow Icon helper
+const renderManeuverIcon = (modifier: string, className = 'w-7 h-7 text-white') => {
+  if (modifier === 'arrive') {
+    return <CheckCircle2 className={`${className} text-emerald-300`} />;
+  }
+  if (modifier.includes('left')) {
+    return <CornerUpLeft className={className} />;
+  }
+  if (modifier.includes('right')) {
+    return <CornerUpRight className={className} />;
+  }
+  if (modifier.includes('uturn')) {
+    return <CornerUpLeft className={`${className} rotate-180`} />;
+  }
+  return <MoveUp className={className} />;
+};
 
 interface RouteMapViewProps {
   shops: Shop[];
@@ -152,6 +221,15 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
   const [liveHeartbeat, setLiveHeartbeat] = useState<boolean>(false);
   const liveIntervalRef = useRef<any>(null);
   const watchIdRef = useRef<number | null>(null);
+
+  // Turn-by-Turn GPS Navigation Mode (Driver Mode)
+  const [isTurnByTurnActive, setIsTurnByTurnActive] = useState<boolean>(false);
+  const [turnSteps, setTurnSteps] = useState<NavigationTurnStep[]>([]);
+  const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
+  const [isVoiceMuted, setIsVoiceMuted] = useState<boolean>(false);
+  const [showStepsModal, setShowStepsModal] = useState<boolean>(false);
+  const [isRoutingLoading, setIsRoutingLoading] = useState<boolean>(false);
+  const hasAnnouncedArrivalRef = useRef<boolean>(false);
 
   // User live geolocation
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -434,26 +512,35 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
       const bearing = calculateBearingDegrees(latitude, longitude, sLat, sLng);
       setLiveHeadingDeg(bearing);
 
-      if (routePolylineRef.current) {
+      // Turn-by-Turn Maneuver Step Progress & Speech Guidance
+      if (isTurnByTurnActive && turnSteps.length > 0) {
+        const activeStep = turnSteps[currentStepIndex];
+        if (activeStep) {
+          const stepDistM = Math.round(
+            calculateDistanceKm(latitude, longitude, activeStep.lat, activeStep.lng) * 1000
+          );
+          if (stepDistM <= 40 && currentStepIndex < turnSteps.length - 1) {
+            const nextIdx = currentStepIndex + 1;
+            setCurrentStepIndex(nextIdx);
+            playTurnChime();
+            speakInstruction(turnSteps[nextIdx].instruction, isVoiceMuted);
+          }
+        }
+      }
+
+      // Arrival Announcement (< 35 meters)
+      if (meters <= 35 && !hasAnnouncedArrivalRef.current) {
+        hasAnnouncedArrivalRef.current = true;
+        playTurnChime();
+        speakInstruction(`অভিনন্দন! আপনি ${selectedShop.name}-এ পৌঁছে গেছেন।`, isVoiceMuted);
+      }
+
+      // If simple polyline exists and no multi-point road steps, update endpoints
+      if (!turnSteps.length && routePolylineRef.current) {
         routePolylineRef.current.setLatLngs([
           [latitude, longitude],
           [sLat, sLng],
         ]);
-      } else if (map) {
-        const polyline = L.polyline(
-          [
-            [latitude, longitude],
-            [sLat, sLng],
-          ],
-          {
-            color: '#2563eb',
-            weight: 5,
-            opacity: 0.9,
-            dashArray: '8, 8',
-          }
-        );
-        polyline.addTo(map);
-        routePolylineRef.current = polyline;
       }
     }
   };
@@ -656,13 +743,118 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
     }
   }, [targetShopId, shops, userLocation]);
 
-  // Draw visual navigation polyline on map and start 2-second live updates
-  const drawDirectionRoute = (shop: Shop) => {
+  // Fetch real road route & turn-by-turn steps from free OSRM service or intelligent fallback
+  const fetchRoadRouteAndSteps = async (
+    startLat: number,
+    startLng: number,
+    destLat: number,
+    destLng: number,
+    shopName: string
+  ): Promise<{ coordinates: [number, number][]; steps: NavigationTurnStep[] }> => {
+    setIsRoutingLoading(true);
+    try {
+      const url = `https://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${destLng},${destLat}?overview=full&geometries=geojson&steps=true`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('OSRM API status ' + res.status);
+      const data = await res.json();
+      if (data.routes && data.routes.length > 0) {
+        const route = data.routes[0];
+        const coordinates: [number, number][] = route.geometry.coordinates.map(
+          (c: [number, number]) => [c[1], c[0]]
+        );
+        const rawSteps = route.legs?.[0]?.steps || [];
+        const steps: NavigationTurnStep[] = rawSteps.map((st: any, i: number) => {
+          const type = st.maneuver?.type || 'turn';
+          const modifier = st.maneuver?.modifier || 'straight';
+          const road = st.name || '';
+          let instruction = '';
+
+          if (type === 'depart') {
+            instruction = road ? `${road}-এ যাত্রা শুরু করুন` : 'যাত্রা শুরু করে সোজা এগোন';
+          } else if (type === 'arrive') {
+            instruction = `গন্তব্যে পৌঁছে গেছেন (${shopName})`;
+          } else if (modifier.includes('left')) {
+            instruction = modifier.includes('slight') ? 'হালকা বামে মোড় নিন' : 'বামে মোড় নিন';
+            if (road) instruction += ` (${road})`;
+          } else if (modifier.includes('right')) {
+            instruction = modifier.includes('slight') ? 'হালকা ডানে মোড় নিন' : 'ডানে মোড় নিন';
+            if (road) instruction += ` (${road})`;
+          } else if (modifier === 'uturn') {
+            instruction = 'ইউ-টার্ন নিয়ে ঘুরে যান';
+          } else {
+            instruction = road ? `${road}-এ সোজা চলুন` : 'সোজা এগিয়ে যান';
+          }
+
+          return {
+            id: `step-${i}`,
+            instruction,
+            modifier: type === 'arrive' ? 'arrive' : modifier,
+            distanceMeters: Math.round(st.distance || 0),
+            roadName: road || 'প্রধান সড়ক',
+            lat: st.maneuver?.location?.[1] || startLat,
+            lng: st.maneuver?.location?.[0] || startLng,
+          };
+        });
+
+        return { coordinates, steps };
+      }
+    } catch (e) {
+      console.warn('OSRM routing fallback used:', e);
+    } finally {
+      setIsRoutingLoading(false);
+    }
+
+    // Direct fallback steps if OSRM is slow or offline
+    const distM = Math.round(calculateDistanceKm(startLat, startLng, destLat, destLng) * 1000);
+    const bearing = calculateBearingDegrees(startLat, startLng, destLat, destLng);
+    const dir = getCompassDirectionName(bearing);
+    const fallbackSteps: NavigationTurnStep[] = [
+      {
+        id: 'step-0',
+        instruction: `${dir} অভিমুখে যাত্রা শুরু করুন`,
+        modifier: 'straight',
+        distanceMeters: Math.max(50, Math.round(distM * 0.4)),
+        roadName: 'প্রধান সংযোগ সড়ক',
+        lat: startLat,
+        lng: startLng,
+      },
+      {
+        id: 'step-1',
+        instruction: `দোকানের সংযোগ সড়কে অগ্রসর হোন (${dir})`,
+        modifier: 'straight',
+        distanceMeters: Math.max(50, Math.round(distM * 0.4)),
+        roadName: 'বাজার সড়ক',
+        lat: Number(((startLat + destLat) / 2).toFixed(6)),
+        lng: Number(((startLng + destLng) / 2).toFixed(6)),
+      },
+      {
+        id: 'step-2',
+        instruction: `গন্তব্য (${shopName}) সামনেই অবস্থান করছে`,
+        modifier: 'arrive',
+        distanceMeters: Math.max(20, Math.round(distM * 0.2)),
+        roadName: shopName,
+        lat: destLat,
+        lng: destLng,
+      },
+    ];
+
+    return {
+      coordinates: [
+        [startLat, startLng],
+        [destLat, destLng],
+      ],
+      steps: fallbackSteps,
+    };
+  };
+
+  // Draw visual navigation polyline on map and start Turn-by-Turn GPS navigation
+  const drawDirectionRoute = async (shop: Shop, activateTurnByTurn = true) => {
     if (!mapInstanceRef.current) return;
     const map = mapInstanceRef.current;
 
     setIsLiveTracking(true); // Automatically ensure 2-second live GPS tracking is active
     setAutoFollow(true); // Automatically lock camera to user's movement for live turn-by-turn tracking
+    hasAnnouncedArrivalRef.current = false;
 
     const [sLat, sLng] = getShopCoordinates(shop, 0);
 
@@ -677,20 +869,37 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
       return;
     }
 
-    const startPoint: L.LatLngTuple = [userLocation.lat, userLocation.lng];
-    const endPoint: L.LatLngTuple = [sLat, sLng];
+    const { coordinates, steps } = await fetchRoadRouteAndSteps(
+      userLocation.lat,
+      userLocation.lng,
+      sLat,
+      sLng,
+      shop.name
+    );
 
-    const polyline = L.polyline([startPoint, endPoint], {
-      color: '#2563eb',
-      weight: 5,
+    const polyline = L.polyline(coordinates, {
+      color: '#059669', // Emerald/green turn-by-turn road route
+      weight: 6,
       opacity: 0.9,
-      dashArray: '8, 8',
+      lineCap: 'round',
+      lineJoin: 'round',
     });
 
     polyline.addTo(map);
     routePolylineRef.current = polyline;
 
-    map.fitBounds([startPoint, endPoint], { padding: [60, 60], maxZoom: 16 });
+    map.fitBounds(polyline.getBounds(), { padding: [70, 70], maxZoom: 17 });
+
+    setTurnSteps(steps);
+    setCurrentStepIndex(0);
+
+    if (activateTurnByTurn) {
+      setIsTurnByTurnActive(true);
+      playTurnChime();
+      if (steps.length > 0) {
+        speakInstruction(`যাত্রা শুরু করুন। ${steps[0].instruction}`, isVoiceMuted);
+      }
+    }
 
     const dist = calculateDistanceKm(userLocation.lat, userLocation.lng, sLat, sLng);
     const meters = Math.round(dist * 1000);
@@ -708,6 +917,11 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
     setDirectionDistanceText(null);
     setLiveDistanceMeters(null);
     setLiveHeadingDeg(null);
+    setIsTurnByTurnActive(false);
+    setTurnSteps([]);
+    setCurrentStepIndex(0);
+    setShowStepsModal(false);
+    hasAnnouncedArrivalRef.current = false;
     if (onClearTargetShop) onClearTargetShop();
     if (mapInstanceRef.current && routePolylineRef.current) {
       mapInstanceRef.current.removeLayer(routePolylineRef.current);
@@ -939,8 +1153,119 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
             </div>
           </div>
 
-          {/* Live Turn Direction & Auto-Follow Heads-Up Display */}
-          {selectedShop && userLocation && (
+          {/* TURN-BY-TURN LIVE GPS NAVIGATION DRIVER HUD (TOP) */}
+          {selectedShop && userLocation && isTurnByTurnActive && (
+            <div className="absolute top-3 left-3 right-3 sm:right-auto sm:max-w-md z-20 animate-in fade-in slide-in-from-top duration-200">
+              <div className="bg-neutral-900/98 backdrop-blur-md text-white p-3 rounded-2xl border-2 border-emerald-500 shadow-2xl flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-2.5">
+                  {/* Giant Maneuver Arrow Box */}
+                  <div className="w-12 h-12 rounded-xl bg-emerald-600 flex items-center justify-center text-white shrink-0 shadow-lg">
+                    {renderManeuverIcon(
+                      turnSteps[currentStepIndex]?.modifier || 'straight',
+                      'w-7 h-7 text-white'
+                    )}
+                  </div>
+
+                  {/* Turn Instruction Text */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-lg sm:text-xl font-black text-white font-mono leading-none">
+                        {turnSteps[currentStepIndex]
+                          ? `${turnSteps[currentStepIndex].distanceMeters} মি.`
+                          : liveDistanceMeters !== null
+                          ? `${liveDistanceMeters} মি.`
+                          : 'সামনে'}
+                      </span>
+                      <span className="text-[11px] font-bold text-emerald-400">পর</span>
+                    </div>
+                    <div className="text-xs sm:text-sm font-extrabold text-white truncate">
+                      {turnSteps[currentStepIndex]?.instruction || 'দোকানের অভিমুখে সোজা চলুন'}
+                    </div>
+                    {turnSteps[currentStepIndex + 1] && (
+                      <div className="text-[10px] text-neutral-400 truncate flex items-center gap-1 mt-0.5">
+                        <span className="text-neutral-500">পরবর্তী:</span>
+                        <span>{turnSteps[currentStepIndex + 1].instruction}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Actions: Voice & Steps list & Auto-follow & Close */}
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newMute = !isVoiceMuted;
+                        setIsVoiceMuted(newMute);
+                        if (!newMute && turnSteps[currentStepIndex]) {
+                          speakInstruction(turnSteps[currentStepIndex].instruction, false);
+                        }
+                      }}
+                      className={`p-1.5 rounded-lg border text-xs cursor-pointer transition-all ${
+                        isVoiceMuted
+                          ? 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-white'
+                          : 'bg-emerald-700/80 border-emerald-500 text-white'
+                      }`}
+                      title={isVoiceMuted ? 'ভয়েস গাইডেন্স চালু করুন' : 'ভয়েস গাইডেন্স বন্ধ করুন'}
+                    >
+                      {isVoiceMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowStepsModal(true)}
+                      className="p-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-neutral-300 hover:text-white text-xs cursor-pointer"
+                      title="রুটের সকল বাঁক ও মোড়ের তালিকা"
+                    >
+                      <List className="w-4 h-4" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAutoFollow(true);
+                        if (mapInstanceRef.current && userLocation) {
+                          mapInstanceRef.current.setView([userLocation.lat, userLocation.lng], 17, { animate: true });
+                        }
+                      }}
+                      className={`p-1.5 rounded-lg border text-xs cursor-pointer transition-all ${
+                        autoFollow
+                          ? 'bg-emerald-600 border-emerald-400 text-white'
+                          : 'bg-neutral-800 border-neutral-700 text-neutral-400'
+                      }`}
+                      title="ক্যামেরা কেন্দ্রে লক রাখুন"
+                    >
+                      <Target className="w-4 h-4" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setIsTurnByTurnActive(false)}
+                      className="p-1.5 rounded-lg bg-neutral-800 hover:bg-rose-900 border border-neutral-700 text-neutral-300 hover:text-white text-xs cursor-pointer"
+                      title="টার্ন-বাই-টার্ন নেভিগেশন বন্ধ করুন"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Sub-bar: Target Shop and Speed */}
+                <div className="flex items-center justify-between text-[10px] pt-1.5 border-t border-neutral-800 text-neutral-300">
+                  <span className="truncate">
+                    গন্তব্য: <strong className="text-emerald-400">{selectedShop.name}</strong>
+                  </span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {liveSpeedKmh > 0 && (
+                      <span className="font-mono text-blue-300 font-bold">{liveSpeedKmh} কিমি/ঘ</span>
+                    )}
+                    <span className="text-[9px] text-emerald-400 font-mono">লাইভ জিপিএস</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Standard Compass Top Banner if Turn-by-Turn is NOT active */}
+          {selectedShop && userLocation && !isTurnByTurnActive && (
             <div className="absolute top-3 left-3 z-10 flex flex-col gap-1.5 max-w-[270px] sm:max-w-xs animate-in fade-in slide-in-from-top duration-200">
               <div className="bg-neutral-900/95 backdrop-blur-md text-white p-2.5 rounded-2xl border border-neutral-700/80 shadow-xl">
                 <div className="flex items-center justify-between gap-2">
@@ -1132,6 +1457,35 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
 
               {/* Action Buttons */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 pt-2.5 border-t border-neutral-100">
+                {/* 0. Primary Turn-by-Turn Live Navigation Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isTurnByTurnActive) {
+                      setIsTurnByTurnActive(false);
+                    } else {
+                      drawDirectionRoute(selectedShop, true);
+                    }
+                  }}
+                  className={`col-span-2 sm:col-span-4 flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-black shadow-sm transition-all cursor-pointer active:scale-95 ${
+                    isTurnByTurnActive
+                      ? 'bg-neutral-900 text-emerald-400 border border-emerald-500'
+                      : 'bg-gradient-to-r from-emerald-700 to-teal-700 hover:from-emerald-600 hover:to-teal-600 text-white shadow-emerald-900/20'
+                  }`}
+                >
+                  <NavIcon className={`w-4 h-4 ${isTurnByTurnActive ? 'text-emerald-400 animate-spin' : 'text-white'}`} />
+                  <span>
+                    {isTurnByTurnActive
+                      ? '🧭 টার্ন-বাই-টার্ন নেভিগেশন চলছে (বন্ধ করতে ক্লিক)'
+                      : '🧭 টার্ন-বাই-টার্ন লাইভ জিপিএস নেভিগেশন শুরু করুন'}
+                  </span>
+                  {turnSteps.length > 0 && !isTurnByTurnActive && (
+                    <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full font-mono">
+                      {turnSteps.length}টি মোড়
+                    </span>
+                  )}
+                </button>
+
                 {/* 1. Book Order */}
                 <button
                   onClick={() => onSelectShopForOrder(selectedShop.id)}
@@ -1341,6 +1695,106 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Turn-by-Turn Route Steps List Modal */}
+      {showStepsModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl border border-neutral-200 overflow-hidden flex flex-col max-h-[85vh]">
+            <div className="p-4 bg-neutral-900 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
+                  <List className="w-4 h-4 text-emerald-400" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm leading-tight">টার্ন-বাই-টার্ন রুট নির্দেশিকা</h3>
+                  <p className="text-[11px] text-neutral-400">
+                    গন্তব্য: {selectedShop?.name || 'দোকান'} ({turnSteps.length}টি মোড়)
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowStepsModal(false)}
+                className="w-7 h-7 rounded-full bg-neutral-800 hover:bg-neutral-700 flex items-center justify-center text-xs font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-3 overflow-y-auto space-y-2 flex-1 divide-y divide-neutral-100">
+              {turnSteps.map((step, idx) => {
+                const isCurrent = idx === currentStepIndex;
+                const isPassed = idx < currentStepIndex;
+                return (
+                  <div
+                    key={step.id}
+                    className={`pt-2 first:pt-0 p-2 rounded-2xl flex items-center gap-3 transition-colors ${
+                      isCurrent
+                        ? 'bg-emerald-50/90 border border-emerald-400 shadow-2xs'
+                        : isPassed
+                        ? 'opacity-50'
+                        : 'hover:bg-neutral-50'
+                    }`}
+                  >
+                    <div
+                      className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                        isCurrent
+                          ? 'bg-emerald-600 text-white shadow-xs'
+                          : isPassed
+                          ? 'bg-neutral-200 text-neutral-500'
+                          : 'bg-neutral-800 text-neutral-200'
+                      }`}
+                    >
+                      {renderManeuverIcon(step.modifier, 'w-5 h-5')}
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-extrabold text-neutral-900 leading-snug">
+                        {step.instruction}
+                      </div>
+                      <div className="text-[11px] text-neutral-500 flex items-center gap-2 mt-0.5">
+                        <span className="font-mono font-bold text-emerald-700">
+                          {step.distanceMeters > 0 ? `${step.distanceMeters} মিটার` : 'গন্তব্য'}
+                        </span>
+                        <span>•</span>
+                        <span className="truncate">{step.roadName}</span>
+                      </div>
+                    </div>
+
+                    {isCurrent && (
+                      <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-600 text-white shrink-0 shadow-2xs">
+                        বর্তমান
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="p-3 bg-neutral-50 border-t border-neutral-200 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => {
+                  const newMute = !isVoiceMuted;
+                  setIsVoiceMuted(newMute);
+                }}
+                className="flex items-center gap-1.5 text-xs font-bold text-neutral-700 hover:text-neutral-900 px-3 py-1.5 rounded-xl border border-neutral-300 bg-white cursor-pointer"
+              >
+                {isVoiceMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 text-emerald-600" />}
+                <span>{isVoiceMuted ? 'ভয়েস বন্ধ' : 'ভয়েস চালু'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowStepsModal(false)}
+                className="px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold rounded-xl shadow-xs cursor-pointer"
+              >
+                বন্ধ করুন
+              </button>
+            </div>
           </div>
         </div>
       )}
