@@ -35,8 +35,19 @@ import {
   Maximize2,
   Minimize2,
   Sparkles,
+  HardDrive,
+  RefreshCw,
 } from 'lucide-react';
 import { Shop, PaymentMethod, Route } from '../types';
+import {
+  createCachedTileLayer,
+  getCachedTileCount,
+  clearTileCache,
+  MAPTILER_OUTDOOR_URL,
+  OSM_FALLBACK_URL,
+  ESRI_SATELLITE_URL,
+  ESRI_LABELS_URL,
+} from '../utils/mapTileCache';
 
 export interface NavigationTurnStep {
   id: string;
@@ -210,10 +221,14 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
   const [selectedShop, setSelectedShop] = useState<Shop | null>(null);
   const [directionDistanceText, setDirectionDistanceText] = useState<string | null>(null);
 
-  // Map layer type: Free Street Map vs Free Satellite (showing real houses, roofs and buildings)
-  const [mapLayerType, setMapLayerType] = useState<'streets' | 'satellite'>('streets');
+  // Map layer type: MapTiler Outdoor v4 (with Tile Caching) vs Free Satellite vs Street Map
+  const [mapLayerType, setMapLayerType] = useState<'outdoor' | 'satellite' | 'streets'>('outdoor');
+  const [cachedTileCount, setCachedTileCount] = useState<number>(0);
   const baseTileLayerRef = useRef<L.TileLayer | null>(null);
   const labelsTileLayerRef = useRef<L.TileLayer | null>(null);
+  const routeCoordinatesRef = useRef<[number, number][]>([]);
+  const lastNavigatedTargetIdRef = useRef<string | null>(null);
+  const pendingTargetShopRef = useRef<Shop | null>(null);
 
   // 2-Second Live Navigation & Direction tracking
   const [isLiveTracking, setIsLiveTracking] = useState<boolean>(true);
@@ -304,12 +319,15 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
         zoomControl: false,
       });
 
-      // Default Standard OpenStreetMap Free Tiles
-      const baseLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors',
+      // Default MapTiler Outdoor v4 with Tile Caching enabled (saves API requests)
+      const baseLayer = createCachedTileLayer(MAPTILER_OUTDOOR_URL, {
+        fallbackUrl: OSM_FALLBACK_URL,
+        attribution: '&copy; MapTiler &copy; OpenStreetMap contributors',
         maxZoom: 19,
+        enableTileCaching: true,
       }).addTo(map);
       baseTileLayerRef.current = baseLayer;
+      getCachedTileCount().then(setCachedTileCount);
 
       // Custom zoom control in bottom-right
       L.control.zoom({ position: 'bottomright' }).addTo(map);
@@ -348,7 +366,7 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
     }
   }, [isFullScreenMap, isTurnByTurnActive, isBottomCardMinimized]);
 
-  // Switch Tile Layer between Free Street Map and Free Satellite (shows actual houses, roofs & roads)
+  // Switch Tile Layer between MapTiler Outdoor v4, Free Satellite and Street Map
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
@@ -365,32 +383,40 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
 
     if (mapLayerType === 'satellite') {
       // Free Esri World Imagery Satellite Tiles - Shows real roofs, buildings, trees and houses
-      const satLayer = L.tileLayer(
-        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        {
-          attribution: '&copy; Esri & Earthstar Geographics',
-          maxZoom: 19,
-        }
-      ).addTo(map);
+      const satLayer = createCachedTileLayer(ESRI_SATELLITE_URL, {
+        attribution: '&copy; Esri & Earthstar Geographics',
+        maxZoom: 19,
+        enableTileCaching: true,
+      }).addTo(map);
       baseTileLayerRef.current = satLayer;
 
       // Overlay road & place labels on top of satellite
-      const labelLayer = L.tileLayer(
-        'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
-        {
-          attribution: '&copy; Esri World Labels',
-          maxZoom: 19,
-        }
-      ).addTo(map);
+      const labelLayer = createCachedTileLayer(ESRI_LABELS_URL, {
+        attribution: '&copy; Esri World Labels',
+        maxZoom: 19,
+        enableTileCaching: true,
+      }).addTo(map);
       labelsTileLayerRef.current = labelLayer;
-    } else {
+    } else if (mapLayerType === 'streets') {
       // Free OpenStreetMap Standard
-      const streetLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      const streetLayer = createCachedTileLayer(OSM_FALLBACK_URL, {
         attribution: '&copy; OpenStreetMap contributors',
         maxZoom: 19,
+        enableTileCaching: true,
       }).addTo(map);
       baseTileLayerRef.current = streetLayer;
+    } else {
+      // MapTiler Outdoor v4 with Tile Caching (Default - contours, hiking paths, clear roads)
+      const outdoorLayer = createCachedTileLayer(MAPTILER_OUTDOOR_URL, {
+        fallbackUrl: OSM_FALLBACK_URL,
+        attribution: '&copy; MapTiler &copy; OpenStreetMap contributors',
+        maxZoom: 19,
+        enableTileCaching: true,
+      }).addTo(map);
+      baseTileLayerRef.current = outdoorLayer;
     }
+
+    getCachedTileCount().then(setCachedTileCount);
   }, [mapLayerType]);
 
   // Update Markers when filteredShops change
@@ -483,34 +509,54 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
 
     const map = mapInstanceRef.current;
     if (map) {
+      const headingRotation = typeof liveHeadingDeg === 'number' ? liveHeadingDeg : 0;
+      const userIcon = L.divIcon({
+        className: 'user-live-pin',
+        html: `
+          <div style="
+            position: relative;
+            width: 38px;
+            height: 38px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transform: translate(-50%, -50%);
+          ">
+            <div style="
+              position: absolute;
+              inset: -4px;
+              border-radius: 50%;
+              border: 2px solid #10b981;
+              animation: ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+            "></div>
+            <div style="
+              width: 32px;
+              height: 32px;
+              background: #059669;
+              border: 2.5px solid white;
+              border-radius: 50%;
+              box-shadow: 0 4px 14px rgba(5, 150, 105, 0.7);
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              transform: rotate(${headingRotation}deg);
+              transition: transform 0.4s ease;
+            ">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="white" stroke="white" stroke-width="1.5">
+                <path d="M12 2L19 21L12 17L5 21L12 2Z" />
+              </svg>
+            </div>
+            ${speedKm > 2 ? `<div style="position: absolute; bottom: -12px; background: #111827; color: #34d399; font-size: 9px; font-weight: 800; padding: 1px 4px; border-radius: 4px; white-space: nowrap; border: 1px solid #059669;">${speedKm} km/h</div>` : ''}
+          </div>
+        `,
+        iconSize: [38, 38],
+        iconAnchor: [19, 19],
+      });
+
       if (userMarkerRef.current) {
         userMarkerRef.current.setLatLng([latitude, longitude]);
+        userMarkerRef.current.setIcon(userIcon);
       } else {
-        const userIcon = L.divIcon({
-          className: 'user-live-pin',
-          html: `
-            <div style="
-              width: 20px;
-              height: 20px;
-              background: #2563eb;
-              border: 3px solid white;
-              border-radius: 50%;
-              box-shadow: 0 0 14px rgba(37, 99, 235, 0.8);
-              position: relative;
-            ">
-              <div style="
-                position: absolute;
-                inset: -8px;
-                border-radius: 50%;
-                border: 2px solid #3b82f6;
-                animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
-              "></div>
-            </div>
-          `,
-          iconSize: [20, 20],
-          iconAnchor: [10, 10],
-        });
-
         const marker = L.marker([latitude, longitude], { icon: userIcon }).addTo(map);
         marker.bindPopup('<b>আপনার বর্তমান অবস্থান (Live GPS)</b>');
         userMarkerRef.current = marker;
@@ -519,6 +565,14 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
       if (shouldCenter || (autoFollow && selectedShop)) {
         map.panTo([latitude, longitude], { animate: true });
       }
+    }
+
+    // Auto-launch turn-by-turn navigation as soon as pending shop receives first GPS fix
+    if (pendingTargetShopRef.current) {
+      const shopToNav = pendingTargetShopRef.current;
+      pendingTargetShopRef.current = null;
+      const [fLat, fLng] = getShopCoordinates(shopToNav, 0);
+      drawDirectionRoute({ ...shopToNav, lat: fLat, lng: fLng }, true);
     }
 
     // Auto-update live distance and direction polyline if a shop is currently active!
@@ -556,12 +610,17 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
         speakInstruction(`অভিনন্দন! আপনি ${selectedShop.name}-এ পৌঁছে গেছেন।`, isVoiceMuted);
       }
 
-      // If simple polyline exists and no multi-point road steps, update endpoints
-      if (!turnSteps.length && routePolylineRef.current) {
-        routePolylineRef.current.setLatLngs([
-          [latitude, longitude],
-          [sLat, sLng],
-        ]);
+      // Smoothly update live polyline from device's live location to destination
+      if (routePolylineRef.current) {
+        if (routeCoordinatesRef.current && routeCoordinatesRef.current.length > 1) {
+          const upcoming = routeCoordinatesRef.current.slice(Math.max(0, currentStepIndex));
+          routePolylineRef.current.setLatLngs([[latitude, longitude], ...upcoming]);
+        } else {
+          routePolylineRef.current.setLatLngs([
+            [latitude, longitude],
+            [sLat, sLng],
+          ]);
+        }
       }
     }
   };
@@ -741,9 +800,12 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
     );
   };
 
-  // Automatically focus shop if targetShopId is provided
+  // Automatically focus shop and draw turn-by-turn route if targetShopId is provided
   useEffect(() => {
     if (targetShopId) {
+      if (lastNavigatedTargetIdRef.current === targetShopId) return;
+      lastNavigatedTargetIdRef.current = targetShopId;
+
       const found = shops.find((s) => s.id === targetShopId);
       if (found) {
         if (selectedRoute !== 'all' && found.routeArea !== selectedRoute) {
@@ -752,16 +814,24 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
         setSelectedShop(found);
         setIsBottomCardMinimized(true); // Auto-minimize card so turn-by-turn navigation is clearly visible on mobile!
         const [fLat, fLng] = getShopCoordinates(found, 0);
+
         if (mapInstanceRef.current) {
           mapInstanceRef.current.setView([fLat, fLng], 16, { animate: true });
         }
+
         if (userLocation) {
           const dist = calculateDistanceKm(userLocation.lat, userLocation.lng, fLat, fLng);
           const text = dist < 1 ? `${Math.round(dist * 1000)} মিটার` : `${dist.toFixed(2)} কিমি`;
           setDirectionDistanceText(text);
           drawDirectionRoute({ ...found, lat: fLat, lng: fLng }, true);
+        } else {
+          // Immediately queue shop and trigger device GPS location
+          pendingTargetShopRef.current = found;
+          handleLocateMe();
         }
       }
+    } else {
+      lastNavigatedTargetIdRef.current = null;
     }
   }, [targetShopId, shops, userLocation]);
 
@@ -887,6 +957,7 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
     }
 
     if (!userLocation) {
+      pendingTargetShopRef.current = shop;
       handleLocateMe();
       return;
     }
@@ -898,6 +969,8 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
       sLng,
       shop.name
     );
+
+    routeCoordinatesRef.current = coordinates;
 
     const polyline = L.polyline(coordinates, {
       color: '#059669', // Emerald/green turn-by-turn road route
@@ -939,6 +1012,9 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
 
   // Close selected shop drawer and clear polyline
   const handleCloseSelectedShop = () => {
+    pendingTargetShopRef.current = null;
+    lastNavigatedTargetIdRef.current = null;
+    routeCoordinatesRef.current = [];
     setSelectedShop(null);
     setDirectionDistanceText(null);
     setLiveDistanceMeters(null);
@@ -1146,8 +1222,33 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
                 : 'top-3 right-3'
             }`}
           >
-            {/* Satellite vs Street Map Mode */}
+            {/* Map Layer Switcher: MapTiler Outdoor v4, Satellite, Street Map */}
             <div className="bg-white/95 backdrop-blur-xs p-1 rounded-xl border border-neutral-200 shadow-md flex items-center gap-1 text-[11px] font-bold">
+              <button
+                type="button"
+                onClick={() => setMapLayerType('outdoor')}
+                className={`px-2 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer ${
+                  mapLayerType === 'outdoor'
+                    ? 'bg-emerald-700 text-white shadow-xs'
+                    : 'text-neutral-700 hover:bg-neutral-100'
+                }`}
+                title="ম্যাপটাইলার আউটডোর v4 ম্যাপ (টাইল ক্যাশিং সহ)"
+              >
+                <span>🌲 আউটডোর v4</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMapLayerType('satellite')}
+                className={`px-2 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer ${
+                  mapLayerType === 'satellite'
+                    ? 'bg-emerald-700 text-white shadow-xs'
+                    : 'text-neutral-700 hover:bg-neutral-100'
+                }`}
+                title="ফুড ডেলিভারি অ্যাপসের মতো স্পষ্ট স্যাটেলাইট ঘর-বাড়ি ও ছাদ ভিউ (ফ্রি)"
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                <span>🛰️ স্যাটেলাইট</span>
+              </button>
               <button
                 type="button"
                 onClick={() => setMapLayerType('streets')}
@@ -1161,19 +1262,33 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
                 <Layers className="w-3 h-3" />
                 <span>রোড ম্যাপ</span>
               </button>
-              <button
-                type="button"
-                onClick={() => setMapLayerType('satellite')}
-                className={`px-2 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer ${
-                  mapLayerType === 'satellite'
-                    ? 'bg-emerald-700 text-white shadow-xs'
-                    : 'text-neutral-700 hover:bg-neutral-100'
-                }`}
-                title="ফুড ডেলিভারি অ্যাপসের মতো স্পষ্ট স্যাটেলাইট ঘর-বাড়ি ও ছাদ ভিউ (ফ্রি)"
-              >
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                <span>🛰️ স্যাটেলাইট (ঘর-বাড়ি)</span>
-              </button>
+            </div>
+
+            {/* Tile Caching Status Widget */}
+            <div className="bg-emerald-950/90 text-white backdrop-blur-md px-2.5 py-1.5 rounded-xl border border-emerald-500/40 shadow-xs flex items-center justify-between gap-2 text-[10px] font-bold">
+              <div className="flex items-center gap-1.5">
+                <HardDrive className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span className="text-emerald-300">টাইল ক্যাশিং:</span>
+                <span className="text-white font-extrabold">সক্রিয় (API সাশ্রয়ী)</span>
+                {cachedTileCount > 0 && (
+                  <span className="bg-emerald-800 text-emerald-200 px-1.5 py-0.5 rounded-full text-[9px] font-mono">
+                    {cachedTileCount}টি সংরক্ষিত
+                  </span>
+                )}
+              </div>
+              {cachedTileCount > 0 && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await clearTileCache();
+                    setCachedTileCount(0);
+                  }}
+                  className="text-emerald-400 hover:text-rose-300 p-0.5 rounded cursor-pointer transition-colors"
+                  title="ক্যাশ পরিষ্কার করুন"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                </button>
+              )}
             </div>
 
             {/* Map Legend */}
