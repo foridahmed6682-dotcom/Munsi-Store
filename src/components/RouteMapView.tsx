@@ -137,6 +137,11 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
   const [selectedShop, setSelectedShop] = useState<Shop | null>(null);
   const [directionDistanceText, setDirectionDistanceText] = useState<string | null>(null);
 
+  // Map layer type: Free Street Map vs Free Satellite (showing real houses, roofs and buildings)
+  const [mapLayerType, setMapLayerType] = useState<'streets' | 'satellite'>('streets');
+  const baseTileLayerRef = useRef<L.TileLayer | null>(null);
+  const labelsTileLayerRef = useRef<L.TileLayer | null>(null);
+
   // 2-Second Live Navigation & Direction tracking
   const [isLiveTracking, setIsLiveTracking] = useState<boolean>(true);
   const [autoFollow, setAutoFollow] = useState<boolean>(true);
@@ -215,11 +220,12 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
         zoomControl: false,
       });
 
-      // Standard OpenStreetMap Free Tiles
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      // Default Standard OpenStreetMap Free Tiles
+      const baseLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '&copy; OpenStreetMap contributors',
         maxZoom: 19,
       }).addTo(map);
+      baseTileLayerRef.current = baseLayer;
 
       // Custom zoom control in bottom-right
       L.control.zoom({ position: 'bottomright' }).addTo(map);
@@ -242,6 +248,51 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
       }
     };
   }, []);
+
+  // Switch Tile Layer between Free Street Map and Free Satellite (shows actual houses, roofs & roads)
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    // Remove existing tile layers
+    if (baseTileLayerRef.current) {
+      map.removeLayer(baseTileLayerRef.current);
+      baseTileLayerRef.current = null;
+    }
+    if (labelsTileLayerRef.current) {
+      map.removeLayer(labelsTileLayerRef.current);
+      labelsTileLayerRef.current = null;
+    }
+
+    if (mapLayerType === 'satellite') {
+      // Free Esri World Imagery Satellite Tiles - Shows real roofs, buildings, trees and houses
+      const satLayer = L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        {
+          attribution: '&copy; Esri & Earthstar Geographics',
+          maxZoom: 19,
+        }
+      ).addTo(map);
+      baseTileLayerRef.current = satLayer;
+
+      // Overlay road & place labels on top of satellite
+      const labelLayer = L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+        {
+          attribution: '&copy; Esri World Labels',
+          maxZoom: 19,
+        }
+      ).addTo(map);
+      labelsTileLayerRef.current = labelLayer;
+    } else {
+      // Free OpenStreetMap Standard
+      const streetLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors',
+        maxZoom: 19,
+      }).addTo(map);
+      baseTileLayerRef.current = streetLayer;
+    }
+  }, [mapLayerType]);
 
   // Update Markers when filteredShops change
   useEffect(() => {
@@ -837,22 +888,55 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
         <div className="lg:col-span-8 xl:col-span-9 relative bg-neutral-200 rounded-3xl overflow-hidden border border-neutral-300 shadow-sm h-[460px] sm:h-[520px]">
           <div ref={mapContainerRef} className="w-full h-full z-0" />
 
-          {/* Map legend */}
-          <div className="absolute top-3 right-3 z-10 bg-white/95 backdrop-blur-xs px-2.5 py-1.5 rounded-xl border border-neutral-200 shadow-sm text-[11px] font-bold flex items-center gap-3">
-            <span className="flex items-center gap-1 text-rose-600">
-              <span className="w-2.5 h-2.5 rounded-full bg-rose-600" />
-              বকেয়া শপ
-            </span>
-            <span className="flex items-center gap-1 text-emerald-600">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-600" />
-              পরিশোধিত
-            </span>
-            {userLocation && (
-              <span className="flex items-center gap-1 text-blue-600">
-                <span className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse" />
-                আপনার অবস্থান
+          {/* Map Layer Switcher & Legend */}
+          <div className="absolute top-3 right-3 z-10 flex flex-col items-end gap-1.5 pointer-events-auto">
+            {/* Satellite vs Street Map Mode */}
+            <div className="bg-white/95 backdrop-blur-xs p-1 rounded-xl border border-neutral-200 shadow-md flex items-center gap-1 text-[11px] font-bold">
+              <button
+                type="button"
+                onClick={() => setMapLayerType('streets')}
+                className={`px-2 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer ${
+                  mapLayerType === 'streets'
+                    ? 'bg-neutral-900 text-white shadow-xs'
+                    : 'text-neutral-700 hover:bg-neutral-100'
+                }`}
+                title="ফ্রি সাধারণ রোড ম্যাপ ভিউ"
+              >
+                <Layers className="w-3 h-3" />
+                <span>রোড ম্যাপ</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMapLayerType('satellite')}
+                className={`px-2 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer ${
+                  mapLayerType === 'satellite'
+                    ? 'bg-emerald-700 text-white shadow-xs'
+                    : 'text-neutral-700 hover:bg-neutral-100'
+                }`}
+                title="ফুড ডেলিভারি অ্যাপসের মতো স্পষ্ট স্যাটেলাইট ঘর-বাড়ি ও ছাদ ভিউ (ফ্রি)"
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                <span>🛰️ স্যাটেলাইট (ঘর-বাড়ি)</span>
+              </button>
+            </div>
+
+            {/* Map Legend */}
+            <div className="bg-white/95 backdrop-blur-xs px-2.5 py-1.5 rounded-xl border border-neutral-200 shadow-xs text-[11px] font-bold flex items-center gap-3">
+              <span className="flex items-center gap-1 text-rose-600">
+                <span className="w-2.5 h-2.5 rounded-full bg-rose-600" />
+                বকেয়া শপ
               </span>
-            )}
+              <span className="flex items-center gap-1 text-emerald-600">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-600" />
+                পরিশোধিত
+              </span>
+              {userLocation && (
+                <span className="flex items-center gap-1 text-blue-600">
+                  <span className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse" />
+                  আপনার অবস্থান
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Live Turn Direction & Auto-Follow Heads-Up Display */}
