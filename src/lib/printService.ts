@@ -138,9 +138,13 @@ export function printOrdersBatch(
     const prodMap = new Map<string, Product>();
     const prodNameMap = new Map<string, Product>();
     allProducts.forEach((p) => {
-      if (p.id) prodMap.set(p.id, p);
+      if (p.id) {
+        prodMap.set(p.id, p);
+        prodMap.set(p.id.toLowerCase(), p);
+      }
       if (p.banglaName) prodNameMap.set(p.banglaName.trim().toLowerCase(), p);
       if (p.name) prodNameMap.set(p.name.trim().toLowerCase(), p);
+      if (p.sku) prodNameMap.set(p.sku.trim().toLowerCase(), p);
     });
 
     const itemMap = new Map<
@@ -173,8 +177,19 @@ export function printOrdersBatch(
       totalDue += Number(ord.dueAmount || 0);
 
       ord.items.forEach((it) => {
-        const matchedProd = prodMap.get(it.productId) || prodNameMap.get((it.productName || '').trim().toLowerCase());
-        const itemSupplier = (it.supplier || matchedProd?.supplier || 'অন্যান্য / অনির্দিষ্ট').trim();
+        const matchedProd =
+          (it.productId ? prodMap.get(it.productId) : undefined) ||
+          prodNameMap.get((it.productName || '').trim().toLowerCase()) ||
+          (it.productId ? prodMap.get(it.productId.toLowerCase()) : undefined);
+
+        // Always prioritize the updated/edited supplier from the product catalog
+        const itemSupplier = (
+          matchedProd?.supplier && matchedProd.supplier.trim()
+            ? matchedProd.supplier.trim()
+            : matchedProd
+            ? 'অন্যান্য / অনির্দিষ্ট'
+            : (it.supplier && it.supplier.trim()) || 'অন্যান্য / অনির্দিষ্ট'
+        );
 
         if (supplierFilter && itemSupplier !== supplierFilter) {
           return; // Skip if filtered by supplier

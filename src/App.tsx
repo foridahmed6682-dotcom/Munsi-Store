@@ -255,9 +255,52 @@ export default function App() {
     const pending = getPendingSyncOrders();
     const user = getUserProfile();
 
+    // Sync existing order items with latest product catalog suppliers
+    let ordersNeedUpdate = false;
+    const prodMap = new Map<string, Product>();
+    const prodNameMap = new Map<string, Product>();
+    prods.forEach((p) => {
+      if (p.id) {
+        prodMap.set(p.id, p);
+        prodMap.set(p.id.toLowerCase(), p);
+      }
+      if (p.banglaName) prodNameMap.set(p.banglaName.trim().toLowerCase(), p);
+      if (p.name) prodNameMap.set(p.name.trim().toLowerCase(), p);
+    });
+
+    const syncedOrds = ords.map((ord) => {
+      let orderItemChanged = false;
+      const updatedItems = ord.items.map((it) => {
+        const matched =
+          (it.productId ? prodMap.get(it.productId) : undefined) ||
+          prodNameMap.get((it.productName || '').trim().toLowerCase()) ||
+          (it.productId ? prodMap.get(it.productId.toLowerCase()) : undefined);
+
+        if (matched) {
+          const currentSup = matched.supplier || undefined;
+          if (it.supplier !== currentSup) {
+            orderItemChanged = true;
+            return { ...it, supplier: currentSup };
+          }
+        }
+        return it;
+      });
+
+      if (orderItemChanged) {
+        ordersNeedUpdate = true;
+        return { ...ord, items: updatedItems };
+      }
+      return ord;
+    });
+
+    const finalOrders = ordersNeedUpdate ? syncedOrds : ords;
+    if (ordersNeedUpdate) {
+      saveOrders(finalOrders);
+    }
+
     setProducts(prods);
     setShops(shps);
-    setOrders(ords);
+    setOrders(finalOrders);
     setCategories(cats);
     setSuppliers(sups);
     setRoutes(rts);
@@ -276,7 +319,7 @@ export default function App() {
     syncAppDataToIndexedDB({
       products: prods,
       shops: shps,
-      orders: ords,
+      orders: finalOrders,
       categories: cats,
       suppliers: sups,
       routes: rts,
@@ -1142,6 +1185,47 @@ export default function App() {
     saveProductToCloud(product).catch((err) => {
       console.warn('Could not sync updated product to cloud:', err);
     });
+
+    // Also synchronize supplier and product name in matching items of existing orders
+    setOrders((prevOrders) => {
+      let ordersChanged = false;
+      const updatedOrders = prevOrders.map((ord) => {
+        let itemsChanged = false;
+        const newItems = ord.items.map((it) => {
+          const isMatch =
+            it.productId === product.id ||
+            it.productId?.toLowerCase() === product.id?.toLowerCase() ||
+            (it.productName &&
+              (it.productName.trim().toLowerCase() === product.banglaName.trim().toLowerCase() ||
+                it.productName.trim().toLowerCase() === product.name.trim().toLowerCase()));
+
+          if (isMatch) {
+            const nextSup = product.supplier || undefined;
+            if (it.supplier !== nextSup) {
+              itemsChanged = true;
+              return { ...it, supplier: nextSup };
+            }
+          }
+          return it;
+        });
+
+        if (itemsChanged) {
+          ordersChanged = true;
+          return { ...ord, items: newItems };
+        }
+        return ord;
+      });
+
+      if (ordersChanged) {
+        saveOrders(updatedOrders);
+        updatedOrders.forEach((o) => {
+          saveOrderToCloud(o).catch(() => {});
+        });
+        return updatedOrders;
+      }
+      return prevOrders;
+    });
+
     reloadData();
     showToast(`পণ্য "${product.banglaName}" সফলভাবে আপডেট হয়েছে!`, 'success');
   };

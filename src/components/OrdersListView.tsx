@@ -310,9 +310,13 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
     const prodMap = new Map<string, Product>();
     const prodNameMap = new Map<string, Product>();
     allProds.forEach((p) => {
-      if (p.id) prodMap.set(p.id, p);
+      if (p.id) {
+        prodMap.set(p.id, p);
+        prodMap.set(p.id.toLowerCase(), p);
+      }
       if (p.banglaName) prodNameMap.set(p.banglaName.trim().toLowerCase(), p);
       if (p.name) prodNameMap.set(p.name.trim().toLowerCase(), p);
+      if (p.sku) prodNameMap.set(p.sku.trim().toLowerCase(), p);
     });
 
     const itemMap = new Map<
@@ -335,8 +339,19 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
 
     targetOrders.forEach((ord) => {
       ord.items.forEach((it) => {
-        const matchedProd = prodMap.get(it.productId) || prodNameMap.get((it.productName || '').trim().toLowerCase());
-        const supplier = (it.supplier || matchedProd?.supplier || 'অন্যান্য / অনির্দিষ্ট').trim();
+        const matchedProd =
+          (it.productId ? prodMap.get(it.productId) : undefined) ||
+          prodNameMap.get((it.productName || '').trim().toLowerCase()) ||
+          (it.productId ? prodMap.get(it.productId.toLowerCase()) : undefined);
+
+        // Always prioritize the updated/edited supplier from the product catalog
+        const supplier = (
+          matchedProd?.supplier && matchedProd.supplier.trim()
+            ? matchedProd.supplier.trim()
+            : matchedProd
+            ? 'অন্যান্য / অনির্দিষ্ট'
+            : (it.supplier && it.supplier.trim()) || 'অন্যান্য / অনির্দিষ্ট'
+        );
 
         const key = `${it.productId || it.productName}__${it.unit}`;
         const prev = itemMap.get(key);
