@@ -59,38 +59,11 @@ export interface NavigationTurnStep {
   lng: number;
 }
 
-// Gentle audio chime for turn announcements
-const playTurnChime = () => {
-  try {
-    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
-    osc.frequency.exponentialRampToValueAtTime(783.99, audioCtx.currentTime + 0.15); // G5
-    gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.35);
-    osc.connect(gain);
-    gain.connect(audioCtx.destination);
-    osc.start();
-    osc.stop(audioCtx.currentTime + 0.35);
-  } catch {}
-};
+// Gentle audio chime for turn announcements (disabled per user preference)
+const playTurnChime = () => {};
 
-// Bengali speech synthesis for turn-by-turn guidance
-const speakInstruction = (text: string, isMuted: boolean) => {
-  if (isMuted || typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-  try {
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'bn-BD';
-    utterance.rate = 1.0;
-    const voices = window.speechSynthesis.getVoices();
-    const bn = voices.find((v) => v.lang.includes('bn') || v.lang.includes('BD'));
-    if (bn) utterance.voice = bn;
-    window.speechSynthesis.speak(utterance);
-  } catch {}
-};
+// Bengali speech synthesis for turn-by-turn guidance (disabled per user preference)
+const speakInstruction = (_text: string, _isMuted?: boolean) => {};
 
 // Maneuver Turn Arrow Icon helper
 const renderManeuverIcon = (modifier: string, className = 'w-7 h-7 text-white') => {
@@ -247,7 +220,7 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
   const [isFullScreenMap, setIsFullScreenMap] = useState<boolean>(false);
   const [turnSteps, setTurnSteps] = useState<NavigationTurnStep[]>([]);
   const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
-  const [isVoiceMuted, setIsVoiceMuted] = useState<boolean>(false);
+  const [isVoiceMuted, setIsVoiceMuted] = useState<boolean>(true);
   const [showStepsModal, setShowStepsModal] = useState<boolean>(false);
   const [isRoutingLoading, setIsRoutingLoading] = useState<boolean>(false);
   const hasAnnouncedArrivalRef = useRef<boolean>(false);
@@ -1310,129 +1283,7 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
             </div>
           </div>
 
-          {/* TURN-BY-TURN LIVE GPS NAVIGATION DRIVER HUD (TOP) */}
-          {selectedShop && userLocation && isTurnByTurnActive && (
-            <div className="absolute top-2 left-2 right-2 sm:left-3 sm:right-auto sm:max-w-md z-20 animate-in fade-in slide-in-from-top duration-200">
-              <div className="bg-neutral-900/98 backdrop-blur-md text-white p-3 rounded-2xl border-2 border-emerald-500 shadow-2xl flex flex-col gap-2">
-                <div className="flex items-center justify-between gap-2.5">
-                  {/* Giant Maneuver Arrow Box */}
-                  <div className="w-12 h-12 rounded-xl bg-emerald-600 flex items-center justify-center text-white shrink-0 shadow-lg">
-                    {renderManeuverIcon(
-                      turnSteps[currentStepIndex]?.modifier || 'straight',
-                      'w-7 h-7 text-white'
-                    )}
-                  </div>
 
-                  {/* Turn Instruction Text */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-baseline gap-1.5">
-                      <span className="text-lg sm:text-xl font-black text-white font-mono leading-none">
-                        {turnSteps[currentStepIndex]
-                          ? `${turnSteps[currentStepIndex].distanceMeters} মি.`
-                          : liveDistanceMeters !== null
-                          ? `${liveDistanceMeters} মি.`
-                          : 'সামনে'}
-                      </span>
-                      <span className="text-[11px] font-bold text-emerald-400">পর</span>
-                    </div>
-                    <div className="text-xs sm:text-sm font-extrabold text-white truncate">
-                      {turnSteps[currentStepIndex]?.instruction || 'দোকানের অভিমুখে সোজা চলুন'}
-                    </div>
-                    {turnSteps[currentStepIndex + 1] && (
-                      <div className="text-[10px] text-neutral-400 truncate flex items-center gap-1 mt-0.5">
-                        <span className="text-neutral-500">পরবর্তী:</span>
-                        <span>{turnSteps[currentStepIndex + 1].instruction}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Actions: Voice & Steps list & Auto-follow & Fullscreen & Close */}
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const newMute = !isVoiceMuted;
-                        setIsVoiceMuted(newMute);
-                        if (!newMute && turnSteps[currentStepIndex]) {
-                          speakInstruction(turnSteps[currentStepIndex].instruction, false);
-                        }
-                      }}
-                      className={`p-1.5 rounded-lg border text-xs cursor-pointer transition-all ${
-                        isVoiceMuted
-                          ? 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-white'
-                          : 'bg-emerald-700/80 border-emerald-500 text-white'
-                      }`}
-                      title={isVoiceMuted ? 'ভয়েস গাইডেন্স চালু করুন' : 'ভয়েস গাইডেন্স বন্ধ করুন'}
-                    >
-                      {isVoiceMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setShowStepsModal(true)}
-                      className="p-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-neutral-300 hover:text-white text-xs cursor-pointer"
-                      title="রুটের সকল বাঁক ও মোড়ের তালিকা"
-                    >
-                      <List className="w-4 h-4" />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAutoFollow(true);
-                        if (mapInstanceRef.current && userLocation) {
-                          mapInstanceRef.current.setView([userLocation.lat, userLocation.lng], 17, { animate: true });
-                        }
-                      }}
-                      className={`p-1.5 rounded-lg border text-xs cursor-pointer transition-all ${
-                        autoFollow
-                          ? 'bg-emerald-600 border-emerald-400 text-white'
-                          : 'bg-neutral-800 border-neutral-700 text-neutral-400'
-                      }`}
-                      title="ক্যামেরা কেন্দ্রে লক রাখুন"
-                    >
-                      <Target className="w-4 h-4" />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setIsFullScreenMap((prev) => !prev)}
-                      className={`p-1.5 rounded-lg border text-xs cursor-pointer transition-all ${
-                        isFullScreenMap
-                          ? 'bg-blue-600 border-blue-400 text-white'
-                          : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-white'
-                      }`}
-                      title={isFullScreenMap ? 'ফুল-স্ক্রিন মোড বন্ধ করুন' : 'ফুল-স্ক্রিন ড্রাইভার মোড চালু করুন'}
-                    >
-                      {isFullScreenMap ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleCloseSelectedShop()}
-                      className="p-1.5 rounded-lg bg-neutral-800 hover:bg-rose-900 border border-neutral-700 text-neutral-300 hover:text-white text-xs cursor-pointer"
-                      title="টার্ন-বাই-টার্ন নেভিগেশন বন্ধ করুন"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Sub-bar: Target Shop and Speed */}
-                <div className="flex items-center justify-between text-[10px] pt-1.5 border-t border-neutral-800 text-neutral-300">
-                  <span className="truncate">
-                    গন্তব্য: <strong className="text-emerald-400">{selectedShop.name}</strong>
-                  </span>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {liveSpeedKmh > 0 && (
-                      <span className="font-mono text-blue-300 font-bold">{liveSpeedKmh} কিমি/ঘ</span>
-                    )}
-                    <span className="text-[9px] text-emerald-400 font-mono">লাইভ জিপিএস</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* Standard Compass Top Banner if Turn-by-Turn is NOT active */}
           {selectedShop && userLocation && !isTurnByTurnActive && (
@@ -1497,85 +1348,27 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
             </div>
           )}
 
-          {/* 1. COMPACT GOOGLE MAPS NAVIGATION DOCK (BOTTOM) when turn-by-turn is active & minimized */}
+          {/* Minimal Floating Navigation Controls (Clean, Unobtrusive, No screen obstruction) */}
           {selectedShop && isTurnByTurnActive && isBottomCardMinimized && (
-            <div className="absolute bottom-2.5 left-2 right-2 sm:left-4 sm:right-4 z-20 max-w-xl mx-auto animate-in fade-in slide-in-from-bottom duration-200">
-              <div className="bg-neutral-900/95 backdrop-blur-md text-white rounded-2xl p-2.5 sm:p-3 border border-emerald-500/80 shadow-2xl">
-                <div className="flex items-center justify-between gap-2">
-                  {/* Left: Live ETA & Remaining Distance */}
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="w-9 h-9 rounded-xl bg-emerald-600/30 border border-emerald-500/60 flex items-center justify-center shrink-0">
-                      <NavIcon className="w-5 h-5 text-emerald-400 fill-emerald-400 animate-pulse" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-baseline gap-1.5 flex-wrap">
-                        <span className="text-base sm:text-lg font-black text-emerald-400 font-mono leading-none">
-                          {liveDistanceMeters !== null
-                            ? liveDistanceMeters < 1000
-                              ? `${liveDistanceMeters} মি.`
-                              : `${(liveDistanceMeters / 1000).toFixed(2)} কিমি`
-                            : directionDistanceText || 'নির্ণয় হচ্ছে...'}
-                        </span>
-                        <span className="text-xs text-neutral-300 font-bold">
-                          ~ {liveDistanceMeters !== null ? Math.max(1, Math.ceil((liveDistanceMeters / 1000 / 22) * 60)) : 1} মি.
-                        </span>
-                        {liveSpeedKmh > 0 && (
-                          <span className="text-[10px] text-blue-300 font-mono font-bold hidden xs:inline">
-                            • {liveSpeedKmh} কিমি/ঘ
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-[11px] text-neutral-200 font-bold truncate flex items-center gap-1 mt-0.5">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0"></span>
-                        <span className="truncate">{selectedShop.name}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Right: Quick actions */}
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => onSelectShopForOrder(selectedShop.id)}
-                      className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center gap-1 shadow-xs cursor-pointer active:scale-95"
-                      title="অর্ডার কাটুন"
-                    >
-                      <Store className="w-3.5 h-3.5" />
-                      <span className="hidden xs:inline">অর্ডার</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setIsDueModalOpen(true)}
-                      className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-neutral-950 rounded-xl text-xs font-black flex items-center gap-1 shadow-xs cursor-pointer active:scale-95"
-                      title="বকেয়া আদায়"
-                    >
-                      <DollarSign className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">বকেয়া</span>
-                    </button>
-
-                    {/* Expand details button */}
-                    <button
-                      type="button"
-                      onClick={() => setIsBottomCardMinimized(false)}
-                      className="p-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white rounded-xl border border-neutral-700 text-xs font-bold flex items-center gap-1 cursor-pointer transition-all"
-                      title="দোকানের বিস্তারিত তথ্য দেখুন"
-                    >
-                      <ChevronUp className="w-4 h-4 text-emerald-400" />
-                    </button>
-
-                    {/* Exit Navigation button */}
-                    <button
-                      type="button"
-                      onClick={handleCloseSelectedShop}
-                      className="p-1.5 bg-neutral-800 hover:bg-rose-900 border border-neutral-700 text-neutral-400 hover:text-white rounded-xl text-xs font-bold cursor-pointer"
-                      title="নেভিগেশন সমাপ্ত করুন"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              </div>
+            <div className="absolute bottom-3 left-3 z-20 flex items-center gap-1.5 animate-in fade-in duration-150">
+              <button
+                type="button"
+                onClick={handleCloseSelectedShop}
+                className="px-2.5 py-1.5 bg-neutral-900/90 hover:bg-rose-900 text-white rounded-xl text-xs font-bold shadow-md border border-neutral-700/80 flex items-center gap-1 cursor-pointer transition-colors backdrop-blur-xs active:scale-95"
+                title="নেভিগেশন বন্ধ করুন"
+              >
+                <X className="w-3.5 h-3.5 text-rose-400" />
+                <span>নেভিগেশন বন্ধ</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsBottomCardMinimized(false)}
+                className="px-2.5 py-1.5 bg-white/95 hover:bg-neutral-100 text-neutral-800 rounded-xl text-xs font-bold shadow-md border border-neutral-300 flex items-center gap-1 cursor-pointer transition-colors backdrop-blur-xs active:scale-95"
+                title="দোকানের বিস্তারিত তথ্য দেখুন"
+              >
+                <Store className="w-3.5 h-3.5 text-emerald-600" />
+                <span className="truncate max-w-[130px]">{selectedShop.name}</span>
+              </button>
             </div>
           )}
 
@@ -2063,19 +1856,7 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
               })}
             </div>
 
-            <div className="p-3 bg-neutral-50 border-t border-neutral-200 flex items-center justify-between">
-              <button
-                type="button"
-                onClick={() => {
-                  const newMute = !isVoiceMuted;
-                  setIsVoiceMuted(newMute);
-                }}
-                className="flex items-center gap-1.5 text-xs font-bold text-neutral-700 hover:text-neutral-900 px-3 py-1.5 rounded-xl border border-neutral-300 bg-white cursor-pointer"
-              >
-                {isVoiceMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 text-emerald-600" />}
-                <span>{isVoiceMuted ? 'ভয়েস বন্ধ' : 'ভয়েস চালু'}</span>
-              </button>
-
+            <div className="p-3 bg-neutral-50 border-t border-neutral-200 flex items-center justify-end">
               <button
                 type="button"
                 onClick={() => setShowStepsModal(false)}
