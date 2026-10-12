@@ -72,7 +72,17 @@ import {
 } from '../types';
 import { processImageFile } from '../lib/imageUtils';
 import { fetchAllUsers, updateUserRoleAndRoute, getBusinessInfo, saveBusinessInfoToCloud, subscribeToCloudBusinessInfo } from '../lib/firebase';
-import { saveBusinessInfoLocal, DEFAULT_BUSINESS_INFO, parseBanglaNumber, addOrUpdateSupplier, getProducts, saveProducts } from '../lib/storage';
+import {
+  saveBusinessInfoLocal,
+  DEFAULT_BUSINESS_INFO,
+  parseBanglaNumber,
+  addOrUpdateSupplier,
+  getProducts,
+  saveProducts,
+  getUnitPackSizeDefaults,
+  saveUnitPackSizeDefaults,
+  DEFAULT_UNIT_PACK_SIZES
+} from '../lib/storage';
 import { getIndexedDBStats, clearAllIndexedDBData } from '../lib/indexedDb';
 import { AddShopModal } from './AddShopModal';
 import { ProductImageLightboxModal } from './ProductImageLightboxModal';
@@ -535,6 +545,40 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [prodImageUrl, setProdImageUrl] = useState('');
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [lightboxProduct, setLightboxProduct] = useState<Product | null>(null);
+
+  // Configurable Default Pack Sizes (পাতা: ১০, বক্স: ২৪, প্যাকেট: ১২ ইত্যাদি যা এডমিন যেকোনো সময় পরিবর্তন করতে পারবে)
+  const [unitPackSizes, setUnitPackSizes] = useState<Record<string, number>>(() => getUnitPackSizeDefaults());
+  const [isPackSizeModalOpen, setIsPackSizeModalOpen] = useState(false);
+  const [tempPackSizes, setTempPackSizes] = useState<Record<string, number>>({});
+  const [newCustomUnitName, setNewCustomUnitName] = useState('');
+  const [newCustomUnitPieces, setNewCustomUnitPieces] = useState('');
+
+  // Sync unit pack sizes when bizInfo updates from cloud
+  useEffect(() => {
+    if (bizInfo.unitPackSizeDefaults && typeof bizInfo.unitPackSizeDefaults === 'object') {
+      setUnitPackSizes((prev) => ({ ...prev, ...bizInfo.unitPackSizeDefaults }));
+    }
+  }, [bizInfo.unitPackSizeDefaults]);
+
+  const openPackSizeModal = () => {
+    setTempPackSizes({ ...unitPackSizes });
+    setNewCustomUnitName('');
+    setNewCustomUnitPieces('');
+    setIsPackSizeModalOpen(true);
+  };
+
+  const handleSavePackSizes = (updatedSizes: Record<string, number>) => {
+    setUnitPackSizes(updatedSizes);
+    saveUnitPackSizeDefaults(updatedSizes);
+    setBizInfo((prev) => {
+      const updated = { ...prev, unitPackSizeDefaults: updatedSizes };
+      saveBusinessInfoLocal(updated);
+      saveBusinessInfoToCloud(updated).catch(() => {});
+      return updated;
+    });
+    showToast('একক ও প্যাক সাইজ ডিফল্ট কনফিগারেশন সফলভাবে আপডেট ও সংরক্ষিত হয়েছে!', 'success');
+    setIsPackSizeModalOpen(false);
+  };
 
   const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

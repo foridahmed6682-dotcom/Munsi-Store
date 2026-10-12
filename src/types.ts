@@ -287,6 +287,7 @@ export interface BusinessInfo {
   siteNotice?: string;
   isNoticeActive?: boolean;
   memoFooterNotice?: string;
+  unitPackSizeDefaults?: Record<string, number>; // একক অনুযায়ী ডিফল্ট পিস সংখ্যা (যেমন: পাতা: ১০, বক্স: ২৪, প্যাকেট: ১২ ইত্যাদি)
   paymentSettings?: {
     cashOnDelivery: {
       enabled: boolean;

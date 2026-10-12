@@ -46,6 +46,20 @@ const STORAGE_KEYS = {
   CUSTOMER_DELIVERY_ADDRESS: 'munsi_customer_delivery_address_v1',
   DAILY_EXPENSES: 'dsr_daily_expenses_v1',
   STAFF_TARGETS: 'dsr_staff_targets_v1',
+  UNIT_PACK_SIZE_DEFAULTS: 'dsr_unit_pack_sizes_v1',
+};
+
+export const DEFAULT_UNIT_PACK_SIZES: Record<string, number> = {
+  'পাতা': 10,
+  'বক্স': 24,
+  'প্যাকেট': 12,
+  'ডজন': 12,
+  'কার্টুন': 24,
+  'বস্তা': 50,
+  'বোতল': 1,
+  'কেজি': 1,
+  'লিটার': 1,
+  'পিস': 1,
 };
 
 export const DEFAULT_BUSINESS_INFO: BusinessInfo = {
@@ -64,6 +78,7 @@ export const DEFAULT_BUSINESS_INFO: BusinessInfo = {
   siteNotice: '🚚 সকল অনলাইন ও রিটেইল অর্ডার ২৪ ঘণ্টার মধ্যে বিশ্বস্ত ডেলিভারি করা হয়!',
   isNoticeActive: false,
   memoFooterNotice: 'ধন্যবাদ! বিক্রিত মাল ফেরত নেওয়া হয় না। যেকোনো প্রয়োজনে হটলাইনে যোগাযোগ করুন।',
+  unitPackSizeDefaults: { ...DEFAULT_UNIT_PACK_SIZES },
   paymentSettings: {
     cashOnDelivery: {
       enabled: true,
@@ -174,6 +189,9 @@ export function getBusinessInfo(): BusinessInfo {
       flashSale: parsed.flashSale
         ? { ...DEFAULT_BUSINESS_INFO.flashSale, ...parsed.flashSale }
         : DEFAULT_BUSINESS_INFO.flashSale,
+      unitPackSizeDefaults: parsed.unitPackSizeDefaults
+        ? { ...DEFAULT_UNIT_PACK_SIZES, ...parsed.unitPackSizeDefaults }
+        : { ...DEFAULT_UNIT_PACK_SIZES },
     };
   } catch {
     return DEFAULT_BUSINESS_INFO;
@@ -183,6 +201,9 @@ export function getBusinessInfo(): BusinessInfo {
 export function saveBusinessInfo(info: BusinessInfo): BusinessInfo {
   try {
     localStorage.setItem(STORAGE_KEYS.BUSINESS_INFO, JSON.stringify(info));
+    if (info.unitPackSizeDefaults) {
+      localStorage.setItem(STORAGE_KEYS.UNIT_PACK_SIZE_DEFAULTS, JSON.stringify(info.unitPackSizeDefaults));
+    }
   } catch (err) {
     console.error('Failed to save business info:', err);
   }
@@ -190,6 +211,35 @@ export function saveBusinessInfo(info: BusinessInfo): BusinessInfo {
 }
 
 export const saveBusinessInfoLocal = saveBusinessInfo;
+
+export function getUnitPackSizeDefaults(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.UNIT_PACK_SIZE_DEFAULTS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        return { ...DEFAULT_UNIT_PACK_SIZES, ...parsed };
+      }
+    }
+    const biz = getBusinessInfo();
+    if (biz.unitPackSizeDefaults && typeof biz.unitPackSizeDefaults === 'object') {
+      return { ...DEFAULT_UNIT_PACK_SIZES, ...biz.unitPackSizeDefaults };
+    }
+  } catch {}
+  return { ...DEFAULT_UNIT_PACK_SIZES };
+}
+
+export function saveUnitPackSizeDefaults(defaults: Record<string, number>): Record<string, number> {
+  try {
+    localStorage.setItem(STORAGE_KEYS.UNIT_PACK_SIZE_DEFAULTS, JSON.stringify(defaults));
+    const biz = getBusinessInfo();
+    biz.unitPackSizeDefaults = defaults;
+    saveBusinessInfo(biz);
+  } catch (err) {
+    console.warn('Error saving unit pack size defaults:', err);
+  }
+  return defaults;
+}
 
 export const DEFAULT_ROUTES: Route[] = [
   {
