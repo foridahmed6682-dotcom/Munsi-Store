@@ -148,6 +148,7 @@ interface AdminDashboardViewProps {
   onDownloadShopsCSV?: () => void;
   onRestoreFromBackupJSON?: (data: FullBackupData, mode?: 'replace' | 'merge') => Promise<void>;
   onViewMemo?: (order: Order, editMode?: boolean) => void;
+  onEditOrder?: (order: Order) => void;
   onDeleteOrder?: (orderId: string, skipConfirm?: boolean) => void;
   onDeleteDailyExpense?: (expenseId: string, skipConfirm?: boolean) => void;
   onDeleteDueCollection?: (collectionId: string, skipConfirm?: boolean) => void;
@@ -239,6 +240,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   onDownloadShopsCSV,
   onRestoreFromBackupJSON,
   onViewMemo,
+  onEditOrder,
   onDeleteOrder,
   onDeleteDailyExpense,
   onDeleteDueCollection,
@@ -521,6 +523,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [showQuickAddSupplier, setShowQuickAddSupplier] = useState(false);
   const [quickSupplierName, setQuickSupplierName] = useState('');
   const [prodUnit, setProdUnit] = useState('কার্টুন');
+  const [prodPiecesPerUnit, setProdPiecesPerUnit] = useState('');
   const [prodUnitPrice, setProdUnitPrice] = useState('');
   const [prodDiscountPrice, setProdDiscountPrice] = useState('');
   const [prodCostPrice, setProdCostPrice] = useState('');
@@ -1040,6 +1043,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     const minAlertNum = Math.max(1, Math.round(parseBanglaNumber(prodMinAlert, 5)));
     const resolvedCategory = prodCategory || categories[0]?.banglaName || 'সাবান ও ডিটারজেন্ট';
 
+    const rawPieces = parseBanglaNumber(prodPiecesPerUnit, NaN);
+    let piecesNum: number | undefined = undefined;
+    if (!isNaN(rawPieces) && rawPieces > 0) {
+      piecesNum = Math.round(rawPieces);
+    } else if (prodUnit === 'ডজন') {
+      piecesNum = 12;
+    }
+
     if (editingProduct) {
       const updated: Product = {
         ...editingProduct,
@@ -1050,6 +1061,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         category: resolvedCategory,
         supplier: prodSupplier.trim() || undefined,
         unit: prodUnit || 'পিস',
+        piecesPerUnit: piecesNum,
         unitPrice: unitPriceNum,
         discountPrice: !isNaN(discountPriceNum) && discountPriceNum > 0 ? discountPriceNum : undefined,
         costPrice: costPriceNum,
@@ -1071,6 +1083,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         category: resolvedCategory,
         supplier: prodSupplier.trim() || undefined,
         unit: prodUnit || 'পিস',
+        piecesPerUnit: piecesNum,
         unitPrice: unitPriceNum,
         discountPrice: !isNaN(discountPriceNum) && discountPriceNum > 0 ? discountPriceNum : undefined,
         costPrice: costPriceNum,
@@ -1099,6 +1112,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     setQuickSupplierName('');
     setShowQuickAddSupplier(false);
     setProdUnitPrice('');
+    setProdPiecesPerUnit('');
     setProdDiscountPrice('');
     setProdCostPrice('');
     setProdStock('');
@@ -1118,6 +1132,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     setShowQuickAddSupplier(false);
     setQuickSupplierName('');
     setProdUnit('কার্টুন');
+    setProdPiecesPerUnit('24');
     setProdUnitPrice('');
     setProdDiscountPrice('');
     setProdCostPrice('');
@@ -1140,6 +1155,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     setShowQuickAddSupplier(false);
     setQuickSupplierName('');
     setProdUnit(prod.unit || 'কার্টুন');
+    setProdPiecesPerUnit(prod.piecesPerUnit ? prod.piecesPerUnit.toString() : (prod.unit === 'ডজন' ? '12' : ''));
     setProdUnitPrice(prod.unitPrice !== undefined && prod.unitPrice !== null ? prod.unitPrice.toString() : '');
     setProdDiscountPrice(prod.discountPrice !== undefined && prod.discountPrice !== null ? prod.discountPrice.toString() : '');
     setProdCostPrice(prod.costPrice !== undefined && prod.costPrice !== null ? prod.costPrice.toString() : '');
@@ -1916,11 +1932,17 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => onViewMemo(ord, true)}
+                                  onClick={() => {
+                                    if (onEditOrder) {
+                                      onEditOrder(ord);
+                                    } else if (onViewMemo) {
+                                      onViewMemo(ord, true);
+                                    }
+                                  }}
                                   className="px-2.5 py-1 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
-                                  title="মেমো এডিট করুন"
+                                  title="মেমো এডিট করুন (অর্ডার কাটার পেজে সরাসরি যান)"
                                 >
-                                  <Edit3 className="w-3 h-3" />
+                                  <Edit3 className="w-3.5 h-3.5" />
                                   <span>এডিট</span>
                                 </button>
                               </>
@@ -2556,6 +2578,11 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                         <td className="p-3 font-bold text-neutral-900">
                           ৳{p.unitPrice.toLocaleString()}{' '}
                           <span className="text-[10px] text-neutral-500 font-normal">/{p.unit}</span>
+                          {p.piecesPerUnit && p.piecesPerUnit > 1 && p.unit !== 'পিস' && (
+                            <div className="text-[10px] text-emerald-700 font-semibold mt-0.5 whitespace-nowrap">
+                              ({p.piecesPerUnit} পিস/{p.unit} | ১ পিস = ৳{(p.unitPrice / p.piecesPerUnit).toFixed(2)})
+                            </div>
+                          )}
                         </td>
                         <td className="p-3 text-neutral-600 font-mono">
                           ৳{p.costPrice.toLocaleString()}
@@ -5629,15 +5656,32 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                     </label>
                     <select
                       value={prodUnit}
-                      onChange={(e) => setProdUnit(e.target.value)}
+                      onChange={(e) => {
+                        const newUnit = e.target.value;
+                        setProdUnit(newUnit);
+                        if (newUnit === 'ডজন') {
+                          setProdPiecesPerUnit('12');
+                        } else if (newUnit === 'পাতা' && (!prodPiecesPerUnit || prodPiecesPerUnit === '12')) {
+                          setProdPiecesPerUnit('10');
+                        } else if (newUnit === 'বক্স' && (!prodPiecesPerUnit || prodPiecesPerUnit === '12' || prodPiecesPerUnit === '10')) {
+                          setProdPiecesPerUnit('24');
+                        } else if (newUnit === 'প্যাকেট' && (!prodPiecesPerUnit || prodPiecesPerUnit === '12' || prodPiecesPerUnit === '24')) {
+                          setProdPiecesPerUnit('12');
+                        } else if (newUnit === 'কার্টুন' && (!prodPiecesPerUnit || prodPiecesPerUnit === '12' || prodPiecesPerUnit === '24')) {
+                          setProdPiecesPerUnit('24');
+                        } else if (newUnit === 'পিস') {
+                          setProdPiecesPerUnit('1');
+                        }
+                      }}
                       className="w-full px-2.5 py-2.5 rounded-xl border border-neutral-300 text-xs bg-white focus:outline-none focus:border-emerald-600 font-medium"
                     >
                       <option value="কার্টুন">কার্টুন</option>
                       <option value="পিস">পিস</option>
                       <option value="ডজন">ডজন</option>
-                      <option value="বস্তা">বস্তা</option>
-                      <option value="প্যাকেট">প্যাকেট</option>
                       <option value="বক্স">বক্স</option>
+                      <option value="পাতা">পাতা</option>
+                      <option value="প্যাকেট">প্যাকেট</option>
+                      <option value="বস্তা">বস্তা</option>
                       <option value="বোতল">বোতল</option>
                       <option value="কেজি">কেজি</option>
                       <option value="লিটার">লিটার</option>
@@ -5655,6 +5699,42 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                     />
                   </div>
                 </div>
+
+                {/* Pack Size / কত পিসের এটা (বক্স, পাতা, প্যাকেট, কার্টুন ইত্যাদিতে পিস সংখ্যা) */}
+                {prodUnit !== 'পিস' && (
+                  <div className="bg-emerald-50/80 border border-emerald-200/90 rounded-2xl p-3 animate-in fade-in">
+                    <div className="flex flex-wrap items-center justify-between gap-1 mb-1.5">
+                      <label className="block text-xs font-extrabold text-emerald-950">
+                        📦 প্রতি {prodUnit}-এ কত পিস থাকে? (পিস সংখ্যা / Pack Size) <span className="text-rose-500">*</span>
+                      </label>
+                      {parseBanglaNumber(prodPiecesPerUnit, 0) > 0 && parseBanglaNumber(prodUnitPrice, 0) > 0 && (
+                        <span className="text-[11px] font-black text-emerald-900 bg-white px-2 py-0.5 rounded-md border border-emerald-300 shadow-2xs">
+                          💡 ১ পিসের বিক্রয়মূল্য: ৳{(parseBanglaNumber(prodUnitPrice, 0) / parseBanglaNumber(prodPiecesPerUnit, 1)).toFixed(2)}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        placeholder={
+                          prodUnit === 'পাতা' ? 'যেমন: ১০ (১ পাতায় ১০ পিস)' :
+                          prodUnit === 'বক্স' ? 'যেমন: ২৪ (১ বক্সে ২৪ পিস)' :
+                          prodUnit === 'প্যাকেট' ? 'যেমন: ১২ (১ প্যাকেটে ১২ পিস)' :
+                          prodUnit === 'কার্টুন' ? 'যেমন: ২৪ বা ৪৮' :
+                          prodUnit === 'ডজন' ? '১২' : 'যেমন: ১০, ২০, ২৪'
+                        }
+                        value={prodPiecesPerUnit}
+                        onChange={(e) => setProdPiecesPerUnit(e.target.value)}
+                        className="flex-1 px-3 py-2 rounded-xl border border-emerald-300 bg-white text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono font-bold text-neutral-900"
+                      />
+                      <span className="text-xs font-bold text-emerald-800 shrink-0">পিস / {prodUnit}</span>
+                    </div>
+                    <p className="text-[10.5px] text-emerald-700 mt-1 leading-normal font-medium">
+                      ✨ অর্ডার কাটা ও মেমোতে ড্রপডাউন বক্সে এই অনুযায়ী ১ পিসের খুচরা দর ও পুরো {prodUnit}-এর রেট স্বয়ংক্রিয়ভাবে হিসাব হয়ে বসবে।
+                    </p>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
                   <div>

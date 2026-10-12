@@ -33,7 +33,7 @@ import {
   Copy,
   Scissors
 } from 'lucide-react';
-import { Order, Shop, PaymentMethod, DueCollectionRecord, DailyExpenseRecord, Product, Supplier } from '../types';
+import { Order, Shop, PaymentMethod, DueCollectionRecord, DailyExpenseRecord, Product, Supplier, ReturnedOrderItem } from '../types';
 import { getBusinessInfo } from '../lib/firebase';
 import { getProducts } from '../lib/storage';
 import { OrderPrintMode, PrintOrientation, printOrdersBatch } from '../lib/printService';
@@ -48,6 +48,7 @@ interface OrdersListViewProps {
   onAddDailyExpense?: (expense: Omit<DailyExpenseRecord, 'id' | 'createdAt'>) => void;
   onDeleteDailyExpense?: (id: string) => void;
   onViewMemo: (order: Order, editMode?: boolean) => void;
+  onEditOrder?: (order: Order) => void;
   onUpdateDeliveryStatus: (orderId: string, status: Order['deliveryStatus']) => void;
   onSettleOrderDelivery?: (
     orderId: string,
@@ -56,7 +57,8 @@ interface OrdersListViewProps {
     paymentMethod: PaymentMethod,
     notes?: string,
     returnAmount?: number,
-    returnReason?: string
+    returnReason?: string,
+    returnedItems?: ReturnedOrderItem[]
   ) => void;
   onDeleteOrder?: (orderId: string) => void;
   isAdmin?: boolean;
@@ -79,6 +81,7 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
   onAddDailyExpense,
   onDeleteDailyExpense,
   onViewMemo,
+  onEditOrder,
   onUpdateDeliveryStatus,
   onSettleOrderDelivery,
   onDeleteOrder,
@@ -183,6 +186,86 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
   const [settleNotes, setSettleNotes] = useState<string>('');
   const [settleReturnAmountInput, setSettleReturnAmountInput] = useState<string>('0');
   const [settleReturnReason, setSettleReturnReason] = useState<string>('');
+  type SettleItemReturn = {
+    productId?: string;
+    productName: string;
+    unit: string;
+    quantity: number;
+    unitPrice: number;
+    actionNote: 'পরের বার নেব' | 'ড্যামেজ / নষ্ট' | 'অতিরিক্ত / লাগবে না' | 'অন্যান্য';
+  };
+
+  const [settleReturnedItems, setSettleReturnedItems] = useState<Record<string, SettleItemReturn>>({});
+
+  const handleUpdateItemReturn = (
+    it: any,
+    delta: number,
+    defaultNote: 'পরের বার নেব' | 'ড্যামেজ / নষ্ট' | 'অতিরিক্ত / লাগবে না' | 'অন্যান্য' = 'পরের বার নেব'
+  ) => {
+    const k = it.productId || it.productName;
+    setSettleReturnedItems((prev) => {
+      const current: SettleItemReturn = prev[k] || {
+        productId: it.productId,
+        productName: it.productName,
+        unit: it.unit,
+        quantity: 0,
+        unitPrice: it.unitPrice,
+        actionNote: defaultNote,
+      };
+      const nextQty = Math.max(0, Math.min(it.quantity, current.quantity + delta));
+      const nextMap: Record<string, SettleItemReturn> = { ...prev };
+      if (nextQty === 0) {
+        delete nextMap[k];
+      } else {
+        nextMap[k] = {
+          ...current,
+          quantity: nextQty,
+          actionNote: current.actionNote || defaultNote,
+        };
+      }
+
+      const totalAmt = Object.values(nextMap).reduce((s: number, x: SettleItemReturn) => s + x.quantity * x.unitPrice, 0);
+      setSettleReturnAmountInput(totalAmt > 0 ? String(totalAmt) : '');
+      const reasonParts = Object.values(nextMap).map(
+        (x: SettleItemReturn) => `${x.productName} ${x.quantity} ${x.unit} (${x.actionNote || 'ফেরত'})`
+      );
+      setSettleReturnReason(reasonParts.join(', '));
+      return nextMap;
+    });
+  };
+
+  const handleSetItemReturnNote = (
+    it: any,
+    actionNote: 'পরের বার নেব' | 'ড্যামেজ / নষ্ট' | 'অতিরিক্ত / লাগবে না' | 'অন্যান্য'
+  ) => {
+    const k = it.productId || it.productName;
+    setSettleReturnedItems((prev) => {
+      const current: SettleItemReturn = prev[k] || {
+        productId: it.productId,
+        productName: it.productName,
+        unit: it.unit,
+        quantity: 1,
+        unitPrice: it.unitPrice,
+        actionNote,
+      };
+      const nextMap: Record<string, SettleItemReturn> = {
+        ...prev,
+        [k]: {
+          ...current,
+          actionNote,
+          quantity: current.quantity === 0 ? 1 : current.quantity,
+        },
+      };
+
+      const totalAmt = Object.values(nextMap).reduce((s: number, x: SettleItemReturn) => s + x.quantity * x.unitPrice, 0);
+      setSettleReturnAmountInput(totalAmt > 0 ? String(totalAmt) : '');
+      const reasonParts = Object.values(nextMap).map(
+        (x: SettleItemReturn) => `${x.productName} ${x.quantity} ${x.unit} (${x.actionNote || 'ফেরত'})`
+      );
+      setSettleReturnReason(reasonParts.join(', '));
+      return nextMap;
+    });
+  };
 
   // Tool #1: DSR Delivery Load Sheet / Chalan Modal State
   const [isLoadSheetOpen, setIsLoadSheetOpen] = useState(false);
@@ -209,6 +292,16 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
     const existingReturn = order.returnAmount || 0;
     setSettleReturnAmountInput(existingReturn > 0 ? existingReturn.toString() : '');
     setSettleReturnReason(order.returnReason || '');
+
+    const initialRet: { [key: string]: any } = {};
+    if (order.returnedItems && order.returnedItems.length > 0) {
+      order.returnedItems.forEach((ri) => {
+        const k = ri.productId || ri.productName;
+        initialRet[k] = { ...ri };
+      });
+    }
+    setSettleReturnedItems(initialRet);
+
     if (order.deliveryStatus === 'DELIVERED') {
       if (order.dueAmount === 0) {
         setSettleType('FULL_CASH');
@@ -1152,11 +1245,17 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
 
                     {/* Edit Memo Button */}
                     <button
-                      onClick={() => onViewMemo(order, true)}
-                      className="px-2.5 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-950 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer"
-                      title="মেমো এডিট করুন"
+                      onClick={() => {
+                        if (onEditOrder) {
+                          onEditOrder(order);
+                        } else {
+                          onViewMemo(order, true);
+                        }
+                      }}
+                      className="px-2.5 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-950 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                      title="মেমো এডিট করুন (অর্ডার কাটার পেজে সরাসরি যান)"
                     >
-                      <Edit3 className="w-3.5 h-3.5" />
+                      <Edit3 className="w-3.5 h-3.5 text-amber-800" />
                       <span>এডিট</span>
                     </button>
 
@@ -1397,26 +1496,31 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                     onClick={() => {
                       const ord = settlingOrder;
                       setSettlingOrder(null);
-                      onViewMemo(ord, true);
+                      if (onEditOrder) {
+                        onEditOrder(ord);
+                      } else {
+                        onViewMemo(ord, true);
+                      }
                     }}
-                    className="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-950 rounded-xl font-bold flex items-center gap-1 cursor-pointer"
+                    className="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-950 rounded-xl font-bold flex items-center gap-1 cursor-pointer transition-colors"
                   >
                     <Edit3 className="w-3.5 h-3.5" />
-                    <span>মেমো আইটেম এডিট</span>
+                    <span>মেমো সম্পূর্ণ এডিট</span>
                   </button>
                 </div>
 
                 {/* Tool #2: Sales Return / Damage Adjustment at Delivery Time */}
-                <div className="bg-rose-50/60 border border-rose-200 rounded-2xl p-3 space-y-2">
+                <div className="bg-rose-50/70 border border-rose-200 rounded-2xl p-3.5 space-y-3">
                   <div className="flex items-center justify-between">
-                    <label className="font-extrabold text-rose-950 flex items-center gap-1.5">
-                      <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
-                      <span>মাল ফেরত / ড্যামেজ রিটার্ন বাদ (যদি থাকে):</span>
+                    <label className="font-extrabold text-rose-950 flex items-center gap-1.5 text-xs">
+                      <RotateCcw className="w-4 h-4 text-rose-600" />
+                      <span>মাল ফেরত / পরিবর্তন রেকর্ড (Return Handling):</span>
                     </label>
                     {returnDeduction > 0 && (
                       <button
                         type="button"
                         onClick={() => {
+                          setSettleReturnedItems({});
                           setSettleReturnAmountInput('');
                           setSettleReturnReason('');
                         }}
@@ -1427,33 +1531,116 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                     )}
                   </div>
 
-                  {/* Quick click item buttons to add return amount */}
+                  <p className="text-[11px] text-rose-800">
+                    দোকানদার যদি কোনো পণ্য ফেরত দেন বা বলেন যে <strong>"পরের বার নেব"</strong>, তবে নিচে পরিমাণ নির্ধারণ করুন:
+                  </p>
+
+                  {/* Item-by-item Return Steppers */}
                   {settlingOrder.items.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {settlingOrder.items.map((it, idx) => (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={() => {
-                            const nextAmt = (Number(settleReturnAmountInput) || 0) + it.unitPrice;
-                            if (nextAmt <= originalOrderGross) {
-                              setSettleReturnAmountInput(String(nextAmt));
-                              const tag = `${it.productName} ১ ${it.unit} ফেরত`;
-                              setSettleReturnReason((prev) => (prev ? `${prev}, ${tag}` : tag));
-                            }
-                          }}
-                          className="px-2 py-1 bg-white hover:bg-rose-100 text-rose-900 border border-rose-200 rounded-lg text-[10px] font-bold cursor-pointer transition-colors"
-                          title="১ ইউনিট ফেরত হিসেবে যোগ করতে ক্লিক করুন"
-                        >
-                          + ১ {it.unit} {it.productName} (৳{it.unitPrice})
-                        </button>
-                      ))}
+                    <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                      {settlingOrder.items.map((it, idx) => {
+                        const k = it.productId || it.productName;
+                        const retItem = settleReturnedItems[k];
+                        const retQty = retItem?.quantity || 0;
+                        const actionNote = retItem?.actionNote || 'পরের বার নেব';
+
+                        return (
+                          <div
+                            key={idx}
+                            className={`p-2.5 rounded-xl border transition-all text-xs ${
+                              retQty > 0
+                                ? 'bg-white border-rose-300 shadow-2xs'
+                                : 'bg-white/60 border-neutral-200'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <span className="font-extrabold text-neutral-900 block truncate">
+                                  {it.productName}
+                                </span>
+                                <span className="text-[10px] text-neutral-500">
+                                  অর্ডার: {it.quantity} {it.unit} @ ৳{it.unitPrice}
+                                </span>
+                              </div>
+
+                              {/* Stepper */}
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateItemReturn(it, -1)}
+                                  disabled={retQty <= 0}
+                                  className="w-6 h-6 rounded-lg bg-neutral-100 hover:bg-neutral-200 text-neutral-700 flex items-center justify-center font-black disabled:opacity-30 cursor-pointer"
+                                >
+                                  -
+                                </button>
+                                <span className={`w-8 text-center font-mono font-black ${retQty > 0 ? 'text-rose-600' : 'text-neutral-400'}`}>
+                                  {retQty} {it.unit}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateItemReturn(it, 1)}
+                                  disabled={retQty >= it.quantity}
+                                  className="w-6 h-6 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-800 flex items-center justify-center font-black disabled:opacity-30 cursor-pointer"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Status selection when returned */}
+                            {retQty > 0 && (
+                              <div className="mt-2 pt-2 border-t border-rose-100 flex items-center justify-between gap-2 flex-wrap">
+                                <span className="text-[10px] font-bold text-rose-900">
+                                  ফেরতের কারণ:
+                                </span>
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSetItemReturnNote(it, 'পরের বার নেব')}
+                                    className={`px-2 py-0.5 rounded-md text-[10px] font-bold cursor-pointer transition-colors ${
+                                      actionNote === 'পরের বার নেব'
+                                        ? 'bg-blue-600 text-white shadow-2xs'
+                                        : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
+                                    }`}
+                                  >
+                                    🔄 পরের বার নেব
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSetItemReturnNote(it, 'ড্যামেজ / নষ্ট')}
+                                    className={`px-2 py-0.5 rounded-md text-[10px] font-bold cursor-pointer transition-colors ${
+                                      actionNote === 'ড্যামেজ / নষ্ট'
+                                        ? 'bg-rose-600 text-white shadow-2xs'
+                                        : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
+                                    }`}
+                                  >
+                                    ⚠️ ড্যামেজ
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSetItemReturnNote(it, 'অতিরিক্ত / লাগবে না')}
+                                    className={`px-2 py-0.5 rounded-md text-[10px] font-bold cursor-pointer transition-colors ${
+                                      actionNote === 'অতিরিক্ত / লাগবে না'
+                                        ? 'bg-amber-600 text-white shadow-2xs'
+                                        : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
+                                    }`}
+                                  >
+                                    ❌ লাগবে না
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-rose-200/80">
                     <div>
-                      <span className="text-[10px] text-rose-800 font-semibold block mb-0.5">ফেরত/ড্যামেজ টাকার পরিমাণ (৳)</span>
+                      <span className="text-[10px] text-rose-800 font-semibold block mb-0.5">
+                        ফেরত/ড্যামেজ টাকার পরিমাণ (৳)
+                      </span>
                       <input
                         type="number"
                         min="0"
@@ -1465,12 +1652,14 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                       />
                     </div>
                     <div>
-                      <span className="text-[10px] text-rose-800 font-semibold block mb-0.5">ফেরতের কারণ / বিবরণ</span>
+                      <span className="text-[10px] text-rose-800 font-semibold block mb-0.5">
+                        স্বয়ংক্রিয় নোট / কারণ
+                      </span>
                       <input
                         type="text"
                         value={settleReturnReason}
                         onChange={(e) => setSettleReturnReason(e.target.value)}
-                        placeholder="যেমন: ২ পিস ড্যামেজ ফেরত"
+                        placeholder="যেমন: ২ পিস (পরের বার নেব)"
                         className="w-full p-2 rounded-xl border border-rose-300 bg-white font-medium text-neutral-900 text-xs focus:ring-2 focus:ring-rose-500 focus:outline-hidden"
                       />
                     </div>
@@ -1615,6 +1804,18 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                   <button
                     type="button"
                     onClick={() => {
+                      const returnedList: ReturnedOrderItem[] = Object.values(settleReturnedItems)
+                        .filter((x) => x.quantity > 0)
+                        .map((x) => ({
+                          productId: x.productId,
+                          productName: x.productName,
+                          unit: x.unit,
+                          quantity: x.quantity,
+                          unitPrice: x.unitPrice,
+                          returnReason: settleReturnReason.trim(),
+                          actionNote: x.actionNote,
+                        }));
+
                       if (onSettleOrderDelivery) {
                         onSettleOrderDelivery(
                           settlingOrder.id,
@@ -1623,7 +1824,8 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                           finalMethod,
                           settleNotes,
                           returnDeduction,
-                          settleReturnReason.trim()
+                          settleReturnReason.trim(),
+                          returnedList
                         );
                       } else {
                         onUpdateDeliveryStatus(settlingOrder.id, 'DELIVERED');

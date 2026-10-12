@@ -623,6 +623,7 @@ export function downloadInventoryCSV(products: Product[]): void {
     'পণ্যের নাম (English)',
     'ক্যাটাগরি',
     'একক (Unit)',
+    'পিস/প্যাক (Pieces per Unit)',
     'বিক্রয়মূল্য (৳)',
     'কেনাদর (৳)',
     'বর্তমান স্টক',
@@ -637,6 +638,7 @@ export function downloadInventoryCSV(products: Product[]): void {
     p.name,
     p.category,
     p.unit,
+    p.piecesPerUnit || '',
     p.unitPrice,
     p.costPrice,
     p.stock,
@@ -863,6 +865,7 @@ export function parseSpreadsheetRows(
   const catIdx = findIdx(['ক্যাটাগরি', 'category']);
   const supIdx = findIdx(['সাপ্লায়ার', 'supplier', 'কোম্পানি']);
   const unitIdx = findIdx(['একক', 'unit']);
+  const piecesIdx = findIdx(['পিস', 'প্যাক', 'pack', 'packsize', 'piecesperunit', 'কতপিস']);
   const unitPriceIdx = findIdx(['বিক্রয়মূল্য', 'বিক্রয়', 'সেল রেট', 'unitprice', 'price', 'রেট']);
   const costPriceIdx = findIdx(['কেনাদর', 'কেনা', 'ক্রয়মূল্য', 'cost', 'costprice']);
   const stockIdx = findIdx(['স্টক', 'stock', 'পরিমাণ', 'qty']);
@@ -908,6 +911,8 @@ export function parseSpreadsheetRows(
     const category = String((catIdx >= 0 ? row[catIdx] : '') ?? '').trim() || (existingCategories[0] || 'তেল ও ঘি');
     const supplier = String((supIdx >= 0 ? row[supIdx] : '') ?? '').trim() || (existingSuppliers[0] || '');
     const unit = String((unitIdx >= 0 ? row[unitIdx] : '') ?? '').trim() || 'পিস';
+    const rawPieces = piecesIdx >= 0 ? parseBanglaNumber(row[piecesIdx], NaN) : NaN;
+    const piecesPerUnit = !isNaN(rawPieces) && rawPieces > 0 ? Math.round(rawPieces) : (unit === 'ডজন' ? 12 : undefined);
     const tradeOfferDesc = String((offerIdx >= 0 ? row[offerIdx] : '') ?? '').trim();
     const imageUrl = String((imgUrlIdx >= 0 ? row[imgUrlIdx] : '') ?? '').trim();
 
@@ -919,6 +924,7 @@ export function parseSpreadsheetRows(
       category: category,
       supplier: supplier,
       unit: unit,
+      piecesPerUnit: piecesPerUnit,
       unitPrice: cleanUnitPrice,
       costPrice: costPrice,
       stock: stock,

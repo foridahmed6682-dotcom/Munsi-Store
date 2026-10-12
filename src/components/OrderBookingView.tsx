@@ -18,9 +18,10 @@ import {
   X,
   Send,
   RotateCcw,
-  Maximize2
+  Maximize2,
+  Edit3,
 } from 'lucide-react';
-import { Product, Shop, OrderItem, PaymentMethod, Route, Order } from '../types';
+import { Product, Shop, OrderItem, PaymentMethod, Route, Order, ReturnedOrderItem } from '../types';
 import { AddShopModal } from './AddShopModal';
 import { getBusinessInfo } from '../lib/firebase';
 import { ProductImageLightboxModal } from './ProductImageLightboxModal';
@@ -34,6 +35,9 @@ interface OrderBookingViewProps {
   onAddShop: (shop: Shop) => void;
   selectedShopIdProp?: string;
   onCartCountChange?: (count: number) => void;
+  editingOrder?: Order | null;
+  onCancelEditOrder?: () => void;
+  onUpdateOrder?: (order: Order) => void;
 }
 
 export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
@@ -45,16 +49,19 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
   onAddShop,
   selectedShopIdProp,
   onCartCountChange,
+  editingOrder = null,
+  onCancelEditOrder,
+  onUpdateOrder,
 }) => {
   // Selected shop
-  const [selectedShopId, setSelectedShopId] = useState<string>(selectedShopIdProp || shops[0]?.id || '');
+  const [selectedShopId, setSelectedShopId] = useState<string>(
+    editingOrder?.shopId || selectedShopIdProp || shops[0]?.id || ''
+  );
 
-  useEffect(() => {
-    if (selectedShopIdProp) {
-      setSelectedShopId(selectedShopIdProp);
-    }
-  }, [selectedShopIdProp]);
-  const [routeFilter, setRouteFilter] = useState<string>('all');
+  const [routeFilter, setRouteFilter] = useState<string>(() => {
+    if (editingOrder?.shopRoute) return editingOrder.shopRoute;
+    return 'all';
+  });
   const [shopSearch, setShopSearch] = useState<string>('');
 
   // Cart
@@ -62,16 +69,59 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
     [productId: string]: {
       quantity: number;
       unitPrice: number;
-      selectedUnit: 'পিস' | 'ডজন';
+      selectedUnit: string;
     };
   }>({});
   const [productSelectedUnits, setProductSelectedUnits] = useState<{
-    [productId: string]: 'পিস' | 'ডজন';
+    [productId: string]: string;
   }>({});
   const [discountPercent, setDiscountPercent] = useState<number>(0);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('DUE');
   const [paidAmountInput, setPaidAmountInput] = useState<string>('');
   const [orderNotes, setOrderNotes] = useState<string>('');
+
+  // Synchronize from editingOrder when editing an order
+  useEffect(() => {
+    if (editingOrder) {
+      setSelectedShopId(editingOrder.shopId);
+      if (editingOrder.shopRoute) {
+        setRouteFilter(editingOrder.shopRoute);
+      }
+      const initialCart: {
+        [productId: string]: {
+          quantity: number;
+          unitPrice: number;
+          selectedUnit: string;
+        };
+      } = {};
+      const initialUnits: {
+        [productId: string]: string;
+      } = {};
+
+      editingOrder.items.forEach((it) => {
+        const matchedProd =
+          products.find((p) => p.id === it.productId) ||
+          products.find((p) => p.banglaName === it.productName || p.name === it.productName);
+        const prodKey = matchedProd ? matchedProd.id : (it.productId || it.productName);
+        const u = it.unit || (matchedProd?.unit || 'পিস');
+        initialCart[prodKey] = {
+          quantity: it.quantity,
+          unitPrice: it.unitPrice,
+          selectedUnit: u,
+        };
+        initialUnits[prodKey] = u;
+      });
+
+      setCart(initialCart);
+      setProductSelectedUnits(initialUnits);
+      setDiscountPercent(editingOrder.discountPercent || 0);
+      setPaymentMethod(editingOrder.paymentMethod || 'DUE');
+      setPaidAmountInput(editingOrder.paidAmount ? String(editingOrder.paidAmount) : '');
+      setOrderNotes(editingOrder.notes || '');
+    } else if (selectedShopIdProp) {
+      setSelectedShopId(selectedShopIdProp);
+    }
+  }, [editingOrder, selectedShopIdProp, products]);
 
   // Product Catalog search & filter
   const [productSearch, setProductSearch] = useState<string>('');
@@ -159,19 +209,30 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
 
   // Keep selectedShopId synchronized with filteredShops when routeFilter or shopSearch changes
   useEffect(() => {
+    if (editingOrder && shops.some((s) => s.id === editingOrder.shopId)) {
+      setSelectedShopId(editingOrder.shopId);
+      return;
+    }
     if (filteredShops.length > 0) {
       const existsInFiltered = filteredShops.some((s) => s.id === selectedShopId);
       if (!existsInFiltered) {
         setSelectedShopId(filteredShops[0].id);
       }
     } else if (selectedShopId !== '') {
-      setSelectedShopId('');
+      if (!editingOrder) {
+        setSelectedShopId('');
+      }
     }
-  }, [filteredShops, selectedShopId]);
+  }, [filteredShops, selectedShopId, editingOrder, shops]);
 
   const selectedShop = useMemo(() => {
-    return filteredShops.find((s) => s.id === selectedShopId) || filteredShops[0] || null;
-  }, [filteredShops, selectedShopId]);
+    return (
+      shops.find((s) => s.id === selectedShopId) ||
+      filteredShops.find((s) => s.id === selectedShopId) ||
+      filteredShops[0] ||
+      null
+    );
+  }, [shops, filteredShops, selectedShopId]);
 
   // Tool #5: Find most recent order for the selected shop
   const lastShopOrder = useMemo(() => {
@@ -191,58 +252,98 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
 
   const [repeatNotice, setRepeatNotice] = useState<string | null>(null);
 
-  // Helper to determine the effective unit for a product ('পিস' vs 'ডজন')
-  const getEffectiveUnit = (productId: string, prod: Product): 'পিস' | 'ডজন' => {
+  // Helper to determine the effective unit for a product
+  const getEffectiveUnit = (productId: string, prod: Product): string => {
     if (cart[productId]?.selectedUnit) {
       return cart[productId].selectedUnit;
     }
     if (productSelectedUnits[productId]) {
       return productSelectedUnits[productId];
     }
-    return prod.unit === 'ডজন' ? 'ডজন' : 'পিস';
+    return prod.unit || 'পিস';
+  };
+
+  // Helper to get available units for a product in dropdown
+  const getAvailableUnitsForProduct = (prod: Product): string[] => {
+    const base = prod.unit || 'পিস';
+    const list: string[] = [base];
+
+    // Always give option for 'পিস' if not already base unit
+    if (base !== 'পিস') {
+      list.push('পিস');
+    }
+
+    // If not 'ডজন', give 'ডজন' option
+    if (base !== 'ডজন') {
+      list.push('ডজন');
+    }
+
+    return Array.from(new Set(list));
   };
 
   // Helper to calculate default price for chosen unit
-  const getDefaultPriceForUnit = (prod: Product, targetUnit: 'পিস' | 'ডজন'): number => {
-    const isBaseDozen = prod.unit === 'ডজন';
-    if (isBaseDozen) {
-      // prod.unitPrice is for 1 dozen
-      if (targetUnit === 'ডজন') {
-        return prod.unitPrice;
-      } else {
-        // Piece: 1 dozen / 12
-        return +(prod.unitPrice / 12).toFixed(2);
-      }
-    } else {
-      // Base unit is piece (or other)
-      if (targetUnit === 'ডজন') {
-        // 1 dozen = 12 pieces
-        return +(prod.unitPrice * 12).toFixed(2);
-      } else {
-        return prod.unitPrice;
-      }
+  // "ড্রপডাউন বক্সে সেই অনুযায়ী ১ পিসের দাম ও বসবে"
+  const getDefaultPriceForUnit = (prod: Product, targetUnit: string): number => {
+    const baseUnit = prod.unit || 'পিস';
+    const piecesPerBase =
+      prod.piecesPerUnit && prod.piecesPerUnit > 0
+        ? prod.piecesPerUnit
+        : baseUnit === 'ডজন'
+        ? 12
+        : 1;
+
+    // Single piece price (১ পিসের দাম)
+    const onePiecePrice =
+      baseUnit === 'পিস'
+        ? prod.unitPrice
+        : prod.unitPrice / piecesPerBase;
+
+    if (targetUnit === baseUnit) {
+      return prod.unitPrice;
     }
+    if (targetUnit === 'পিস') {
+      return +(onePiecePrice.toFixed(2));
+    }
+    if (targetUnit === 'ডজন') {
+      return +((onePiecePrice * 12).toFixed(2));
+    }
+    if (prod.piecesPerUnit && prod.piecesPerUnit > 0 && targetUnit === prod.unit) {
+      return prod.unitPrice;
+    }
+
+    return prod.unitPrice;
   };
 
   // Helper to calculate max available stock in terms of the chosen unit
-  const getMaxStockForUnit = (prod: Product, targetUnit: 'পিস' | 'ডজন'): number => {
-    const isBaseDozen = prod.unit === 'ডজন';
-    if (isBaseDozen) {
-      if (targetUnit === 'ডজন') {
-        return prod.stock;
-      } else {
-        return prod.stock * 12;
-      }
-    } else {
-      if (targetUnit === 'ডজন') {
-        return Math.floor(prod.stock / 12);
-      } else {
-        return prod.stock;
-      }
+  const getMaxStockForUnit = (prod: Product, targetUnit: string): number => {
+    const baseUnit = prod.unit || 'পিস';
+    const piecesPerBase =
+      prod.piecesPerUnit && prod.piecesPerUnit > 0
+        ? prod.piecesPerUnit
+        : baseUnit === 'ডজন'
+        ? 12
+        : 1;
+
+    // Total stock in single pieces
+    const totalPieces =
+      baseUnit === 'পিস'
+        ? prod.stock
+        : prod.stock * piecesPerBase;
+
+    if (targetUnit === baseUnit) {
+      return prod.stock;
     }
+    if (targetUnit === 'পিস') {
+      return totalPieces;
+    }
+    if (targetUnit === 'ডজন') {
+      return Math.floor(totalPieces / 12);
+    }
+
+    return prod.stock;
   };
 
-  const handleUnitChange = (productId: string, newUnit: 'পিস' | 'ডজন') => {
+  const handleUnitChange = (productId: string, newUnit: string) => {
     const prod = products.find((p) => p.id === productId);
     if (!prod) return;
 
@@ -272,7 +373,7 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
       [productId: string]: {
         quantity: number;
         unitPrice: number;
-        selectedUnit: 'পিস' | 'ডজন';
+        selectedUnit: string;
       };
     } = { ...cart };
     let addedCount = 0;
@@ -282,7 +383,7 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
         products.find((p) => p.id === it.productId) ||
         products.find((p) => p.banglaName === it.productName || p.name === it.productName);
       if (matchedProd && matchedProd.stock > 0) {
-        const itemUnit: 'পিস' | 'ডজন' = it.unit === 'ডজন' ? 'ডজন' : 'পিস';
+        const itemUnit = it.unit || (matchedProd.unit || 'পিস');
         const maxStock = getMaxStockForUnit(matchedProd, itemUnit);
         const safeQty = Math.min(it.quantity, maxStock);
         if (safeQty > 0) {
@@ -302,6 +403,84 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
       setTimeout(() => setRepeatNotice(null), 4000);
     } else {
       setRepeatNotice('আগের অর্ডারের পণ্যগুলোর স্টক বর্তমানে শেষ অথবা ক্যাটালগে নেই।');
+      setTimeout(() => setRepeatNotice(null), 4000);
+    }
+  };
+
+  const handleAddReturnedItemsToCart = () => {
+    if (!lastShopOrder) return;
+
+    // Get returned items either from structured returnedItems or by matching returnReason
+    const itemsToAdd: { productId?: string; productName: string; unit: string; quantity: number; unitPrice: number; actionNote?: string }[] = [];
+
+    if (lastShopOrder.returnedItems && lastShopOrder.returnedItems.length > 0) {
+      lastShopOrder.returnedItems.forEach((ri) => {
+        if (ri.quantity > 0) {
+          itemsToAdd.push(ri);
+        }
+      });
+    } else if ((lastShopOrder.returnAmount || 0) > 0 || lastShopOrder.returnReason) {
+      lastShopOrder.items.forEach((it) => {
+        if (lastShopOrder.returnReason && lastShopOrder.returnReason.includes(it.productName)) {
+          itemsToAdd.push({
+            productId: it.productId,
+            productName: it.productName,
+            unit: it.unit,
+            quantity: 1,
+            unitPrice: it.unitPrice,
+            actionNote: 'পরের বার নেব',
+          });
+        }
+      });
+      if (itemsToAdd.length === 0 && lastShopOrder.items.length > 0) {
+        itemsToAdd.push({
+          ...lastShopOrder.items[0],
+          quantity: 1,
+          actionNote: 'পরের বার নেব',
+        });
+      }
+    }
+
+    if (itemsToAdd.length === 0) {
+      setRepeatNotice('নির্দিষ্ট কোনো রিটার্ন পণ্য পাওয়া যায়নি।');
+      setTimeout(() => setRepeatNotice(null), 4000);
+      return;
+    }
+
+    const nextCart: {
+      [productId: string]: {
+        quantity: number;
+        unitPrice: number;
+        selectedUnit: string;
+      };
+    } = { ...cart };
+    let addedCount = 0;
+
+    itemsToAdd.forEach((it) => {
+      const matchedProd =
+        products.find((p) => p.id === it.productId) ||
+        products.find((p) => p.banglaName === it.productName || p.name === it.productName);
+      if (matchedProd && matchedProd.stock > 0) {
+        const itemUnit = it.unit || (matchedProd.unit || 'পিস');
+        const maxStock = getMaxStockForUnit(matchedProd, itemUnit);
+        const safeQty = Math.min(it.quantity, maxStock);
+        if (safeQty > 0) {
+          nextCart[matchedProd.id] = {
+            quantity: (nextCart[matchedProd.id]?.quantity || 0) + safeQty,
+            unitPrice: it.unitPrice || getDefaultPriceForUnit(matchedProd, itemUnit),
+            selectedUnit: itemUnit,
+          };
+          addedCount++;
+        }
+      }
+    });
+
+    if (addedCount > 0) {
+      setCart(nextCart);
+      setRepeatNotice(`পূর্বের মেমো (#${lastShopOrder.memoNumber}) থেকে ${addedCount}টি রিটার্ন/পেন্ডিং পণ্য কার্টে যুক্ত করা হয়েছে!`);
+      setTimeout(() => setRepeatNotice(null), 4000);
+    } else {
+      setRepeatNotice('ফেরত পণ্যের স্টক শেষ অথবা পণ্যটি ক্যাটালগে নেই।');
       setTimeout(() => setRepeatNotice(null), 4000);
     }
   };
@@ -481,6 +660,32 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
       return;
     }
 
+    if (editingOrder) {
+      const updatedOrder: Order = {
+        ...editingOrder,
+        shopId: selectedShop.id,
+        shopName: selectedShop.name,
+        shopPhone: selectedShop.phone,
+        shopAddress: selectedShop.address,
+        shopRoute: selectedShop.routeArea,
+        items: cartItems,
+        subTotal,
+        discountPercent,
+        discountAmount,
+        netTotal,
+        paidAmount,
+        dueAmount,
+        totalOutstandingAfterOrder,
+        paymentMethod,
+        notes: orderNotes,
+      };
+
+      if (onUpdateOrder) {
+        onUpdateOrder(updatedOrder);
+      }
+      return;
+    }
+
     const memoNumber = `MS-${Date.now().toString().slice(-6)}`;
     const orderData = {
       memoNumber,
@@ -515,6 +720,43 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
 
   return (
     <div className="max-w-7xl mx-auto px-3 sm:px-4 py-4 space-y-4">
+      {/* Edit Mode Top Prominent Banner */}
+      {editingOrder && (
+        <div className="bg-linear-to-r from-amber-50 to-orange-50 border-2 border-amber-400 rounded-2xl p-4 shadow-md flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-in fade-in">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-amber-500 text-amber-950 flex items-center justify-center shrink-0 shadow-xs">
+              <Edit3 className="w-5 h-5 text-neutral-950" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-black uppercase tracking-wider bg-amber-300 text-amber-950 px-2 py-0.5 rounded-md">
+                  মেমো এডিট মোড
+                </span>
+                <span className="font-extrabold text-sm sm:text-base text-neutral-900">
+                  মেমো #{editingOrder.memoNumber}
+                </span>
+                <span className="text-xs text-neutral-600 font-bold">
+                  ({editingOrder.shopName} - {editingOrder.shopRoute})
+                </span>
+              </div>
+              <p className="text-xs text-neutral-700 mt-1">
+                পূর্বের মেমোর দোকান, রুট ও পণ্যসমূহ সরাসরি লোড হয়েছে। নতুন পণ্য যোগ করতে পারেন অথবা পরিমাণ পরিবর্তন করে নিচে <strong>'মেমো আপডেট সংরক্ষণ করুন'</strong> বাটনে চাপুন।
+              </p>
+            </div>
+          </div>
+          {onCancelEditOrder && (
+            <button
+              type="button"
+              onClick={onCancelEditOrder}
+              className="shrink-0 px-3 py-2 bg-white hover:bg-neutral-100 text-neutral-800 border border-neutral-300 rounded-xl font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-2xs transition-colors"
+            >
+              <X className="w-4 h-4 text-rose-600" />
+              <span>এডিট বাতিল / নতুন অর্ডার</span>
+            </button>
+          )}
+        </div>
+      )}
+
       {/* 1-Click WhatsApp Memo Send Banner right after booking an order */}
       {lastBookedOrder && (
         <div className="bg-emerald-900 text-white rounded-2xl p-3.5 sm:p-4 shadow-lg border border-emerald-700 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-in fade-in">
@@ -704,6 +946,89 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                 </button>
               </div>
             )}
+
+            {/* Return & Follow-up Information Card for Selected Shop */}
+            {lastShopOrder &&
+              ((lastShopOrder.returnAmount || 0) > 0 ||
+                (lastShopOrder.returnedItems && lastShopOrder.returnedItems.length > 0) ||
+                (lastShopOrder.returnReason && lastShopOrder.returnReason.trim() !== '')) && (
+                <div className="bg-linear-to-r from-amber-50 to-orange-50 border-2 border-amber-300 rounded-2xl p-3 sm:p-4 shadow-sm animate-in fade-in space-y-2.5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-amber-200">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                        <RotateCcw className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-black text-amber-950">
+                            পূর্বের ডেলিভারিতে পণ্য রিটার্ন / পেন্ডিং ফলো-আপ হিসাব
+                          </span>
+                          <span className="text-[10px] font-bold bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full">
+                            মেমো #{lastShopOrder.memoNumber}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-amber-800">
+                          তারিখ: {new Date(lastShopOrder.orderDate).toLocaleDateString('bn-BD')} • মোট ফেরত সমন্বয়: <strong className="font-mono">৳{(lastShopOrder.returnAmount || 0).toLocaleString()}</strong>
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleAddReturnedItemsToCart}
+                        className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white font-extrabold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs transition-all"
+                        title="ফেরত দেওয়া পণ্যগুলো নতুন অর্ডারে সরাসরি যুক্ত করতে ক্লিক করুন"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>ফেরত পণ্যগুলো কার্টে যুক্ত করুন</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Returned items breakdown */}
+                  <div className="space-y-1.5">
+                    <div className="text-[11px] font-extrabold text-amber-900 flex items-center gap-1.5">
+                      <span>দোকানদার যে পণ্যগুলো ফেরত দিয়েছিলেন বা পরের বার নেওয়ার কথা বলেছিলেন:</span>
+                    </div>
+
+                    {lastShopOrder.returnedItems && lastShopOrder.returnedItems.length > 0 ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                        {lastShopOrder.returnedItems.map((rit, idx) => (
+                          <div
+                            key={idx}
+                            className="bg-white/90 border border-amber-200 rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs shadow-2xs"
+                          >
+                            <div className="min-w-0">
+                              <span className="font-extrabold text-neutral-900 block truncate">{rit.productName}</span>
+                              <span className="text-[10px] text-neutral-600">
+                                {rit.quantity} {rit.unit} @ ৳{rit.unitPrice} = ৳{(rit.quantity * rit.unitPrice).toLocaleString()}
+                              </span>
+                            </div>
+                            <span
+                              className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md shrink-0 ${
+                                rit.actionNote === 'পরের বার নেব'
+                                  ? 'bg-blue-100 text-blue-900 border border-blue-300'
+                                  : rit.actionNote === 'ড্যামেজ / নষ্ট'
+                                  ? 'bg-rose-100 text-rose-900 border border-rose-300'
+                                  : 'bg-amber-100 text-amber-900'
+                              }`}
+                            >
+                              {rit.actionNote || rit.returnReason || 'ফেরত'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="bg-white/90 border border-amber-200 rounded-xl p-2.5 text-xs text-amber-950 flex items-center justify-between">
+                        <span>
+                          বিবরণ: <strong>{lastShopOrder.returnReason || 'পণ্য ফেরত সমন্বিত'}</strong> (ফেরতের পরিমাণ: ৳{(lastShopOrder.returnAmount || 0).toLocaleString()})
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
           </div>
         )}
       </div>
@@ -885,21 +1210,39 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                           />
                         </div>
                       ) : (
-                        <span className="text-sm font-extrabold text-neutral-900">৳{currentPrice}</span>
+                        <div className="flex flex-col">
+                          <span className="text-sm font-extrabold text-neutral-900">৳{currentPrice}</span>
+                          {prod.unit !== 'পিস' && currentUnit === prod.unit && prod.piecesPerUnit && prod.piecesPerUnit > 1 && (
+                            <span className="text-[9.5px] font-semibold text-emerald-700 leading-tight">
+                              (১ পিস = ৳{(prod.unitPrice / prod.piecesPerUnit).toFixed(2)})
+                            </span>
+                          )}
+                          {currentUnit === 'পিস' && prod.unit !== 'পিস' && (
+                            <span className="text-[9.5px] font-semibold text-neutral-500 leading-tight">
+                              (১ {prod.unit} = {prod.piecesPerUnit || 1} পিস)
+                            </span>
+                          )}
+                        </div>
                       )}
                     </div>
 
-                    {/* Unit Dropdown Selector (ডজন / পিস) & Quantity Controls */}
+                    {/* Unit Dropdown Selector (বক্স / পাতা / প্যাকেট / ডজন / পিস) & Quantity Controls */}
                     <div className="flex items-center gap-1.5 ml-auto">
                       {/* Unit Dropdown Box */}
                       <select
                         value={currentUnit}
-                        onChange={(e) => handleUnitChange(prod.id, e.target.value as 'পিস' | 'ডজন')}
+                        onChange={(e) => handleUnitChange(prod.id, e.target.value)}
                         className="text-xs font-bold bg-neutral-100 hover:bg-neutral-200/70 text-neutral-800 py-1.5 px-2 rounded-xl border border-neutral-300 focus:outline-hidden focus:ring-1 focus:ring-emerald-500 cursor-pointer shadow-2xs transition-colors"
-                        title="একক নির্বাচন করুন (ডজন বা পিস)"
+                        title="একক নির্বাচন করুন (বক্স / পাতা / প্যাকেট / ডজন / পিস)"
                       >
-                        <option value="পিস">পিস</option>
-                        <option value="ডজন">ডজন</option>
+                        {getAvailableUnitsForProduct(prod).map((u) => {
+                          const uPrice = getDefaultPriceForUnit(prod, u);
+                          return (
+                            <option key={u} value={u}>
+                              {u} (৳{uPrice})
+                            </option>
+                          );
+                        })}
                       </select>
 
                       {/* Quantity Selector */}
@@ -1101,10 +1444,18 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                 <button
                   id="btn-confirm-order"
                   onClick={handleSubmitOrder}
-                  className="w-full py-3 bg-emerald-700 hover:bg-emerald-600 active:bg-emerald-800 text-white rounded-xl font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 mt-2 cursor-pointer"
+                  className={`w-full py-3 text-white rounded-xl font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 mt-2 cursor-pointer ${
+                    editingOrder
+                      ? 'bg-amber-600 hover:bg-amber-700 active:bg-amber-800'
+                      : 'bg-emerald-700 hover:bg-emerald-600 active:bg-emerald-800'
+                  }`}
                 >
                   <FileCheck className="w-4 h-4" />
-                  <span>অর্ডার কনফার্ম ও মেমো তৈরি</span>
+                  <span>
+                    {editingOrder
+                      ? `💾 মেমো #${editingOrder.memoNumber} আপডেট সংরক্ষণ করুন`
+                      : 'অর্ডার কনফার্ম ও মেমো তৈরি'}
+                  </span>
                 </button>
               </div>
             )}
@@ -1193,12 +1544,19 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                           <div className="flex items-center gap-2 mt-1">
                             <select
                               value={item.unit}
-                              onChange={(e) => handleUnitChange(item.productId, e.target.value as 'পিস' | 'ডজন')}
+                              onChange={(e) => handleUnitChange(item.productId, e.target.value)}
                               className="text-[10px] font-bold bg-white text-neutral-800 px-1.5 py-0.5 rounded border border-neutral-300 focus:outline-hidden cursor-pointer"
                               title="একক পরিবর্তন"
                             >
-                              <option value="পিস">পিস</option>
-                              <option value="ডজন">ডজন</option>
+                              {(() => {
+                                const matchedProd = products.find((p) => p.id === item.productId);
+                                const available = matchedProd ? getAvailableUnitsForProduct(matchedProd) : [item.unit, 'পিস', 'ডজন'];
+                                return available.map((u) => (
+                                  <option key={u} value={u}>
+                                    {u} {matchedProd ? `(৳${getDefaultPriceForUnit(matchedProd, u)})` : ''}
+                                  </option>
+                                ));
+                              })()}
                             </select>
                             <span className="text-[10px] bg-emerald-50 text-emerald-800 px-1.5 py-0.5 rounded border border-emerald-200 font-bold">
                               দর: ৳{item.unitPrice}/{item.unit}
@@ -1354,10 +1712,18 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                     handleSubmitOrder();
                     setIsCartDrawerOpen(false);
                   }}
-                  className="w-full py-3 bg-emerald-700 hover:bg-emerald-600 active:bg-emerald-800 text-white rounded-2xl font-black text-sm shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  className={`w-full py-3 text-white rounded-2xl font-black text-sm shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                    editingOrder
+                      ? 'bg-amber-600 hover:bg-amber-700 active:bg-amber-800'
+                      : 'bg-emerald-700 hover:bg-emerald-600 active:bg-emerald-800'
+                  }`}
                 >
                   <FileCheck className="w-5 h-5" />
-                  <span>অর্ডার কনফার্ম ও মেমো তৈরি (৳{netTotal.toLocaleString()})</span>
+                  <span>
+                    {editingOrder
+                      ? `💾 মেমো #${editingOrder.memoNumber} আপডেট সংরক্ষণ করুন (৳${netTotal.toLocaleString()})`
+                      : `অর্ডার কনফার্ম ও মেমো তৈরি (৳${netTotal.toLocaleString()})`}
+                  </span>
                 </button>
               </div>
             )}

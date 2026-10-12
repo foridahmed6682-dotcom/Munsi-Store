@@ -29,6 +29,7 @@ interface MemoModalProps {
   products?: Product[];
   initialEditMode?: boolean;
   allOrders?: Order[];
+  onEditInOrderBooking?: (order: Order) => void;
 }
 
 export const MemoModal: React.FC<MemoModalProps> = ({
@@ -41,6 +42,7 @@ export const MemoModal: React.FC<MemoModalProps> = ({
   products = [],
   initialEditMode = false,
   allOrders = [],
+  onEditInOrderBooking,
 }) => {
   const [copied, setCopied] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -260,9 +262,16 @@ export const MemoModal: React.FC<MemoModalProps> = ({
           <div className="flex flex-wrap items-center gap-1.5">
             {onUpdateOrder && !isEditing && (
               <button
-                onClick={() => setIsEditing(true)}
+                onClick={() => {
+                  if (onEditInOrderBooking && order) {
+                    onClose();
+                    onEditInOrderBooking(order);
+                  } else {
+                    setIsEditing(true);
+                  }
+                }}
                 className="p-1.5 px-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-neutral-950 text-xs flex items-center gap-1 font-extrabold shadow-xs shrink-0 cursor-pointer"
-                title="মেমো এডিট করুন"
+                title="মেমো এডিট করুন (অর্ডার কাটার পেজে)"
               >
                 <Edit3 className="w-3.5 h-3.5" />
                 <span>মেমো এডিট</span>
@@ -681,8 +690,16 @@ export const MemoModal: React.FC<MemoModalProps> = ({
           <div className="flex items-center gap-2">
             {onUpdateOrder && !isEditing && (
               <button
-                onClick={() => setIsEditing(true)}
+                onClick={() => {
+                  if (onEditInOrderBooking && order) {
+                    onClose();
+                    onEditInOrderBooking(order);
+                  } else {
+                    setIsEditing(true);
+                  }
+                }}
                 className="px-4 py-2 bg-amber-100 hover:bg-amber-200 text-amber-950 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                title="মেমো এডিট করুন (অর্ডার কাটার পেজে)"
               >
                 <Edit3 className="w-3.5 h-3.5" />
                 <span>এডিট</span>

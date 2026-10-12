@@ -154,7 +154,8 @@ import {
   Supplier,
   AuthorizedUserEmail,
   Route,
-  BusinessInfo
+  BusinessInfo,
+  ReturnedOrderItem
 } from './types';
 import { CheckCircle2, AlertCircle, ExternalLink, LogIn, Lock } from 'lucide-react';
 import { usePWAInstall } from './hooks/usePWAInstall';
@@ -212,6 +213,7 @@ export default function App() {
   const [selectedMemoOrder, setSelectedMemoOrder] = useState<Order | null>(null);
   const [isMemoOpen, setIsMemoOpen] = useState<boolean>(false);
   const [isMemoEditMode, setIsMemoEditMode] = useState<boolean>(false);
+  const [editingOrder, setEditingOrder] = useState<Order | null>(null);
 
   // Global Delete Permission Modal State
   const [deletePermissionRequest, setDeletePermissionRequest] = useState<DeletePermissionRequest | null>(null);
@@ -846,6 +848,48 @@ export default function App() {
     };
   }, [userProfile?.uid, userProfile?.role]);
 
+  // Helper for converting ordered or returned item quantity into base product unit
+  const calcStockDeductionInBaseUnit = (prod: Product, itemQty: number, itemUnit: string): number => {
+    const baseUnit = prod.unit || 'পিস';
+    if (itemUnit === baseUnit) return itemQty;
+
+    const piecesPerBase =
+      prod.piecesPerUnit && prod.piecesPerUnit > 0
+        ? prod.piecesPerUnit
+        : baseUnit === 'ডজন'
+        ? 12
+        : 1;
+
+    // If base unit is composed of multiple pieces (like বক্স, পাতা, প্যাকেট, কার্টুন, ডজন)
+    if (piecesPerBase > 1 && baseUnit !== 'পিস') {
+      if (itemUnit === 'পিস') {
+        return +(itemQty / piecesPerBase).toFixed(2);
+      }
+      if (itemUnit === 'ডজন') {
+        return +((itemQty * 12) / piecesPerBase).toFixed(2);
+      }
+    }
+
+    // If base unit is 'পিস'
+    if (baseUnit === 'পিস') {
+      if (itemUnit === 'ডজন') {
+        return itemQty * 12;
+      }
+      if (prod.piecesPerUnit && prod.piecesPerUnit > 1) {
+        return itemQty * prod.piecesPerUnit;
+      }
+    }
+
+    if (itemUnit === 'ডজন' && baseUnit !== 'ডজন') {
+      return itemQty * 12;
+    }
+    if (itemUnit !== 'ডজন' && baseUnit === 'ডজন') {
+      return +(itemQty / 12).toFixed(2);
+    }
+
+    return itemQty;
+  };
+
   // Order Creation Handler
   const handleOrderCreated = async (orderData: any) => {
     try {
@@ -867,16 +911,8 @@ export default function App() {
       // 2. Automatically deduct inventory stock for each ordered item
       for (const item of newOrder.items) {
         const prod = products.find((p) => p.id === item.productId);
-        let totalDeducted = item.quantity + (item.tradeOfferQty || 0);
-
-        // Unit conversion if ordered in dozen but base unit is piece, or vice versa
-        if (prod) {
-          if (item.unit === 'ডজন' && prod.unit !== 'ডজন') {
-            totalDeducted = totalDeducted * 12;
-          } else if (item.unit !== 'ডজন' && prod.unit === 'ডজন') {
-            totalDeducted = +(totalDeducted / 12).toFixed(2);
-          }
-        }
+        const rawQty = item.quantity + (item.tradeOfferQty || 0);
+        const totalDeducted = prod ? calcStockDeductionInBaseUnit(prod, rawQty, item.unit) : rawQty;
 
         adjustProductStock(item.productId, -totalDeducted);
         if (prod) {
@@ -1534,7 +1570,8 @@ export default function App() {
     paymentMethod: PaymentMethod,
     notes?: string,
     returnAmount?: number,
-    returnReason?: string
+    returnReason?: string,
+    returnedItems?: ReturnedOrderItem[]
   ) => {
     const ord = orders.find((o) => o.id === orderId);
     if (!ord) return;
@@ -1557,6 +1594,26 @@ export default function App() {
       }
     }
 
+    // Restore stock for returned items that are not damaged
+    if (returnedItems && returnedItems.length > 0) {
+      for (const ret of returnedItems) {
+        if (ret.quantity > 0 && ret.actionNote !== 'ড্যামেজ / নষ্ট') {
+          const prod = products.find(
+            (p) =>
+              p.id === ret.productId ||
+              p.banglaName === ret.productName ||
+              p.name === ret.productName
+          );
+          if (prod) {
+            const restoreQty = calcStockDeductionInBaseUnit(prod, ret.quantity, ret.unit);
+            adjustProductStock(prod.id, restoreQty);
+            const updatedProd = { ...prod, stock: prod.stock + restoreQty };
+            saveProductToCloud(updatedProd).catch(() => {});
+          }
+        }
+      }
+    }
+
     const updatedOrder: Order = {
       ...ord,
       deliveryStatus: 'DELIVERED',
@@ -1565,6 +1622,7 @@ export default function App() {
       paymentMethod,
       returnAmount: returnAmount !== undefined ? returnAmount : ord.returnAmount,
       returnReason: returnReason !== undefined ? returnReason : ord.returnReason,
+      returnedItems: returnedItems !== undefined ? returnedItems : ord.returnedItems,
       totalOutstandingAfterOrder: updatedShopDue,
       notes: notes !== undefined ? notes : ord.notes,
       syncedWithSheets: false,
@@ -1632,9 +1690,60 @@ export default function App() {
     );
   };
 
+  // Start Memo Edit Handler (Navigates directly to Order Booking page in Edit Mode)
+  const handleStartEditOrder = (order: Order) => {
+    setIsMemoOpen(false);
+    setIsMemoEditMode(false);
+    setEditingOrder(order);
+    setTargetOrderShopId(order.shopId);
+    setActiveTab('order');
+    showToast(`মেমো #${order.memoNumber} এডিট মোডে লোড করা হয়েছে`, 'info');
+  };
+
+  // Cancel Memo Edit Handler
+  const handleCancelEditOrder = () => {
+    setEditingOrder(null);
+    showToast('মেমো এডিট বাতিল করা হয়েছে', 'info');
+  };
+
   // Update Order / Memo Edit Handler
   const handleUpdateOrder = (updatedOrder: Order) => {
     const oldOrder = orders.find((o) => o.id === updatedOrder.id);
+
+    // Reconcile inventory stock differences between old items and new items
+    if (oldOrder) {
+      // 1. Revert previous deductions
+      for (const item of oldOrder.items) {
+        const prod = products.find(
+          (p) =>
+            p.id === item.productId ||
+            p.banglaName === item.productName ||
+            p.name === item.productName
+        );
+        if (prod) {
+          const rawOldQty = item.quantity + (item.tradeOfferQty || 0);
+          const oldQty = calcStockDeductionInBaseUnit(prod, rawOldQty, item.unit);
+          adjustProductStock(prod.id, oldQty);
+        }
+      }
+      // 2. Apply new item deductions
+      for (const item of updatedOrder.items) {
+        const prod = products.find(
+          (p) =>
+            p.id === item.productId ||
+            p.banglaName === item.productName ||
+            p.name === item.productName
+        );
+        if (prod) {
+          const rawNewQty = item.quantity + (item.tradeOfferQty || 0);
+          const newQty = calcStockDeductionInBaseUnit(prod, rawNewQty, item.unit);
+          adjustProductStock(prod.id, -newQty);
+          const updatedProd = { ...prod, stock: Math.max(0, prod.stock - newQty) };
+          saveProductToCloud(updatedProd).catch(() => {});
+        }
+      }
+    }
+
     if (
       oldOrder &&
       updatedOrder.deliveryStatus === 'DELIVERED' &&
@@ -1660,9 +1769,11 @@ export default function App() {
     saveOrder(updatedOrder);
     saveOrderToCloud(updatedOrder).catch(() => {});
     setOrders((prev) => prev.map((o) => (o.id === updatedOrder.id ? updatedOrder : o)));
+    setEditingOrder(null);
     setSelectedMemoOrder(updatedOrder);
+    setIsMemoOpen(true);
     reloadData();
-    showToast(`মেমো #${updatedOrder.memoNumber} সফলভাবে আপডেট করা হয়েছে!`, 'success');
+    showToast(`মেমো #${updatedOrder.memoNumber} সফলভাবে আপডেট ও সংরক্ষিত হয়েছে!`, 'success');
   };
 
   // Delete Order Handler (Admin, with Permission Prompt)
@@ -2560,6 +2671,9 @@ export default function App() {
                 onOrderCreated={handleOrderCreated}
                 onAddShop={handleAddShop}
                 onCartCountChange={(count) => setCartCount(count)}
+                editingOrder={editingOrder}
+                onCancelEditOrder={handleCancelEditOrder}
+                onUpdateOrder={handleUpdateOrder}
               />
             )}
 
@@ -2574,10 +2688,15 @@ export default function App() {
                 onAddDailyExpense={handleAddDailyExpense}
                 onDeleteDailyExpense={handleDeleteDailyExpense}
                 onViewMemo={(order, editMode = false) => {
-                  setSelectedMemoOrder(order);
-                  setIsMemoEditMode(editMode);
-                  setIsMemoOpen(true);
+                  if (editMode) {
+                    handleStartEditOrder(order);
+                  } else {
+                    setSelectedMemoOrder(order);
+                    setIsMemoEditMode(false);
+                    setIsMemoOpen(true);
+                  }
                 }}
+                onEditOrder={handleStartEditOrder}
                 onUpdateDeliveryStatus={handleUpdateDeliveryStatus}
                 onSettleOrderDelivery={handleSettleOrderDelivery}
                 isAdmin={activeSimulatedRole === 'admin'}
@@ -2700,10 +2819,15 @@ export default function App() {
                 onDownloadShopsCSV={handleDownloadShopsCSV}
                 onRestoreFromBackupJSON={handleRestoreFromBackupJSON}
                 onViewMemo={(order, editMode = false) => {
-                  setSelectedMemoOrder(order);
-                  setIsMemoEditMode(editMode);
-                  setIsMemoOpen(true);
+                  if (editMode) {
+                    handleStartEditOrder(order);
+                  } else {
+                    setSelectedMemoOrder(order);
+                    setIsMemoEditMode(false);
+                    setIsMemoOpen(true);
+                  }
                 }}
+                onEditOrder={handleStartEditOrder}
                 onDeleteOrder={handleDeleteOrder}
                 dueCollections={dueCollections}
                 dailyExpenses={dailyExpenses}
@@ -2750,6 +2874,7 @@ export default function App() {
         products={products}
         initialEditMode={isMemoEditMode}
         allOrders={orders}
+        onEditInOrderBooking={handleStartEditOrder}
       />
     </div>
   );

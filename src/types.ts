@@ -93,7 +93,8 @@ export interface Product {
   category: string;
   supplier?: string; // সাপ্লায়ার বা কোম্পানির নাম (যেমন: স্কয়ার, প্রাণ, ফ্রেশ, ইউনিলিভার)
   supplierId?: string;
-  unit: string; // যেমন: কার্টুন, ডজন, কেজি, পিস, বস্তা
+  unit: string; // যেমন: কার্টুন, ডজন, কেজি, পিস, বস্তা, বক্স, পাতা, প্যাকেট
+  piecesPerUnit?: number; // বক্স/পাতা/প্যাকেট ইত্যাদিতে প্রতি ইউনিটে কত পিস থাকে (যেমন: ১ পাতা = ১০ পিস, ১ বক্স = ২৪ পিস)
   unitPrice: number; // বিক্রয় মূল্য (ডিলার/হোলসেল বা রেগুলার রেট)
   discountPrice?: number; // ছাড়কৃত বিক্রয় মূল্য (কাস্টমার স্টোর অফার রেট)
   costPrice: number; // ক্রয় মূল্য (ডিস্ট্রিবিউটর রেট)
@@ -171,6 +172,16 @@ export interface OrderItem {
   supplier?: string; // সাপ্লায়ার বা কোম্পানির নাম (যেমন: স্কয়ার, প্রাণ, তীর, ফ্রেশ)
 }
 
+export interface ReturnedOrderItem {
+  productId?: string;
+  productName: string;
+  unit: string;
+  quantity: number;
+  unitPrice: number;
+  returnReason?: string;
+  actionNote?: 'পরের বার নেব' | 'ড্যামেজ / নষ্ট' | 'অতিরিক্ত / লাগবে না' | 'অন্যান্য';
+}
+
 export interface Order {
   id: string;
   memoNumber: string;
@@ -212,6 +223,7 @@ export interface Order {
   bookedByRole?: UserRole;
   returnAmount?: number;
   returnReason?: string;
+  returnedItems?: ReturnedOrderItem[];
 }
 
 export interface DueCollectionRecord {
