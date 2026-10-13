@@ -311,32 +311,36 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     const monthStartStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
 
     const shopMap = new Map<string, Shop>();
-    shops.forEach((s) => {
-      shopMap.set(s.id, s);
-      shopMap.set(s.name.trim().toLowerCase(), s);
+    (shops || []).forEach((s) => {
+      if (!s) return;
+      if (s.id) shopMap.set(s.id, s);
+      if (s.name) shopMap.set(s.name.trim().toLowerCase(), s);
     });
 
-    let list = dueCollections.filter((c) => {
+    let list = (dueCollections || []).filter((c) => {
+      if (!c) return false;
+      const cDate = c.date ? String(c.date) : '';
       if (q) {
         const matchesShop = (c.shopName || '').toLowerCase().includes(q);
         const matchesNotes = (c.notes || '').toLowerCase().includes(q);
         const matchesMethod = (c.paymentMethod || '').toLowerCase().includes(q);
         const matchesAmount = String(c.amount || '').includes(q);
-        const matchesDate = (c.date || '').includes(q);
+        const matchesDate = cDate.includes(q);
         if (!matchesShop && !matchesNotes && !matchesMethod && !matchesAmount && !matchesDate) {
           return false;
         }
       }
 
       if (dueDateFilter === 'TODAY') {
-        if (!c.date?.startsWith(todayStr)) return false;
+        if (!cDate.startsWith(todayStr)) return false;
       } else if (dueDateFilter === 'YESTERDAY') {
-        if (!c.date?.startsWith(yesterdayStr)) return false;
+        if (!cDate.startsWith(yesterdayStr)) return false;
       } else if (dueDateFilter === 'WEEK') {
-        const cDate = new Date(c.date);
-        if (cDate < sevenDaysAgo) return false;
+        if (!cDate) return false;
+        const parsedTime = new Date(cDate).getTime();
+        if (isNaN(parsedTime) || parsedTime < sevenDaysAgo.getTime()) return false;
       } else if (dueDateFilter === 'MONTH') {
-        if (c.date < monthStartStr) return false;
+        if (!cDate || cDate < monthStartStr) return false;
       }
 
       if (dueMethodFilter !== 'ALL') {
@@ -344,20 +348,20 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       }
 
       if (dueRouteFilter !== 'ALL') {
-        const shop = shopMap.get(c.shopId) || shopMap.get((c.shopName || '').trim().toLowerCase());
-        const routeName = shop?.routeArea || '';
-        if (routeName !== dueRouteFilter) return false;
+        const shop = (c.shopId ? shopMap.get(c.shopId) : undefined) || shopMap.get((c.shopName || '').trim().toLowerCase());
+        const shopRouteArea = shop?.routeArea || '';
+        if (shopRouteArea !== dueRouteFilter) return false;
       }
 
       return true;
     });
 
     if (dueSortOrder === 'OLDEST') {
-      list = [...list].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      list = [...list].sort((a, b) => (a.date ? new Date(a.date).getTime() : 0) - (b.date ? new Date(b.date).getTime() : 0));
     } else if (dueSortOrder === 'AMOUNT_DESC') {
       list = [...list].sort((a, b) => (b.amount || 0) - (a.amount || 0));
     } else {
-      list = [...list].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      list = [...list].sort((a, b) => (b.date ? new Date(b.date).getTime() : 0) - (a.date ? new Date(a.date).getTime() : 0));
     }
 
     return list;
@@ -508,6 +512,11 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   }, [routes, shops]);
 
   const [feedback, setFeedback] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null);
+
+  const showToast = useCallback((text: string, type: 'success' | 'info' | 'error' = 'success') => {
+    setFeedback({ text, type });
+    setTimeout(() => setFeedback(null), 3500);
+  }, []);
 
   // Users from Firebase
   const [firebaseUsers, setFirebaseUsers] = useState<AppUser[]>([]);
@@ -669,10 +678,10 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
   // Sync unit pack sizes when bizInfo updates from cloud
   useEffect(() => {
-    if (bizInfo.unitPackSizeDefaults && typeof bizInfo.unitPackSizeDefaults === 'object') {
+    if (bizInfo && bizInfo.unitPackSizeDefaults && typeof bizInfo.unitPackSizeDefaults === 'object') {
       setUnitPackSizes((prev) => ({ ...prev, ...bizInfo.unitPackSizeDefaults }));
     }
-  }, [bizInfo.unitPackSizeDefaults]);
+  }, [bizInfo?.unitPackSizeDefaults]);
 
   const openPackSizeModal = () => {
     setTempPackSizes({ ...unitPackSizes });
@@ -779,16 +788,19 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
   // Tool #6: Real-time Profit & Margin Calculation
   const profitAnalytics = useMemo(() => {
-    const validOrders = orders.filter((o) => {
-      if (o.deliveryStatus === 'CANCELLED') return false;
-      if (profitPeriod === 'TODAY') return o.orderDate.startsWith(todayIsoDate);
-      if (profitPeriod === 'MONTH') return o.orderDate.startsWith(currentYearMonth);
+    const validOrders = (orders || []).filter((o) => {
+      if (!o || o.deliveryStatus === 'CANCELLED') return false;
+      const oDate = o.orderDate ? String(o.orderDate) : '';
+      if (profitPeriod === 'TODAY') return oDate.startsWith(todayIsoDate);
+      if (profitPeriod === 'MONTH') return oDate.startsWith(currentYearMonth);
       return true;
     });
 
-    const periodExpenses = dailyExpenses.filter((e) => {
-      if (profitPeriod === 'TODAY') return e.date === todayIsoDate;
-      if (profitPeriod === 'MONTH') return e.date.startsWith(currentYearMonth);
+    const periodExpenses = (dailyExpenses || []).filter((e) => {
+      if (!e) return false;
+      const eDate = e.date ? String(e.date) : '';
+      if (profitPeriod === 'TODAY') return eDate === todayIsoDate;
+      if (profitPeriod === 'MONTH') return eDate.startsWith(currentYearMonth);
       return true;
     });
 
@@ -811,36 +823,43 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     >();
 
     validOrders.forEach((ord) => {
-      totalRevenue += ord.netTotal || 0;
-      totalReturns += ord.returnAmount || 0;
+      if (!ord) return;
+      totalRevenue += Number(ord.netTotal) || 0;
+      totalReturns += Number(ord.returnAmount) || 0;
 
-      ord.items.forEach((it) => {
+      const items = Array.isArray(ord.items) ? ord.items : [];
+      items.forEach((it) => {
+        if (!it) return;
         const matchedProd =
-          products.find((p) => p.id === it.productId) ||
-          products.find((p) => p.banglaName === it.productName || p.name === it.productName);
-        const unitCost = matchedProd ? matchedProd.costPrice : Math.round(it.unitPrice * 0.88);
-        const totalUnitsOut = it.quantity + (it.tradeOfferQty || 0);
+          (products || []).find((p) => p && p.id === it.productId) ||
+          (products || []).find((p) => p && ((p.banglaName && p.banglaName === it.productName) || (p.name && p.name === it.productName)));
+        const unitCost = matchedProd && typeof matchedProd.costPrice === 'number'
+          ? matchedProd.costPrice
+          : Math.round((Number(it.unitPrice) || 0) * 0.88);
+        const qty = Number(it.quantity) || 0;
+        const tradeOffer = Number(it.tradeOfferQty) || 0;
+        const totalUnitsOut = qty + tradeOffer;
         const itemCost = unitCost * totalUnitsOut;
-        const itemRev = it.lineTotal;
+        const itemRev = Number(it.lineTotal) || 0;
         const itemProfit = itemRev - itemCost;
 
         totalCostOfGoods += itemCost;
 
-        const key = it.productId || it.productName;
+        const key = it.productId || it.productName || 'unknown-item';
         const prev = productProfitMap.get(key);
         if (prev) {
-          prev.qtySold += it.quantity;
-          prev.freeQty += it.tradeOfferQty || 0;
+          prev.qtySold += qty;
+          prev.freeQty += tradeOffer;
           prev.revenue += itemRev;
           prev.cost += itemCost;
           prev.profit += itemProfit;
         } else {
           productProfitMap.set(key, {
             productId: key,
-            productName: it.productName,
-            unit: it.unit,
-            qtySold: it.quantity,
-            freeQty: it.tradeOfferQty || 0,
+            productName: it.productName || 'অজানা পণ্য',
+            unit: it.unit || 'পিস',
+            qtySold: qty,
+            freeQty: tradeOffer,
             revenue: itemRev,
             cost: itemCost,
             profit: itemProfit,
@@ -850,7 +869,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     });
 
     const grossProfit = totalRevenue - totalCostOfGoods;
-    const totalExpensesAmount = periodExpenses.reduce((s, e) => s + (e.amount || 0), 0);
+    const totalExpensesAmount = periodExpenses.reduce((s, e) => s + (Number(e?.amount) || 0), 0);
     const netProfit = grossProfit - totalExpensesAmount;
     const marginPercent = totalRevenue > 0 ? ((netProfit / totalRevenue) * 100).toFixed(1) : '0.0';
 
@@ -881,19 +900,20 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       }
     >();
 
-    authorizedEmails.forEach((ae) => {
-      const emailKey = ae.email.toLowerCase().trim();
+    (authorizedEmails || []).forEach((ae) => {
+      if (!ae || !ae.email) return;
+      const emailKey = String(ae.email).toLowerCase().trim();
       staffMap.set(emailKey, {
         email: emailKey,
         name: ae.fullName || emailKey.split('@')[0],
-        role: ae.role,
+        role: ae.role || 'sr',
         route: ae.assignedRoute || 'সব রুট',
       });
     });
 
-    firebaseUsers.forEach((u) => {
-      if (u.email && (u.role === 'sr' || u.role === 'dsr' || u.role === 'admin')) {
-        const emailKey = u.email.toLowerCase().trim();
+    (firebaseUsers || []).forEach((u) => {
+      if (u && u.email && (u.role === 'sr' || u.role === 'dsr' || u.role === 'admin')) {
+        const emailKey = String(u.email).toLowerCase().trim();
         if (!staffMap.has(emailKey)) {
           staffMap.set(emailKey, {
             email: emailKey,
@@ -905,32 +925,33 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       }
     });
 
-    const monthOrders = orders.filter(
-      (o) => o.deliveryStatus !== 'CANCELLED' && o.orderDate.startsWith(currentYearMonth)
-    );
+    const monthOrders = (orders || []).filter((o) => {
+      if (!o || o.deliveryStatus === 'CANCELLED') return false;
+      const oDate = o.orderDate ? String(o.orderDate) : '';
+      return oDate.startsWith(currentYearMonth);
+    });
 
     return Array.from(staffMap.values()).map((staff) => {
-      const targetCfg = staffTargets.find((t) => t.email.toLowerCase().trim() === staff.email);
+      const targetCfg = (staffTargets || []).find((t) => t && t.email && String(t.email).toLowerCase().trim() === staff.email);
       const monthlyTarget = targetCfg?.monthlyTargetAmount ?? (staff.role === 'sr' || staff.role === 'dsr' ? 200000 : 300000);
       const commissionPercent = targetCfg?.commissionPercent ?? (staff.role === 'sr' ? 1.5 : staff.role === 'dsr' ? 1.0 : 0);
       const shopVisitTarget = targetCfg?.shopVisitTarget ?? 50;
 
       const myOrders = monthOrders.filter((o) => {
+        if (!o) return false;
         const matchName =
-          o.bookedByName &&
-          staff.name &&
-          o.bookedByName.toLowerCase().includes(staff.name.toLowerCase());
+          Boolean(o.bookedByName && staff.name && String(o.bookedByName).toLowerCase().includes(staff.name.toLowerCase()));
         const matchRoleOnly =
           staffMap.size <= 2 && o.bookedByRole === staff.role;
         return matchName || matchRoleOnly;
       });
 
-      const totalSales = myOrders.reduce((s, o) => s + (o.netTotal || 0), 0);
+      const totalSales = myOrders.reduce((s, o) => s + (Number(o?.netTotal) || 0), 0);
       const totalCashCollected = myOrders.reduce(
-        (s, o) => s + (o.deliveryStatus === 'DELIVERED' ? o.paidAmount || 0 : 0),
+        (s, o) => s + (o?.deliveryStatus === 'DELIVERED' ? Number(o?.paidAmount) || 0 : 0),
         0
       );
-      const uniqueShopsVisited = new Set(myOrders.map((o) => o.shopId || o.shopName)).size;
+      const uniqueShopsVisited = new Set(myOrders.map((o) => o?.shopId || o?.shopName || 'unknown')).size;
       const achievementPercent =
         monthlyTarget > 0 ? Math.min(100, Math.round((totalSales / monthlyTarget) * 100)) : 0;
       const commissionEarned = Math.round((totalSales * commissionPercent) / 100);
@@ -949,11 +970,6 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       };
     });
   }, [authorizedEmails, firebaseUsers, orders, staffTargets, currentYearMonth]);
-
-  const showToast = (text: string, type: 'success' | 'info' | 'error' = 'success') => {
-    setFeedback({ text, type });
-    setTimeout(() => setFeedback(null), 3500);
-  };
 
   // Load Users from Firebase
   const loadFirebaseUsers = async () => {
@@ -1651,7 +1667,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       {subTab === 'overview' && (
         <div className="space-y-5 animate-fadeIn">
           {/* Mock Data Alert Banner */}
-          {products.some(p => p.id.startsWith('prod-')) && onCleanAllMockData && (
+          {(products || []).some(p => p && p.id && String(p.id).startsWith('prod-')) && onCleanAllMockData && (
             <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
               <div className="flex items-center gap-2">
                 <span className="text-base">💡</span>
@@ -4122,11 +4138,11 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
       {/* SUB-TAB DUE HISTORY & SHOP DUES BULK DELETE / ZERO RESET */}
       {subTab === 'due_history' && (() => {
-        const totalDueCollectedAll = dueCollections.reduce((sum, c) => sum + (c.amount || 0), 0);
-        const cashTotal = dueCollections.filter((c) => c.paymentMethod === 'CASH').reduce((sum, c) => sum + (c.amount || 0), 0);
-        const digitalTotal = dueCollections.filter((c) => c.paymentMethod !== 'CASH').reduce((sum, c) => sum + (c.amount || 0), 0);
+        const totalDueCollectedAll = (dueCollections || []).reduce((sum, c) => sum + (Number(c?.amount) || 0), 0);
+        const cashTotal = (dueCollections || []).filter((c) => c && c.paymentMethod === 'CASH').reduce((sum, c) => sum + (Number(c?.amount) || 0), 0);
+        const digitalTotal = (dueCollections || []).filter((c) => c && c.paymentMethod !== 'CASH').reduce((sum, c) => sum + (Number(c?.amount) || 0), 0);
         const todayStr = new Date().toISOString().split('T')[0];
-        const todayTotal = dueCollections.filter((c) => c.date?.startsWith(todayStr)).reduce((sum, c) => sum + (c.amount || 0), 0);
+        const todayTotal = (dueCollections || []).filter((c) => c && c.date && String(c.date).startsWith(todayStr)).reduce((sum, c) => sum + (Number(c?.amount) || 0), 0);
 
         // Shop Dues calculations
         const totalMarketDue = shops.reduce((sum, s) => sum + (s.previousDue || 0), 0);

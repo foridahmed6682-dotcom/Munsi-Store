@@ -3,6 +3,8 @@ import { AlertTriangle, RefreshCw, Trash2, Home } from 'lucide-react';
 
 interface Props {
   children: ReactNode;
+  fallback?: (error: Error, reset: () => void) => ReactNode;
+  onReset?: () => void;
 }
 
 interface State {
@@ -27,6 +29,11 @@ export class ErrorBoundary extends Component<Props, State> {
     this.setState({ errorInfo });
   }
 
+  private handleReset = () => {
+    this.setState({ hasError: false, error: null, errorInfo: null });
+    this.props.onReset?.();
+  };
+
   private handleReload = () => {
     window.location.reload();
   };
@@ -48,6 +55,9 @@ export class ErrorBoundary extends Component<Props, State> {
 
   public render() {
     if (this.state.hasError) {
+      if (this.props.fallback && this.state.error) {
+        return this.props.fallback(this.state.error, this.handleReset);
+      }
       return (
         <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
           <div className="max-w-md w-full bg-white rounded-2xl shadow-xl border border-slate-200 p-6 text-center">

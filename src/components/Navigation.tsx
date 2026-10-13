@@ -121,7 +121,7 @@ export const Navigation: React.FC<NavigationProps> = ({
 
   const visibleTabs = staffTabs.filter((t) => {
     if (t.id === 'admin') {
-      return isLoggedIn && userRole === 'admin';
+      return userRole === 'admin';
     }
     return t.roles ? t.roles.includes(userRole) : false;
   });

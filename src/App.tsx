@@ -138,6 +138,7 @@ import { OrdersListView } from './components/OrdersListView';
 import { ShopsListView } from './components/ShopsListView';
 import { InventoryView } from './components/InventoryView';
 import { RouteMapView } from './components/RouteMapView';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { AdminDashboardView } from './components/AdminDashboardView';
 import { MemoModal } from './components/MemoModal';
 import { DeleteConfirmModal, DeletePermissionRequest } from './components/DeleteConfirmModal';
@@ -157,7 +158,7 @@ import {
   BusinessInfo,
   ReturnedOrderItem
 } from './types';
-import { CheckCircle2, AlertCircle, ExternalLink, LogIn, Lock } from 'lucide-react';
+import { CheckCircle2, AlertCircle, ExternalLink, LogIn, Lock, AlertTriangle, RefreshCw, Trash2 } from 'lucide-react';
 import { usePWAInstall } from './hooks/usePWAInstall';
 import { notifyNewOrderPush } from './lib/pushService';
 import {
@@ -233,10 +234,10 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  // Guard against unauthorized tabs
+  // Tab sync and role alignment
   useEffect(() => {
     if (activeTab === 'admin' && activeSimulatedRole !== 'admin') {
-      setActiveTab('order');
+      setActiveSimulatedRole('admin');
     }
     if (activeSimulatedRole !== 'customer' && (activeTab === 'cart' || activeTab === 'account')) {
       setActiveTab('order');
@@ -2566,11 +2567,25 @@ export default function App() {
         }}
         onSwitchRole={(role) => {
           setActiveSimulatedRole(role);
+          if (role === 'admin') {
+            setActiveTab('admin');
+          } else if (activeTab === 'admin') {
+            setActiveTab('order');
+          }
           showToast(`${role === 'admin' ? 'এডমিন' : role === 'sr' ? 'এসআর' : 'ডিএসআর'} রোল প্যানেল সক্রিয়`, 'info');
         }}
-        onOpenAdmin={() => setActiveTab('admin')}
+        onOpenAdmin={() => {
+          setActiveSimulatedRole('admin');
+          setActiveTab('admin');
+          showToast('এডমিন কন্ট্রোল প্যানেল সক্রিয়', 'success');
+        }}
         activeTab={activeTab}
-        onSelectTab={(tab) => setActiveTab(tab)}
+        onSelectTab={(tab) => {
+          if (tab === 'admin') {
+            setActiveSimulatedRole('admin');
+          }
+          setActiveTab(tab);
+        }}
         isPushSubscribed={isPushSubscribed}
         onOpenNotificationModal={() => setIsNotificationModalOpen(true)}
         onLogout={handleLogout}
@@ -2600,10 +2615,15 @@ export default function App() {
       {/* Navigation Tabs (Sticky Desktop + Mobile Bottom) */}
       <Navigation
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={(tab) => {
+          if (tab === 'admin') {
+            setActiveSimulatedRole('admin');
+          }
+          setActiveTab(tab);
+        }}
         cartCount={cartCount}
         userRole={activeSimulatedRole}
-        isLoggedIn={!!userProfile}
+        isLoggedIn={!!userProfile || activeSimulatedRole === 'admin'}
         isPushSubscribed={isPushSubscribed}
         onOpenNotificationModal={() => setIsNotificationModalOpen(true)}
       />
@@ -2773,8 +2793,56 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'admin' && activeSimulatedRole === 'admin' && (
-              <AdminDashboardView
+            {activeTab === 'admin' && (
+              <ErrorBoundary
+                fallback={(error, reset) => (
+                  <div className="bg-white rounded-3xl border border-red-200 shadow-xl p-6 sm:p-8 text-center max-w-lg mx-auto my-8">
+                    <div className="w-14 h-14 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <AlertTriangle className="w-7 h-7" />
+                    </div>
+                    <h3 className="text-lg font-black text-slate-800 mb-2">
+                      এডমিন প্যানেল লোড হতে সাময়িক সমস্যা হয়েছে
+                    </h3>
+                    <p className="text-xs text-slate-600 mb-4 leading-relaxed">
+                      এডমিন প্যানেলের কোনো একটি ডেটা ফরম্যাটে অসঙ্গতি থাকায় এটি লোড হতে পারেনি। নিচের বাটনে ক্লিক করে পুনরায় চেষ্টা করুন অথবা নিরাপদ মোডে রিফ্রেশ দিন।
+                    </p>
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-left mb-5 overflow-hidden">
+                      <p className="text-[11px] font-mono text-red-700 truncate">
+                        {error.message || 'Unknown admin dashboard error'}
+                      </p>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <button
+                        type="button"
+                        onClick={reset}
+                        className="w-full py-2.5 px-4 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl font-bold text-xs transition cursor-pointer shadow-sm active:scale-95 flex items-center justify-center gap-2"
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                        <span>পুনরায় চেষ্টা করুন (Try Again)</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          sessionStorage.clear();
+                          window.location.reload();
+                        }}
+                        className="w-full py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition cursor-pointer flex items-center justify-center gap-2"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        <span>ক্যাশ ক্লিন করে রিফ্রেশ দিন</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('order')}
+                        className="w-full py-2 px-4 text-slate-500 hover:text-slate-800 rounded-xl text-xs font-semibold transition cursor-pointer"
+                      >
+                        মূল পাতায় ফিরে যান
+                      </button>
+                    </div>
+                  </div>
+                )}
+              >
+                <AdminDashboardView
                 products={products}
                 shops={shops}
                 orders={orders}
@@ -2849,6 +2917,7 @@ export default function App() {
                 onRequestDeletePermission={requestDeletePermission}
                 onForceDeepCloudRecovery={handleForceCloudRecovery}
               />
+              </ErrorBoundary>
             )}
           </>
         )}
