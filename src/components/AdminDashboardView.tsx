@@ -546,40 +546,6 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [lightboxProduct, setLightboxProduct] = useState<Product | null>(null);
 
-  // Configurable Default Pack Sizes (পাতা: ১০, বক্স: ২৪, প্যাকেট: ১২ ইত্যাদি যা এডমিন যেকোনো সময় পরিবর্তন করতে পারবে)
-  const [unitPackSizes, setUnitPackSizes] = useState<Record<string, number>>(() => getUnitPackSizeDefaults());
-  const [isPackSizeModalOpen, setIsPackSizeModalOpen] = useState(false);
-  const [tempPackSizes, setTempPackSizes] = useState<Record<string, number>>({});
-  const [newCustomUnitName, setNewCustomUnitName] = useState('');
-  const [newCustomUnitPieces, setNewCustomUnitPieces] = useState('');
-
-  // Sync unit pack sizes when bizInfo updates from cloud
-  useEffect(() => {
-    if (bizInfo.unitPackSizeDefaults && typeof bizInfo.unitPackSizeDefaults === 'object') {
-      setUnitPackSizes((prev) => ({ ...prev, ...bizInfo.unitPackSizeDefaults }));
-    }
-  }, [bizInfo.unitPackSizeDefaults]);
-
-  const openPackSizeModal = () => {
-    setTempPackSizes({ ...unitPackSizes });
-    setNewCustomUnitName('');
-    setNewCustomUnitPieces('');
-    setIsPackSizeModalOpen(true);
-  };
-
-  const handleSavePackSizes = (updatedSizes: Record<string, number>) => {
-    setUnitPackSizes(updatedSizes);
-    saveUnitPackSizeDefaults(updatedSizes);
-    setBizInfo((prev) => {
-      const updated = { ...prev, unitPackSizeDefaults: updatedSizes };
-      saveBusinessInfoLocal(updated);
-      saveBusinessInfoToCloud(updated).catch(() => {});
-      return updated;
-    });
-    showToast('একক ও প্যাক সাইজ ডিফল্ট কনফিগারেশন সফলভাবে আপডেট ও সংরক্ষিত হয়েছে!', 'success');
-    setIsPackSizeModalOpen(false);
-  };
-
   const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     // Reset input value so selecting the same or another file always fires onChange
@@ -685,6 +651,70 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   // Business Info Settings State
   const [bizInfo, setBizInfo] = useState<BusinessInfo>(getBusinessInfo());
   const [isSavingBiz, setIsSavingBiz] = useState(false);
+
+  // Configurable Default Pack Sizes (পাতা: ১০, বক্স: ২৪, প্যাকেট: ১২ ইত্যাদি যা এডমিন যেকোনো সময় পরিবর্তন করতে পারবে)
+  const [unitPackSizes, setUnitPackSizes] = useState<Record<string, number>>(() => getUnitPackSizeDefaults());
+  const [isPackSizeModalOpen, setIsPackSizeModalOpen] = useState(false);
+  const [tempPackSizes, setTempPackSizes] = useState<Record<string, number>>({});
+  const [newCustomUnitName, setNewCustomUnitName] = useState('');
+  const [newCustomUnitPieces, setNewCustomUnitPieces] = useState('');
+
+  // Sync unit pack sizes when bizInfo updates from cloud
+  useEffect(() => {
+    if (bizInfo.unitPackSizeDefaults && typeof bizInfo.unitPackSizeDefaults === 'object') {
+      setUnitPackSizes((prev) => ({ ...prev, ...bizInfo.unitPackSizeDefaults }));
+    }
+  }, [bizInfo.unitPackSizeDefaults]);
+
+  const openPackSizeModal = () => {
+    setTempPackSizes({ ...unitPackSizes });
+    setNewCustomUnitName('');
+    setNewCustomUnitPieces('');
+    setIsPackSizeModalOpen(true);
+  };
+
+  const handleSavePackSizes = (updatedSizes: Record<string, number>) => {
+    setUnitPackSizes(updatedSizes);
+    saveUnitPackSizeDefaults(updatedSizes);
+    setBizInfo((prev) => {
+      const updated = { ...prev, unitPackSizeDefaults: updatedSizes };
+      saveBusinessInfoLocal(updated);
+      saveBusinessInfoToCloud(updated).catch(() => {});
+      return updated;
+    });
+    showToast('একক ও প্যাক সাইজ ডিফল্ট কনফিগারেশন সফলভাবে আপডেট ও সংরক্ষিত হয়েছে!', 'success');
+    setIsPackSizeModalOpen(false);
+  };
+
+  const handleAddCustomPackSizeUnit = () => {
+    const unitName = newCustomUnitName.trim();
+    const count = parseInt(newCustomUnitPieces.trim(), 10);
+    if (!unitName) {
+      showToast('এককের নাম লিখুন', 'error');
+      return;
+    }
+    if (isNaN(count) || count <= 0) {
+      showToast('সঠিক পিস সংখ্যা লিখুন (যেমন: ১০ বা ১২)', 'error');
+      return;
+    }
+    setTempPackSizes((prev) => ({ ...prev, [unitName]: count }));
+    setNewCustomUnitName('');
+    setNewCustomUnitPieces('');
+    showToast(`'${unitName}' একক যোগ হয়েছে!`, 'success');
+  };
+
+  const handleRemoveCustomPackSizeUnit = (unitName: string) => {
+    setTempPackSizes((prev) => {
+      const copy = { ...prev };
+      delete copy[unitName];
+      return copy;
+    });
+  };
+
+  const handleResetPackSizesToDefault = () => {
+    setTempPackSizes({ ...DEFAULT_UNIT_PACK_SIZES });
+    showToast('ডিফল্ট প্যাক সাইজ রিসেট করা হয়েছে', 'info');
+  };
 
   // IndexedDB Settings Storage Stats & 1-Click Refresh State
   const [idbSettingsStats, setIdbSettingsStats] = useState<{
@@ -1176,7 +1206,8 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     setShowQuickAddSupplier(false);
     setQuickSupplierName('');
     setProdUnit('কার্টুন');
-    setProdPiecesPerUnit('24');
+    const defaultCartonPieces = unitPackSizes['কার্টুন'] || 24;
+    setProdPiecesPerUnit(String(defaultCartonPieces));
     setProdUnitPrice('');
     setProdDiscountPrice('');
     setProdCostPrice('');
@@ -1199,7 +1230,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     setShowQuickAddSupplier(false);
     setQuickSupplierName('');
     setProdUnit(prod.unit || 'কার্টুন');
-    setProdPiecesPerUnit(prod.piecesPerUnit ? prod.piecesPerUnit.toString() : (prod.unit === 'ডজন' ? '12' : ''));
+    const editPieces = prod.piecesPerUnit
+      ? prod.piecesPerUnit.toString()
+      : prod.unit && unitPackSizes[prod.unit]
+      ? String(unitPackSizes[prod.unit])
+      : prod.unit === 'ডজন'
+      ? '12'
+      : '';
+    setProdPiecesPerUnit(editPieces);
     setProdUnitPrice(prod.unitPrice !== undefined && prod.unitPrice !== null ? prod.unitPrice.toString() : '');
     setProdDiscountPrice(prod.discountPrice !== undefined && prod.discountPrice !== null ? prod.discountPrice.toString() : '');
     setProdCostPrice(prod.costPrice !== undefined && prod.costPrice !== null ? prod.costPrice.toString() : '');
@@ -2509,6 +2547,16 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                     <span>সকল ডেমো ডাটা মুছুন</span>
                   </button>
                 )}
+
+                <button
+                  type="button"
+                  onClick={openPackSizeModal}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 font-bold text-xs shadow-2xs transition-all cursor-pointer"
+                  title="পাতা, বক্স, প্যাকেট ইত্যাদির ডিফল্ট পিস সংখ্যা এডিট করুন"
+                >
+                  <Settings className="w-4 h-4 text-indigo-600" />
+                  <span>⚙️ প্যাক সাইজ ডিফল্ট</span>
+                </button>
 
                 <button
                   onClick={openCreateProductModal}
@@ -5703,32 +5751,26 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                       onChange={(e) => {
                         const newUnit = e.target.value;
                         setProdUnit(newUnit);
-                        if (newUnit === 'ডজন') {
-                          setProdPiecesPerUnit('12');
-                        } else if (newUnit === 'পাতা' && (!prodPiecesPerUnit || prodPiecesPerUnit === '12')) {
-                          setProdPiecesPerUnit('10');
-                        } else if (newUnit === 'বক্স' && (!prodPiecesPerUnit || prodPiecesPerUnit === '12' || prodPiecesPerUnit === '10')) {
-                          setProdPiecesPerUnit('24');
-                        } else if (newUnit === 'প্যাকেট' && (!prodPiecesPerUnit || prodPiecesPerUnit === '12' || prodPiecesPerUnit === '24')) {
-                          setProdPiecesPerUnit('12');
-                        } else if (newUnit === 'কার্টুন' && (!prodPiecesPerUnit || prodPiecesPerUnit === '12' || prodPiecesPerUnit === '24')) {
-                          setProdPiecesPerUnit('24');
-                        } else if (newUnit === 'পিস') {
+                        if (newUnit === 'পিস') {
                           setProdPiecesPerUnit('1');
+                        } else {
+                          const configured = unitPackSizes[newUnit];
+                          if (configured !== undefined && configured > 0) {
+                            setProdPiecesPerUnit(String(configured));
+                          } else if (newUnit === 'ডজন') {
+                            setProdPiecesPerUnit('12');
+                          } else {
+                            setProdPiecesPerUnit('');
+                          }
                         }
                       }}
                       className="w-full px-2.5 py-2.5 rounded-xl border border-neutral-300 text-xs bg-white focus:outline-none focus:border-emerald-600 font-medium"
                     >
-                      <option value="কার্টুন">কার্টুন</option>
-                      <option value="পিস">পিস</option>
-                      <option value="ডজন">ডজন</option>
-                      <option value="বক্স">বক্স</option>
-                      <option value="পাতা">পাতা</option>
-                      <option value="প্যাকেট">প্যাকেট</option>
-                      <option value="বস্তা">বস্তা</option>
-                      <option value="বোতল">বোতল</option>
-                      <option value="কেজি">কেজি</option>
-                      <option value="লিটার">লিটার</option>
+                      {Array.from(new Set(['কার্টুন', 'পিস', 'ডজন', 'বক্স', 'পাতা', 'প্যাকেট', 'বস্তা', 'বোতল', 'কেজি', 'লিটার', ...Object.keys(unitPackSizes)])).map((u) => (
+                        <option key={u} value={u}>
+                          {u}
+                        </option>
+                      ))}
                     </select>
                   </div>
 
@@ -5748,9 +5790,20 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 {prodUnit !== 'পিস' && (
                   <div className="bg-emerald-50/80 border border-emerald-200/90 rounded-2xl p-3 animate-in fade-in">
                     <div className="flex flex-wrap items-center justify-between gap-1 mb-1.5">
-                      <label className="block text-xs font-extrabold text-emerald-950">
-                        📦 প্রতি {prodUnit}-এ কত পিস থাকে? (পিস সংখ্যা / Pack Size) <span className="text-rose-500">*</span>
-                      </label>
+                      <div className="flex items-center gap-2">
+                        <label className="block text-xs font-extrabold text-emerald-950">
+                          📦 প্রতি {prodUnit}-এ কত পিস থাকে? (পিস সংখ্যা / Pack Size) <span className="text-rose-500">*</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={openPackSizeModal}
+                          className="text-[10px] font-bold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded-lg border border-indigo-200 cursor-pointer flex items-center gap-1 transition-colors"
+                          title="এডমিন প্যানেল থেকে ডিফল্ট প্যাক সাইজ এডিট করুন"
+                        >
+                          <Settings className="w-2.5 h-2.5 text-indigo-600" />
+                          <span>⚙️ ডিফল্ট এডিট</span>
+                        </button>
+                      </div>
                       {parseBanglaNumber(prodPiecesPerUnit, 0) > 0 && parseBanglaNumber(prodUnitPrice, 0) > 0 && (
                         <span className="text-[11px] font-black text-emerald-900 bg-white px-2 py-0.5 rounded-md border border-emerald-300 shadow-2xs">
                           💡 ১ পিসের বিক্রয়মূল্য: ৳{(parseBanglaNumber(prodUnitPrice, 0) / parseBanglaNumber(prodPiecesPerUnit, 1)).toFixed(2)}
@@ -6230,6 +6283,165 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         product={lightboxProduct}
         onClose={() => setLightboxProduct(null)}
       />
+
+      {/* PACK SIZES CONFIGURATION MODAL */}
+      {isPackSizeModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-neutral-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl border border-neutral-200 overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95">
+            {/* Modal Header */}
+            <div className="px-5 py-4 bg-gradient-to-r from-indigo-700 via-indigo-800 to-purple-800 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-white/15 rounded-xl">
+                  <Settings className="w-5 h-5 text-indigo-200" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm sm:text-base leading-tight">
+                    একক ও প্যাক সাইজ সেটিংস (Pack Sizes)
+                  </h3>
+                  <p className="text-[11px] text-indigo-200 leading-tight mt-0.5">
+                    একক সিলেক্ট করলে স্বয়ংক্রিয়ভাবে সাজেস্ট করা পিস সংখ্যা
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsPackSizeModalOpen(false)}
+                className="p-1.5 rounded-lg text-white/80 hover:text-white hover:bg-white/20 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 overflow-y-auto space-y-4">
+              <div className="bg-indigo-50/70 border border-indigo-200/80 rounded-xl p-3 text-xs text-indigo-950 leading-relaxed">
+                💡 <span className="font-bold">নিয়ম:</span> পণ্য যোগ করার সময়ে একক নির্বাচন করলে এখানে থাকা সংখ্যা অনুযায়ী পিস স্বয়ংক্রিয়ভাবে সাজেস্ট হবে। যেমন: <strong>পাতা ১০</strong>, <strong>বক্স ২৪</strong>, <strong>প্যাকেট ১২</strong>, <strong>ডজন ১২</strong>। অ্যাডমিন যেকোনো সময় এই প্যানেল থেকে তা পরিবর্তন করতে পারেন।
+              </div>
+
+              {/* Units List */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold text-neutral-600 px-1">
+                  <span>এককের নাম (Unit)</span>
+                  <span>প্রতি এককে পিস সংখ্যা</span>
+                </div>
+                <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto pr-1">
+                  {Object.entries(tempPackSizes).map(([uName, pieces]) => (
+                    <div
+                      key={uName}
+                      className="flex items-center justify-between gap-3 p-2.5 bg-neutral-50 hover:bg-neutral-100/70 border border-neutral-200 rounded-xl transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-800 flex items-center justify-center font-black text-xs">
+                          {uName === 'পাতা' ? '🍃' : uName === 'বক্স' ? '📦' : uName === 'প্যাকেট' ? '🛍️' : uName === 'ডজন' ? '🥚' : '📦'}
+                        </span>
+                        <div>
+                          <span className="font-bold text-neutral-800 text-xs sm:text-sm">
+                            {uName}
+                          </span>
+                          {DEFAULT_UNIT_PACK_SIZES[uName] !== undefined && (
+                            <span className="ml-1.5 text-[10px] text-neutral-400 font-medium">
+                              (ডিফল্ট {DEFAULT_UNIT_PACK_SIZES[uName]})
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min="1"
+                          value={pieces}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value, 10);
+                            setTempPackSizes((prev) => ({
+                              ...prev,
+                              [uName]: isNaN(val) ? 0 : val,
+                            }));
+                          }}
+                          className="w-20 px-2 py-1.5 text-center font-bold text-xs bg-white border border-neutral-300 rounded-lg focus:outline-none focus:border-indigo-600 text-neutral-900"
+                        />
+                        <span className="text-xs font-semibold text-neutral-500 w-7">পিস</span>
+                        {!['পাতা', 'বক্স', 'প্যাকেট', 'ডজন', 'কার্টুন'].includes(uName) && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveCustomPackSizeUnit(uName)}
+                            className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                            title="মুছে ফেলুন"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Add New Unit Form */}
+              <div className="p-3 bg-neutral-50 border border-dashed border-neutral-300 rounded-xl space-y-2">
+                <span className="text-xs font-bold text-neutral-700 flex items-center gap-1">
+                  <Plus className="w-3.5 h-3.5 text-indigo-600" /> নতুন কোনো একক যোগ করতে চান?
+                </span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    placeholder="একক নাম (যেমন: বান্ডিল, স্ট্রিপ)"
+                    value={newCustomUnitName}
+                    onChange={(e) => setNewCustomUnitName(e.target.value)}
+                    className="flex-1 px-2.5 py-1.5 bg-white border border-neutral-300 rounded-lg text-xs font-medium text-neutral-900 focus:outline-none focus:border-indigo-600"
+                  />
+                  <input
+                    type="number"
+                    min="1"
+                    placeholder="পিস সংখ্যা"
+                    value={newCustomUnitPieces}
+                    onChange={(e) => setNewCustomUnitPieces(e.target.value)}
+                    className="w-24 px-2.5 py-1.5 bg-white border border-neutral-300 rounded-lg text-xs font-bold text-center text-neutral-900 focus:outline-none focus:border-indigo-600"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddCustomPackSizeUnit}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shrink-0 transition-colors cursor-pointer"
+                  >
+                    যোগ
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-5 py-3 bg-neutral-50 border-t border-neutral-200 flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={handleResetPackSizesToDefault}
+                className="text-xs font-bold text-neutral-600 hover:text-neutral-900 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg hover:bg-neutral-200 transition-colors cursor-pointer"
+                title="মূল ডিফল্টে ফেরত যান"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>রিসেট ডিফল্ট</span>
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsPackSizeModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-neutral-600 hover:bg-neutral-200 transition-colors cursor-pointer"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSavePackSizes(tempPackSizes)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-700 hover:bg-indigo-800 text-white shadow-sm flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>সংরক্ষণ করুন</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

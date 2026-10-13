@@ -252,6 +252,11 @@ export const CustomerProductDetailsView: React.FC<ProductDetailsProps> = ({
                     </span>
                   )}
                 </div>
+                {product.unit !== 'পিস' && product.piecesPerUnit && product.piecesPerUnit > 1 && (
+                  <div className="mt-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md inline-block border border-emerald-200">
+                    💡 ১ পিস = ৳{(effectivePrice / product.piecesPerUnit).toFixed(2)} (১ {product.unit}-এ {product.piecesPerUnit} পিস)
+                  </div>
+                )}
               </div>
               <span
                 className={`text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider ${
