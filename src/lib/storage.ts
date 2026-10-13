@@ -49,6 +49,7 @@ const STORAGE_KEYS = {
   UNIT_PACK_SIZE_DEFAULTS: 'dsr_unit_pack_sizes_v1',
 };
 
+// Default pack sizes (পাতা ১০, বক্স ২৪, প্যাকেট ১২, ডজন ১২, কার্টুন ২৪ ইত্যাদি)
 export const DEFAULT_UNIT_PACK_SIZES: Record<string, number> = {
   'পাতা': 10,
   'বক্স': 24,

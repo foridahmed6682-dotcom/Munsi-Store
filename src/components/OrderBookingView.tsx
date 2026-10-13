@@ -281,8 +281,7 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
     return Array.from(new Set(list));
   };
 
-  // Helper to calculate default price for chosen unit
-  // "ড্রপডাউন বক্সে সেই অনুযায়ী ১ পিসের দাম ও বসবে"
+  // Helper to calculate default price for chosen unit (ড্রপডাউন বক্সে সেই অনুযায়ী ১ পিসের দাম ও অন্যান্য এককের দর বসবে)
   const getDefaultPriceForUnit = (prod: Product, targetUnit: string): number => {
     const baseUnit = prod.unit || 'পিস';
     const piecesPerBase =

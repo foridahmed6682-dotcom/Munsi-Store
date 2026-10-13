@@ -652,7 +652,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [bizInfo, setBizInfo] = useState<BusinessInfo>(getBusinessInfo());
   const [isSavingBiz, setIsSavingBiz] = useState(false);
 
-  // Configurable Default Pack Sizes (পাতা: ১০, বক্স: ২৪, প্যাকেট: ১২ ইত্যাদি যা এডমিন যেকোনো সময় পরিবর্তন করতে পারবে)
+  // Configurable Default Pack Sizes (পাতা: ১০, বক্স: ২৪, প্যাকেট: ১২, ডজন: ১২ ইত্যাদি যা এডমিন যেকোনো সময় পরিবর্তন করতে পারবে)
   const [unitPackSizes, setUnitPackSizes] = useState<Record<string, number>>(() => getUnitPackSizeDefaults());
   const [isPackSizeModalOpen, setIsPackSizeModalOpen] = useState(false);
   const [tempPackSizes, setTempPackSizes] = useState<Record<string, number>>({});
