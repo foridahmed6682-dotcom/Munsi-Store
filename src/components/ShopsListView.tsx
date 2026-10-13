@@ -25,8 +25,7 @@ import {
 } from 'lucide-react';
 import { Shop, PaymentMethod, Route, Order, DueCollectionRecord } from '../types';
 import { AddShopModal } from './AddShopModal';
-import { getBusinessInfo } from '../lib/firebase';
-import { parseBanglaNumber } from '../lib/storage';
+import { getBusinessInfo, parseBanglaNumber } from '../lib/storage';
 import { printShopsBatch } from '../lib/printService';
 
 interface ShopsListViewProps {

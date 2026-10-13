@@ -34,8 +34,7 @@ import {
   Scissors
 } from 'lucide-react';
 import { Order, Shop, PaymentMethod, DueCollectionRecord, DailyExpenseRecord, Product, Supplier, ReturnedOrderItem } from '../types';
-import { getBusinessInfo } from '../lib/firebase';
-import { getProducts } from '../lib/storage';
+import { getBusinessInfo, getProducts } from '../lib/storage';
 import { OrderPrintMode, PrintOrientation, printOrdersBatch } from '../lib/printService';
 
 interface OrdersListViewProps {

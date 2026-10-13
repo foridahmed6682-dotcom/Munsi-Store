@@ -8,8 +8,7 @@ import {
   DueCollectionRecord,
   AuthorizedUserEmail
 } from '../types';
-import { getBusinessInfo } from './firebase';
-import { getProducts } from './storage';
+import { getProducts, getBusinessInfo } from './storage';
 
 function escapeHtml(str: any): string {
   if (str === null || str === undefined) return '';

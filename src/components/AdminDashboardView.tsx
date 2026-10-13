@@ -71,7 +71,7 @@ import {
   StaffTargetConfig
 } from '../types';
 import { processImageFile } from '../lib/imageUtils';
-import { fetchAllUsers, updateUserRoleAndRoute, getBusinessInfo, saveBusinessInfoToCloud, subscribeToCloudBusinessInfo } from '../lib/firebase';
+import { fetchAllUsers, updateUserRoleAndRoute, saveBusinessInfoToCloud, subscribeToCloudBusinessInfo } from '../lib/firebase';
 import {
   saveBusinessInfoLocal,
   DEFAULT_BUSINESS_INFO,
@@ -79,6 +79,7 @@ import {
   addOrUpdateSupplier,
   getProducts,
   saveProducts,
+  getBusinessInfo,
   getUnitPackSizeDefaults,
   saveUnitPackSizeDefaults,
   DEFAULT_UNIT_PACK_SIZES
@@ -649,11 +650,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   };
 
   // Business Info Settings State
-  const [bizInfo, setBizInfo] = useState<BusinessInfo>(getBusinessInfo());
+  const [bizInfo, setBizInfo] = useState<BusinessInfo>(() => getBusinessInfo() || DEFAULT_BUSINESS_INFO);
   const [isSavingBiz, setIsSavingBiz] = useState(false);
 
   // Configurable Default Pack Sizes (পাতা: ১০, বক্স: ২৪, প্যাকেট: ১২, ডজন: ১২ ইত্যাদি যা এডমিন যেকোনো সময় পরিবর্তন করতে পারবে)
-  const [unitPackSizes, setUnitPackSizes] = useState<Record<string, number>>(() => getUnitPackSizeDefaults());
+  const [unitPackSizes, setUnitPackSizes] = useState<Record<string, number>>(() => {
+    try {
+      const defaults = getUnitPackSizeDefaults();
+      return defaults && typeof defaults === 'object' ? defaults : DEFAULT_UNIT_PACK_SIZES;
+    } catch {
+      return DEFAULT_UNIT_PACK_SIZES;
+    }
+  });
   const [isPackSizeModalOpen, setIsPackSizeModalOpen] = useState(false);
   const [tempPackSizes, setTempPackSizes] = useState<Record<string, number>>({});
   const [newCustomUnitName, setNewCustomUnitName] = useState('');

@@ -16,7 +16,7 @@ import {
   Scissors
 } from 'lucide-react';
 import { Order, OrderItem, Product } from '../types';
-import { getBusinessInfo } from '../lib/firebase';
+import { getBusinessInfo } from '../lib/storage';
 import { PrintOrientation, printOrdersBatch } from '../lib/printService';
 
 interface MemoModalProps {

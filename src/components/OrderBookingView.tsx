@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { Product, Shop, OrderItem, PaymentMethod, Route, Order, ReturnedOrderItem } from '../types';
 import { AddShopModal } from './AddShopModal';
-import { getBusinessInfo } from '../lib/firebase';
+import { getBusinessInfo } from '../lib/storage';
 import { ProductImageLightboxModal } from './ProductImageLightboxModal';
 
 interface OrderBookingViewProps {
