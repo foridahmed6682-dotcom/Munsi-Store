@@ -183,28 +183,33 @@ export const AdminDeleteCenter: React.FC<AdminDeleteCenterProps> = ({
           .filter(
             (o) =>
               !q ||
-              o.memoNumber.toLowerCase().includes(q) ||
-              o.shopName.toLowerCase().includes(q) ||
+              (o.memoNumber || '').toLowerCase().includes(q) ||
+              (o.shopName || '').toLowerCase().includes(q) ||
               (o.shopPhone || '').toLowerCase().includes(q)
           )
-          .map((o) => ({
-            id: o.id,
-            title: `মেমো #${o.memoNumber} — ${o.shopName}`,
-            subtitle: `তারিখ: ${new Date(o.orderDate).toLocaleDateString('en-GB')} • মোট বিল: ৳${o.netTotal.toLocaleString()} • আইটেম: ${o.items.length}টি`,
-            badge: o.deliveryStatus === 'DELIVERED' ? 'ডেলিভার্ড' : 'অপেক্ষমান',
-          }));
+          .map((o) => {
+            const bill = Number(o.netTotal ?? (o as any).totalAmount ?? o.subTotal ?? 0);
+            const itemsLen = Array.isArray(o.items) ? o.items.length : 0;
+            const dateStr = o.orderDate ? new Date(o.orderDate).toLocaleDateString('en-GB') : '—';
+            return {
+              id: o.id,
+              title: `মেমো #${o.memoNumber || o.id || 'N/A'} — ${o.shopName || 'দোকান'}`,
+              subtitle: `তারিখ: ${dateStr} • মোট বিল: ৳${bill.toLocaleString()} • আইটেম: ${itemsLen}টি`,
+              badge: o.deliveryStatus === 'DELIVERED' ? 'ডেলিভার্ড' : 'অপেক্ষমান',
+            };
+          });
       case 'categories':
         return categories
           .filter(
             (c) =>
               !q ||
-              c.banglaName.toLowerCase().includes(q) ||
-              c.name.toLowerCase().includes(q)
+              (c.banglaName || '').toLowerCase().includes(q) ||
+              (c.name || '').toLowerCase().includes(q)
           )
           .map((c) => ({
             id: c.id,
-            title: c.banglaName,
-            subtitle: `ইংরেজি নাম: ${c.name} ${c.description ? `• ${c.description}` : ''}`,
+            title: c.banglaName || c.name || 'ক্যাটাগরি',
+            subtitle: `ইংরেজি নাম: ${c.name || '—'} ${c.description ? `• ${c.description}` : ''}`,
             badge: 'ক্যাটাগরি',
           }));
       case 'routes':
@@ -212,13 +217,13 @@ export const AdminDeleteCenter: React.FC<AdminDeleteCenterProps> = ({
           .filter(
             (r) =>
               !q ||
-              r.banglaName.toLowerCase().includes(q) ||
-              r.name.toLowerCase().includes(q)
+              (r.banglaName || '').toLowerCase().includes(q) ||
+              (r.name || '').toLowerCase().includes(q)
           )
           .map((r) => ({
             id: r.id,
-            title: r.banglaName,
-            subtitle: `${r.name} ${r.description ? `• ${r.description}` : ''}`,
+            title: r.banglaName || r.name || 'রুট',
+            subtitle: `${r.name || ''} ${r.description ? `• ${r.description}` : ''}`,
             badge: 'রুট/এরিয়া',
           }));
       case 'expenses':
@@ -226,32 +231,32 @@ export const AdminDeleteCenter: React.FC<AdminDeleteCenterProps> = ({
           .filter(
             (e) =>
               !q ||
-              e.category.toLowerCase().includes(q) ||
+              (e.category || '').toLowerCase().includes(q) ||
               (e.note || '').toLowerCase().includes(q) ||
-              e.date.includes(q)
+              (e.date || '').includes(q)
           )
           .map((e) => ({
             id: e.id,
-            title: `${e.category} — ৳${e.amount.toLocaleString()}`,
-            subtitle: `তারিখ: ${e.date} ${e.note ? `• বিবরণ: ${e.note}` : ''} ${e.recordedBy ? `• এন্ট্রি: ${e.recordedBy}` : ''}`,
-            badge: `৳${e.amount}`,
+            title: `${e.category || 'খরচ'} — ৳${(Number(e.amount) || 0).toLocaleString()}`,
+            subtitle: `তারিখ: ${e.date || '—'} ${e.note ? `• বিবরণ: ${e.note}` : ''} ${e.recordedBy ? `• এন্ট্রি: ${e.recordedBy}` : ''}`,
+            badge: `৳${(Number(e.amount) || 0).toLocaleString()}`,
           }));
       case 'collections':
         return dueCollections
           .filter(
             (c) =>
               !q ||
-              c.shopName.toLowerCase().includes(q) ||
+              (c.shopName || '').toLowerCase().includes(q) ||
               (c.notes || '').toLowerCase().includes(q) ||
-              c.paymentMethod.toLowerCase().includes(q) ||
-              c.date.includes(q) ||
-              String(c.amount).includes(q)
+              (c.paymentMethod || '').toLowerCase().includes(q) ||
+              (c.date || '').includes(q) ||
+              String(c.amount || '').includes(q)
           )
           .map((c) => ({
             id: c.id,
-            title: `${c.shopName} — জমা: ৳${c.amount.toLocaleString()}`,
-            subtitle: `তারিখ: ${new Date(c.date).toLocaleDateString('en-GB')} • মাধ্যম: ${c.paymentMethod}${c.notes ? ` • বিবরণ: ${c.notes}` : ''}`,
-            badge: `${c.paymentMethod} (৳${c.amount.toLocaleString()})`,
+            title: `${c.shopName || 'দোকান'} — জমা: ৳${(Number(c.amount) || 0).toLocaleString()}`,
+            subtitle: `তারিখ: ${c.date ? new Date(c.date).toLocaleDateString('en-GB') : '—'} • মাধ্যম: ${c.paymentMethod || 'নগদ'}${c.notes ? ` • বিবরণ: ${c.notes}` : ''}`,
+            badge: `${c.paymentMethod || 'নগদ'} (৳${(Number(c.amount) || 0).toLocaleString()})`,
           }));
       case 'staff':
         return removableStaff

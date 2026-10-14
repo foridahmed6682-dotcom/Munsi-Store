@@ -154,8 +154,8 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
       if (routeFilter !== 'ALL' && o.shopRoute !== routeFilter) return false;
       if (
         q &&
-        !o.memoNumber.toLowerCase().includes(q) &&
-        !o.shopName.toLowerCase().includes(q) &&
+        !(o.memoNumber || '').toLowerCase().includes(q) &&
+        !(o.shopName || '').toLowerCase().includes(q) &&
         !(o.shopPhone || '').toLowerCase().includes(q) &&
         !(o.shopRoute || '').toLowerCase().includes(q)
       ) {
@@ -213,40 +213,43 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
     const q = searchQuery.trim().toLowerCase();
     switch (activeListType) {
       case 'orders':
-        return filteredOrders.map((o) => ({
-          id: o.id,
-          title: `মেমো #${o.memoNumber} — ${o.shopName}`,
-          subtitle: `তারিখ: ${new Date(o.orderDate).toLocaleDateString('en-GB')} • রুট: ${
-            o.shopRoute || '---'
-          } • মোট বিল: ৳${o.netTotal.toLocaleString()} • আইটেম: ${o.items.length}টি`,
-          badge:
-            o.deliveryStatus === 'DELIVERED'
-              ? '✅ ডেলিভার্ড'
-              : o.deliveryStatus === 'CANCELLED'
-              ? '❌ বাতিল'
-              : '⏳ অপেক্ষমান',
-          badgeTone:
-            o.deliveryStatus === 'DELIVERED'
-              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-              : o.deliveryStatus === 'CANCELLED'
-              ? 'bg-rose-50 text-rose-800 border-rose-200'
-              : 'bg-amber-50 text-amber-900 border-amber-200',
-        }));
+        return filteredOrders.map((o) => {
+          const bill = Number(o.netTotal ?? (o as any).totalAmount ?? o.subTotal ?? 0);
+          const itemsLen = Array.isArray(o.items) ? o.items.length : 0;
+          const dateStr = o.orderDate ? new Date(o.orderDate).toLocaleDateString('en-GB') : '—';
+          return {
+            id: o.id,
+            title: `মেমো #${o.memoNumber || o.id || 'N/A'} — ${o.shopName || 'দোকান'}`,
+            subtitle: `তারিখ: ${dateStr} • রুট: ${o.shopRoute || '---'} • মোট বিল: ৳${bill.toLocaleString()} • আইটেম: ${itemsLen}টি`,
+            badge:
+              o.deliveryStatus === 'DELIVERED'
+                ? '✅ ডেলিভার্ড'
+                : o.deliveryStatus === 'CANCELLED'
+                ? '❌ বাতিল'
+                : '⏳ অপেক্ষমান',
+            badgeTone:
+              o.deliveryStatus === 'DELIVERED'
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                : o.deliveryStatus === 'CANCELLED'
+                ? 'bg-rose-50 text-rose-800 border-rose-200'
+                : 'bg-amber-50 text-amber-900 border-amber-200',
+          };
+        });
       case 'products':
         return products
           .filter(
             (p) =>
               !q ||
-              p.banglaName.toLowerCase().includes(q) ||
-              p.name.toLowerCase().includes(q) ||
-              p.sku.toLowerCase().includes(q) ||
-              p.category.toLowerCase().includes(q)
+              (p.banglaName || '').toLowerCase().includes(q) ||
+              (p.name || '').toLowerCase().includes(q) ||
+              (p.sku || '').toLowerCase().includes(q) ||
+              (p.category || '').toLowerCase().includes(q)
           )
           .map((p) => ({
             id: p.id,
-            title: `${p.banglaName} (${p.name})`,
-            subtitle: `ক্যাটাগরি: ${p.category} • দর: ৳${p.unitPrice}/${p.unit} • স্টক: ${p.stock} ${p.unit}`,
-            badge: `SKU: ${p.sku}`,
+            title: `${p.banglaName || p.name || 'পণ্য'} (${p.name || ''})`,
+            subtitle: `ক্যাটাগরি: ${p.category || '—'} • দর: ৳${(Number(p.unitPrice) || 0)}/${p.unit || 'পিস'} • স্টক: ${p.stock || 0} ${p.unit || 'পিস'}`,
+            badge: `SKU: ${p.sku || 'N/A'}`,
             badgeTone: 'bg-neutral-100 text-neutral-600 border-neutral-200',
           }));
       case 'shops':
@@ -254,15 +257,15 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
           .filter(
             (s) =>
               !q ||
-              s.name.toLowerCase().includes(q) ||
-              s.ownerName.toLowerCase().includes(q) ||
-              s.phone.toLowerCase().includes(q) ||
-              s.routeArea.toLowerCase().includes(q)
+              (s.name || '').toLowerCase().includes(q) ||
+              (s.ownerName || '').toLowerCase().includes(q) ||
+              (s.phone || '').toLowerCase().includes(q) ||
+              (s.routeArea || '').toLowerCase().includes(q)
           )
           .map((s) => ({
             id: s.id,
-            title: s.name,
-            subtitle: `মালিক: ${s.ownerName} • ফোন: ${s.phone} • বকেয়া: ৳${(s.previousDue || 0).toLocaleString()}`,
+            title: s.name || 'দোকান',
+            subtitle: `মালিক: ${s.ownerName || '—'} • ফোন: ${s.phone || '—'} • বকেয়া: ৳${(Number(s.previousDue) || 0).toLocaleString()}`,
             badge: s.routeArea || 'রুট নেই',
             badgeTone: 'bg-neutral-100 text-neutral-600 border-neutral-200',
           }));
@@ -271,13 +274,13 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
           .filter(
             (c) =>
               !q ||
-              c.banglaName.toLowerCase().includes(q) ||
-              c.name.toLowerCase().includes(q)
+              (c.banglaName || '').toLowerCase().includes(q) ||
+              (c.name || '').toLowerCase().includes(q)
           )
           .map((c) => ({
             id: c.id,
-            title: c.banglaName,
-            subtitle: `ইংরেজি নাম: ${c.name} ${c.description ? `• ${c.description}` : ''}`,
+            title: c.banglaName || c.name || 'ক্যাটাগরি',
+            subtitle: `ইংরেজি নাম: ${c.name || '—'} ${c.description ? `• ${c.description}` : ''}`,
             badge: 'ক্যাটাগরি',
             badgeTone: 'bg-neutral-100 text-neutral-600 border-neutral-200',
           }));
@@ -286,13 +289,13 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
           .filter(
             (r) =>
               !q ||
-              r.banglaName.toLowerCase().includes(q) ||
-              r.name.toLowerCase().includes(q)
+              (r.banglaName || '').toLowerCase().includes(q) ||
+              (r.name || '').toLowerCase().includes(q)
           )
           .map((r) => ({
             id: r.id,
-            title: r.banglaName,
-            subtitle: `${r.name} ${r.description ? `• ${r.description}` : ''}`,
+            title: r.banglaName || r.name || 'রুট',
+            subtitle: `${r.name || ''} ${r.description ? `• ${r.description}` : ''}`,
             badge: 'রুট/এরিয়া',
             badgeTone: 'bg-neutral-100 text-neutral-600 border-neutral-200',
           }));
@@ -301,15 +304,15 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
           .filter(
             (e) =>
               !q ||
-              e.category.toLowerCase().includes(q) ||
+              (e.category || '').toLowerCase().includes(q) ||
               (e.note || '').toLowerCase().includes(q) ||
-              e.date.includes(q)
+              (e.date || '').includes(q)
           )
           .map((e) => ({
             id: e.id,
-            title: `${e.category} — ৳${e.amount.toLocaleString()}`,
-            subtitle: `তারিখ: ${e.date} ${e.note ? `• বিবরণ: ${e.note}` : ''} ${e.recordedBy ? `• এন্ট্রি: ${e.recordedBy}` : ''}`,
-            badge: `৳${e.amount}`,
+            title: `${e.category || 'খরচ'} — ৳${(Number(e.amount) || 0).toLocaleString()}`,
+            subtitle: `তারিখ: ${e.date || '—'} ${e.note ? `• বিবরণ: ${e.note}` : ''} ${e.recordedBy ? `• এন্ট্রি: ${e.recordedBy}` : ''}`,
+            badge: `৳${(Number(e.amount) || 0).toLocaleString()}`,
             badgeTone: 'bg-neutral-100 text-neutral-600 border-neutral-200',
           }));
       case 'collections':
@@ -317,13 +320,13 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
           .filter(
             (c) =>
               !q ||
-              c.shopName.toLowerCase().includes(q) ||
+              (c.shopName || '').toLowerCase().includes(q) ||
               (c.notes || '').toLowerCase().includes(q)
           )
           .map((c) => ({
             id: c.id,
-            title: `${c.shopName} — জমা: ৳${c.amount.toLocaleString()}`,
-            subtitle: `তারিখ: ${new Date(c.date).toLocaleDateString('en-GB')} • মাধ্যম: ${c.paymentMethod}`,
+            title: `${c.shopName || 'দোকান'} — জমা: ৳${(Number(c.amount) || 0).toLocaleString()}`,
+            subtitle: `তারিখ: ${c.date ? new Date(c.date).toLocaleDateString('en-GB') : '—'} • মাধ্যম: ${c.paymentMethod || 'নগদ'}`,
             badge: 'বকেয়া আদায়',
             badgeTone: 'bg-neutral-100 text-neutral-600 border-neutral-200',
           }));
@@ -332,14 +335,14 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
           .filter(
             (a) =>
               !q ||
-              a.email.toLowerCase().includes(q) ||
+              (a.email || '').toLowerCase().includes(q) ||
               (a.fullName || '').toLowerCase().includes(q)
           )
           .map((a) => ({
             id: a.email,
             title: a.fullName ? `${a.fullName} (${a.email})` : a.email,
-            subtitle: `রোল: ${a.role.toUpperCase()} • রুট: ${a.assignedRoute || 'সব রুট'}`,
-            badge: a.role.toUpperCase(),
+            subtitle: `রোল: ${(a.role || 'sr').toUpperCase()} • রুট: ${a.assignedRoute || 'সব রুট'}`,
+            badge: (a.role || 'sr').toUpperCase(),
             badgeTone: 'bg-neutral-100 text-neutral-600 border-neutral-200',
           }));
       default:

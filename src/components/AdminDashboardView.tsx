@@ -1721,9 +1721,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             <div className="bg-white p-3.5 rounded-2xl border border-neutral-200 shadow-xs">
               <span className="text-[11px] font-semibold text-neutral-500">মোট বিক্রয় (অর্ডার)</span>
               <div className="text-lg font-black text-neutral-900 mt-1">
-                ৳{metrics.totalOrderAmount.toLocaleString()}
+                ৳{(Number(metrics.totalOrderAmount) || 0).toLocaleString()}
               </div>
-              <span className="text-[10px] text-emerald-600 font-bold">{metrics.totalOrders}টি বুকিং</span>
+              <span className="text-[10px] text-emerald-600 font-bold">{metrics.totalOrders || 0}টি বুকিং</span>
             </div>
 
             <div
@@ -1736,9 +1736,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold">হিস্ট্রি →</span>
               </div>
               <div className="text-lg font-black text-emerald-700 mt-1">
-                ৳{metrics.totalCashCollected.toLocaleString()}
+                ৳{(Number(metrics.totalCashCollected) || 0).toLocaleString()}
               </div>
-              <span className="text-[10px] text-neutral-500 font-medium">ফিল্ড কালেকশন ({dueCollections.length}টি)</span>
+              <span className="text-[10px] text-neutral-500 font-medium">ফিল্ড কালেকশন ({(dueCollections || []).length}টি)</span>
             </div>
 
             <div
@@ -1751,7 +1751,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 font-bold">খাতা →</span>
               </div>
               <div className="text-lg font-black text-rose-700 mt-1">
-                ৳{metrics.totalDueReceivable.toLocaleString()}
+                ৳{(Number(metrics.totalDueReceivable) || 0).toLocaleString()}
               </div>
               <span className="text-[10px] text-rose-600 font-bold">বাকী খাতা ও কালেকশন</span>
             </div>
@@ -2028,29 +2028,40 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-100">
-                    {orders.slice(0, 20).map((ord) => (
-                      <tr key={ord.id} className="hover:bg-neutral-50/80 transition-colors">
-                        <td className="p-2.5">
-                          <span className="font-mono font-bold text-emerald-800 block">{ord.memoNumber}</span>
-                          <span className="text-[10px] text-neutral-500">
-                            {new Date(ord.orderDate).toLocaleString('bn-BD', {
-                              day: '2-digit',
-                              month: 'short',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
-                          </span>
-                        </td>
-                        <td className="p-2.5">
-                          <span className="font-bold text-neutral-900 block">{ord.shopName}</span>
-                          <span className="text-[10px] text-neutral-500">{ord.shopPhone} • {ord.shopAddress}</span>
-                        </td>
-                        <td className="p-2.5 text-center font-bold text-neutral-700">
-                          {ord.items.length} পদ
-                        </td>
-                        <td className="p-2.5 text-right font-extrabold font-mono text-emerald-800">
-                          ৳{ord.netTotal.toLocaleString()}
-                        </td>
+                    {(orders || []).slice(0, 20).map((ord) => {
+                      if (!ord) return null;
+                      const orderTotal = Number(ord.netTotal ?? (ord as any).totalAmount ?? ord.subTotal ?? 0);
+                      const itemsCount = Array.isArray(ord.items) ? ord.items.length : 0;
+                      let formattedDate = '—';
+                      try {
+                        if (ord.orderDate) {
+                          formattedDate = new Date(ord.orderDate).toLocaleString('bn-BD', {
+                            day: '2-digit',
+                            month: 'short',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          });
+                        }
+                      } catch {}
+
+                      return (
+                        <tr key={ord.id || Math.random().toString()} className="hover:bg-neutral-50/80 transition-colors">
+                          <td className="p-2.5">
+                            <span className="font-mono font-bold text-emerald-800 block">{ord.memoNumber || ord.id || 'N/A'}</span>
+                            <span className="text-[10px] text-neutral-500">{formattedDate}</span>
+                          </td>
+                          <td className="p-2.5">
+                            <span className="font-bold text-neutral-900 block">{ord.shopName || 'দোকান'}</span>
+                            <span className="text-[10px] text-neutral-500">
+                              {[ord.shopPhone, ord.shopAddress].filter(Boolean).join(' • ') || 'তথ্য নেই'}
+                            </span>
+                          </td>
+                          <td className="p-2.5 text-center font-bold text-neutral-700">
+                            {itemsCount} পদ
+                          </td>
+                          <td className="p-2.5 text-right font-extrabold font-mono text-emerald-800">
+                            ৳{orderTotal.toLocaleString()}
+                          </td>
                         <td className="p-2.5 text-right">
                           <div className="flex items-center justify-end gap-1.5 flex-wrap">
                             {onViewMemo && (
@@ -2097,7 +2108,8 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                           </div>
                         </td>
                       </tr>
-                    ))}
+                    );
+                  })}
                   </tbody>
                 </table>
               </div>
@@ -2149,15 +2161,15 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-3.5">
                 <span className="text-[11px] font-semibold text-neutral-500 block">মোট বিক্রয় (নিট বিল)</span>
                 <span className="text-lg font-black text-neutral-900 font-mono mt-1 block">
-                  ৳{profitAnalytics.totalRevenue.toLocaleString()}
+                  ৳{(Number(profitAnalytics.totalRevenue) || 0).toLocaleString()}
                 </span>
-                <span className="text-[10px] text-neutral-500">{profitAnalytics.ordersCount}টি অর্ডার</span>
+                <span className="text-[10px] text-neutral-500">{profitAnalytics.ordersCount || 0}টি অর্ডার</span>
               </div>
 
               <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-3.5">
                 <span className="text-[11px] font-semibold text-neutral-500 block">পণ্যের মোট ক্রয়মূল্য (Cost)</span>
                 <span className="text-lg font-black text-neutral-700 font-mono mt-1 block">
-                  ৳{profitAnalytics.totalCostOfGoods.toLocaleString()}
+                  ৳{(Number(profitAnalytics.totalCostOfGoods) || 0).toLocaleString()}
                 </span>
                 <span className="text-[10px] text-neutral-500">ফ্রি অফারসহ আসল দাম</span>
               </div>
@@ -2165,7 +2177,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-3.5">
                 <span className="text-[11px] font-bold text-emerald-800 block">মোট লাভ (Gross Profit)</span>
                 <span className="text-lg font-black text-emerald-700 font-mono mt-1 block">
-                  ৳{profitAnalytics.grossProfit.toLocaleString()}
+                  ৳{(Number(profitAnalytics.grossProfit) || 0).toLocaleString()}
                 </span>
                 <span className="text-[10px] text-emerald-700">বিক্রয় - ক্রয়মূল্য</span>
               </div>
@@ -2173,20 +2185,20 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               <div className="bg-rose-50/70 border border-rose-200 rounded-2xl p-3.5">
                 <span className="text-[11px] font-bold text-rose-800 block">ফিল্ড ও গাড়ি খরচ বাদ</span>
                 <span className="text-lg font-black text-rose-600 font-mono mt-1 block">
-                  -৳{profitAnalytics.totalExpensesAmount.toLocaleString()}
+                  -৳{(Number(profitAnalytics.totalExpensesAmount) || 0).toLocaleString()}
                 </span>
                 <span className="text-[10px] text-rose-600">
-                  ফেরত: ৳{profitAnalytics.totalReturns.toLocaleString()}
+                  ফেরত: ৳{(Number(profitAnalytics.totalReturns) || 0).toLocaleString()}
                 </span>
               </div>
 
               <div className="bg-neutral-900 text-white rounded-2xl p-3.5 col-span-2 lg:col-span-1">
                 <span className="text-[11px] font-bold text-amber-300 block">চূড়ান্ত নিট মুনাফা (Net Profit)</span>
                 <span className="text-xl font-black text-amber-400 font-mono mt-1 block">
-                  ৳{profitAnalytics.netProfit.toLocaleString()}
+                  ৳{(Number(profitAnalytics.netProfit) || 0).toLocaleString()}
                 </span>
                 <span className="text-[10px] text-emerald-300 font-bold">
-                  মার্জিন হার: {profitAnalytics.marginPercent}%
+                  মার্জিন হার: {profitAnalytics.marginPercent || '0.0'}%
                 </span>
               </div>
             </div>
@@ -2194,9 +2206,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             {/* Product-wise Profit Table */}
             <div className="border border-neutral-200 rounded-2xl overflow-hidden">
               <div className="bg-neutral-50 px-4 py-2.5 border-b border-neutral-200 font-bold text-xs text-neutral-800">
-                পণ্যভিত্তিক লাভ ও মার্জিন ব্রেকডাউন ({profitAnalytics.productBreakdown.length}টি পণ্য)
+                পণ্যভিত্তিক লাভ ও মার্জিন ব্রেকডাউন ({(profitAnalytics.productBreakdown || []).length}টি পণ্য)
               </div>
-              {profitAnalytics.productBreakdown.length === 0 ? (
+              {(!profitAnalytics.productBreakdown || profitAnalytics.productBreakdown.length === 0) ? (
                 <div className="p-6 text-center text-neutral-400 text-xs">
                   এই সময়ে কোনো পণ্য বিক্রয়ের রেকর্ড পাওয়া যায়নি।
                 </div>
@@ -2221,17 +2233,17 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                             {row.freeQty > 0 ? ` (+${row.freeQty} ফ্রি)` : ''}
                           </td>
                           <td className="p-2.5 text-right font-mono text-neutral-800">
-                            ৳{row.revenue.toLocaleString()}
+                            ৳{(Number(row.revenue) || 0).toLocaleString()}
                           </td>
                           <td className="p-2.5 text-right font-mono text-neutral-500">
-                            ৳{row.cost.toLocaleString()}
+                            ৳{(Number(row.cost) || 0).toLocaleString()}
                           </td>
                           <td
                             className={`p-2.5 text-right font-mono font-black ${
-                              row.profit >= 0 ? 'text-emerald-700' : 'text-rose-600'
+                              (row.profit || 0) >= 0 ? 'text-emerald-700' : 'text-rose-600'
                             }`}
                           >
-                            ৳{row.profit.toLocaleString()}
+                            ৳{(Number(row.profit) || 0).toLocaleString()}
                           </td>
                         </tr>
                       ))}
@@ -2297,14 +2309,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   <div className="space-y-1">
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-neutral-600 font-semibold">
-                        মাসিক বিক্রয়: <strong className="text-neutral-900 font-mono">৳{st.totalSales.toLocaleString()}</strong> / ৳{st.monthlyTarget.toLocaleString()}
+                        মাসিক বিক্রয়: <strong className="text-neutral-900 font-mono">৳{(Number(st.totalSales) || 0).toLocaleString()}</strong> / ৳{(Number(st.monthlyTarget) || 0).toLocaleString()}
                       </span>
-                      <span className="font-black text-emerald-700 font-mono">{st.achievementPercent}% পূর্ণ</span>
+                      <span className="font-black text-emerald-700 font-mono">{st.achievementPercent || 0}% পূর্ণ</span>
                     </div>
                     <div className="w-full h-2.5 bg-neutral-200 rounded-full overflow-hidden">
                       <div
                         className="h-full bg-emerald-600 rounded-full transition-all"
-                        style={{ width: `${Math.min(100, st.achievementPercent)}%` }}
+                        style={{ width: `${Math.min(100, st.achievementPercent || 0)}%` }}
                       />
                     </div>
                   </div>
@@ -2313,22 +2325,22 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   <div className="grid grid-cols-4 gap-2 pt-1 text-center">
                     <div className="bg-white p-2 rounded-xl border border-neutral-200">
                       <span className="text-[10px] text-neutral-500 block">মোট অর্ডার</span>
-                      <span className="font-black text-xs text-neutral-900 font-mono">{st.ordersCount}টি</span>
+                      <span className="font-black text-xs text-neutral-900 font-mono">{st.ordersCount || 0}টি</span>
                     </div>
                     <div className="bg-white p-2 rounded-xl border border-neutral-200">
                       <span className="text-[10px] text-neutral-500 block">দোকান কভার</span>
-                      <span className="font-black text-xs text-teal-700 font-mono">{st.uniqueShopsVisited}টি</span>
+                      <span className="font-black text-xs text-teal-700 font-mono">{st.uniqueShopsVisited || 0}টি</span>
                     </div>
                     <div className="bg-white p-2 rounded-xl border border-neutral-200">
                       <span className="text-[10px] text-neutral-500 block">নগদ আদায়</span>
                       <span className="font-black text-xs text-emerald-700 font-mono">
-                        ৳{st.totalCashCollected.toLocaleString()}
+                        ৳{(Number(st.totalCashCollected) || 0).toLocaleString()}
                       </span>
                     </div>
                     <div className="bg-amber-50 p-2 rounded-xl border border-amber-200">
-                      <span className="text-[10px] text-amber-900 block">কমিশন ({st.commissionPercent}%)</span>
+                      <span className="text-[10px] text-amber-900 block">কমিশন ({st.commissionPercent || 0}%)</span>
                       <span className="font-black text-xs text-amber-900 font-mono">
-                        ৳{st.commissionEarned.toLocaleString()}
+                        ৳{(Number(st.commissionEarned) || 0).toLocaleString()}
                       </span>
                     </div>
                   </div>
@@ -4230,25 +4242,25 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-5 pt-4 border-t border-white/10 text-xs">
                 <div className="bg-white/10 rounded-2xl p-3 border border-white/10">
                   <span className="text-[11px] text-rose-300 block font-semibold">মার্কেটে মোট বকেয়া</span>
-                  <span className="text-xl font-black text-rose-300 font-mono mt-0.5 block">৳{totalMarketDue.toLocaleString()}</span>
-                  <span className="text-[10px] text-neutral-300">{shopsWithDue.length}টি দোকানে বকেয়া রয়েছে</span>
+                  <span className="text-xl font-black text-rose-300 font-mono mt-0.5 block">৳{(Number(totalMarketDue) || 0).toLocaleString()}</span>
+                  <span className="text-[10px] text-neutral-300">{(shopsWithDue || []).length}টি দোকানে বকেয়া রয়েছে</span>
                 </div>
 
                 <div className="bg-white/10 rounded-2xl p-3 border border-white/10">
                   <span className="text-[11px] text-amber-200 block font-semibold">বকেয়াযুক্ত মোট দোকান</span>
-                  <span className="text-xl font-black text-white font-mono mt-0.5 block">{shopsWithDue.length} টি</span>
-                  <span className="text-[10px] text-neutral-300">পরিশোধিত/নগদ: {zeroDueShops.length}টি</span>
+                  <span className="text-xl font-black text-white font-mono mt-0.5 block">{(shopsWithDue || []).length} টি</span>
+                  <span className="text-[10px] text-neutral-300">পরিশোধিত/নগদ: {(zeroDueShops || []).length}টি</span>
                 </div>
 
                 <div className="bg-white/10 rounded-2xl p-3 border border-white/10">
                   <span className="text-[11px] text-emerald-300 block font-semibold">সর্বমোট ক্যাশ আদায় হিস্ট্রি</span>
-                  <span className="text-xl font-black text-emerald-300 font-mono mt-0.5 block">৳{totalDueCollectedAll.toLocaleString()}</span>
-                  <span className="text-[10px] text-neutral-300">আজকের আদায়: ৳{todayTotal.toLocaleString()}</span>
+                  <span className="text-xl font-black text-emerald-300 font-mono mt-0.5 block">৳{(Number(totalDueCollectedAll) || 0).toLocaleString()}</span>
+                  <span className="text-[10px] text-neutral-300">আজকের আদায়: ৳{(Number(todayTotal) || 0).toLocaleString()}</span>
                 </div>
 
                 <div className="bg-white/10 rounded-2xl p-3 border border-white/10">
                   <span className="text-[11px] text-purple-300 block font-semibold">মোট রেজিস্টার্ড দোকান</span>
-                  <span className="text-xl font-black text-purple-200 font-mono mt-0.5 block">{shops.length} টি</span>
+                  <span className="text-xl font-black text-purple-200 font-mono mt-0.5 block">{(shops || []).length} টি</span>
                   <span className="text-[10px] text-neutral-300">সকল সক্রিয় রুট মিলিয়ে</span>
                 </div>
               </div>
@@ -4287,11 +4299,11 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               <div className="text-xs font-bold text-neutral-600">
                 {dueTabMode === 'shop_dues' ? (
                   <span>
-                    মোট বকেয়া: <strong className="text-rose-600 font-mono text-sm">৳{totalMarketDue.toLocaleString()}</strong> ({shopsWithDue.length} দোকানে)
+                    মোট বকেয়া: <strong className="text-rose-600 font-mono text-sm">৳{(Number(totalMarketDue) || 0).toLocaleString()}</strong> ({(shopsWithDue || []).length} দোকানে)
                   </span>
                 ) : (
                   <span>
-                    আদায় রেকর্ড: <strong className="text-emerald-700 font-mono text-sm">{dueCollections.length}</strong> টি (৳{totalDueCollectedAll.toLocaleString()})
+                    আদায় রেকর্ড: <strong className="text-emerald-700 font-mono text-sm">{(dueCollections || []).length}</strong> টি (৳{(Number(totalDueCollectedAll) || 0).toLocaleString()})
                   </span>
                 )}
               </div>
