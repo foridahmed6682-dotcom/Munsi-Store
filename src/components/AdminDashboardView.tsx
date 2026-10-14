@@ -994,21 +994,27 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       setBizInfo(cloudInfo);
     });
     return () => {
-      unsub();
+      if (typeof unsub === 'function') {
+        try { unsub(); } catch {}
+      }
     };
   }, []);
 
   // Compute Metrics
   const metrics = useMemo(() => {
-    const totalOrders = orders.length;
-    const deliveredOrders = orders.filter((o) => o.deliveryStatus === 'DELIVERED').length;
-    const pendingOrders = orders.filter((o) => o.deliveryStatus === 'PENDING').length;
-    const totalOrderAmount = orders.reduce((sum, o) => sum + (o.netTotal || 0), 0);
-    const totalCashCollected = orders.reduce((sum, o) => sum + (o.paidAmount || 0), 0);
-    const totalDueReceivable = shops.reduce((sum, s) => sum + (s.previousDue || 0), 0);
-    const totalProductsCount = products.length;
-    const lowStockCount = products.filter((p) => p.stock <= p.minStockAlert).length;
-    const inventoryValuation = products.reduce((sum, p) => sum + p.stock * p.unitPrice, 0);
+    const validOrders = Array.isArray(orders) ? orders : [];
+    const validShops = Array.isArray(shops) ? shops : [];
+    const validProducts = Array.isArray(products) ? products : [];
+
+    const totalOrders = validOrders.length;
+    const deliveredOrders = validOrders.filter((o) => o?.deliveryStatus === 'DELIVERED').length;
+    const pendingOrders = validOrders.filter((o) => o?.deliveryStatus === 'PENDING').length;
+    const totalOrderAmount = validOrders.reduce((sum, o) => sum + (Number(o?.netTotal) || 0), 0);
+    const totalCashCollected = validOrders.reduce((sum, o) => sum + (Number(o?.paidAmount) || 0), 0);
+    const totalDueReceivable = validShops.reduce((sum, s) => sum + (Number(s?.previousDue) || 0), 0);
+    const totalProductsCount = validProducts.length;
+    const lowStockCount = validProducts.filter((p) => p && Number(p.stock) <= (Number(p.minStockAlert) || 5)).length;
+    const inventoryValuation = validProducts.reduce((sum, p) => sum + ((Number(p?.stock) || 0) * (Number(p?.unitPrice) || 0)), 0);
 
     return {
       totalOrders,
@@ -1025,12 +1031,20 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
   // Categories with live product count
   const categoriesWithCount = useMemo(() => {
-    return categories.map((cat) => {
-      const count = products.filter(
+    const validCats = Array.isArray(categories) ? categories : [];
+    const validProds = Array.isArray(products) ? products : [];
+
+    return validCats.map((cat) => {
+      if (!cat) return { id: 'unknown', name: '', banglaName: '', count: 0 };
+      const catBangla = (cat.banglaName || '').toLowerCase();
+      const catName = (cat.name || '').toLowerCase();
+      const count = validProds.filter(
         (p) =>
-          p.category === cat.banglaName ||
-          p.category.toLowerCase() === cat.name.toLowerCase() ||
-          p.category === cat.id
+          p && (
+            (p.category && p.category === cat.banglaName) ||
+            (p.category && catName && p.category.toLowerCase() === catName) ||
+            (p.category && p.category === cat.id)
+          )
       ).length;
       return { ...cat, count };
     });
@@ -1038,11 +1052,15 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
   // Filtered Products for Management
   const filteredProducts = useMemo(() => {
-    return products.filter((p) => {
-      const matchSearch =
-        p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
-        p.banglaName.toLowerCase().includes(productSearch.toLowerCase()) ||
-        p.sku.toLowerCase().includes(productSearch.toLowerCase());
+    const searchLower = (productSearch || '').toLowerCase().trim();
+    const validProds = Array.isArray(products) ? products : [];
+
+    return validProds.filter((p) => {
+      if (!p) return false;
+      const nameMatch = (p.name || '').toLowerCase().includes(searchLower);
+      const banglaMatch = (p.banglaName || '').toLowerCase().includes(searchLower);
+      const skuMatch = (p.sku || '').toLowerCase().includes(searchLower);
+      const matchSearch = !searchLower || nameMatch || banglaMatch || skuMatch;
       const matchCat =
         productCategoryFilter === 'all' ||
         p.category === productCategoryFilter;
@@ -1145,8 +1163,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     let piecesNum: number | undefined = undefined;
     if (!isNaN(rawPieces) && rawPieces > 0) {
       piecesNum = Math.round(rawPieces);
+    } else if (unitPackSizes && typeof unitPackSizes[prodUnit] === 'number' && unitPackSizes[prodUnit] > 0) {
+      piecesNum = unitPackSizes[prodUnit];
     } else if (prodUnit === 'ডজন') {
       piecesNum = 12;
+    } else if (prodUnit === 'পাতা') {
+      piecesNum = 10;
+    } else if (prodUnit === 'বক্স' || prodUnit === 'কার্টুন') {
+      piecesNum = 24;
+    } else if (prodUnit === 'প্যাকেট') {
+      piecesNum = 12;
+    } else if (prodUnit === 'পিস') {
+      piecesNum = 1;
     }
 
     if (editingProduct) {
@@ -1230,7 +1258,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     setShowQuickAddSupplier(false);
     setQuickSupplierName('');
     setProdUnit('কার্টুন');
-    const defaultCartonPieces = unitPackSizes['কার্টুন'] || 24;
+    const defaultCartonPieces = (unitPackSizes && unitPackSizes['কার্টুন']) || 24;
     setProdPiecesPerUnit(String(defaultCartonPieces));
     setProdUnitPrice('');
     setProdDiscountPrice('');
@@ -1256,7 +1284,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     setProdUnit(prod.unit || 'কার্টুন');
     const editPieces = prod.piecesPerUnit
       ? prod.piecesPerUnit.toString()
-      : prod.unit && unitPackSizes[prod.unit]
+      : prod.unit && unitPackSizes && unitPackSizes[prod.unit]
       ? String(unitPackSizes[prod.unit])
       : prod.unit === 'ডজন'
       ? '12'
@@ -2692,16 +2720,16 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                           </div>
                         </td>
                         <td className="p-3 font-bold text-neutral-900">
-                          ৳{p.unitPrice.toLocaleString()}{' '}
-                          <span className="text-[10px] text-neutral-500 font-normal">/{p.unit}</span>
-                          {p.piecesPerUnit && p.piecesPerUnit > 1 && p.unit !== 'পিস' && (
+                          ৳{(Number(p.unitPrice) || 0).toLocaleString()}{' '}
+                          <span className="text-[10px] text-neutral-500 font-normal">/{p.unit || 'পিস'}</span>
+                          {p.piecesPerUnit && Number(p.piecesPerUnit) > 1 && p.unit !== 'পিস' && (
                             <div className="text-[10px] text-emerald-700 font-semibold mt-0.5 whitespace-nowrap">
-                              ({p.piecesPerUnit} পিস/{p.unit} | ১ পিস = ৳{(p.unitPrice / p.piecesPerUnit).toFixed(2)})
+                              ({p.piecesPerUnit} পিস/{p.unit || 'পিস'} | ১ পিস = ৳{((Number(p.unitPrice) || 0) / Number(p.piecesPerUnit)).toFixed(2)})
                             </div>
                           )}
                         </td>
                         <td className="p-3 text-neutral-600 font-mono">
-                          ৳{p.costPrice.toLocaleString()}
+                          ৳{(Number(p.costPrice) || 0).toLocaleString()}
                         </td>
                         <td className="p-3">
                           <div className="flex items-center gap-1.5">
@@ -5778,7 +5806,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                         if (newUnit === 'পিস') {
                           setProdPiecesPerUnit('1');
                         } else {
-                          const configured = unitPackSizes[newUnit];
+                          const configured = unitPackSizes ? unitPackSizes[newUnit] : undefined;
                           if (configured !== undefined && configured > 0) {
                             setProdPiecesPerUnit(String(configured));
                           } else if (newUnit === 'ডজন') {
@@ -5790,7 +5818,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                       }}
                       className="w-full px-2.5 py-2.5 rounded-xl border border-neutral-300 text-xs bg-white focus:outline-none focus:border-emerald-600 font-medium"
                     >
-                      {Array.from(new Set(['কার্টুন', 'পিস', 'ডজন', 'বক্স', 'পাতা', 'প্যাকেট', 'বস্তা', 'বোতল', 'কেজি', 'লিটার', ...Object.keys(unitPackSizes)])).map((u) => (
+                      {Array.from(new Set(['কার্টুন', 'পিস', 'ডজন', 'বক্স', 'পাতা', 'প্যাকেট', 'বস্তা', 'বোতল', 'কেজি', 'লিটার', ...Object.keys(unitPackSizes || {})])).map((u) => (
                         <option key={u} value={u}>
                           {u}
                         </option>

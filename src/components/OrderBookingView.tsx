@@ -289,16 +289,23 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
         ? prod.piecesPerUnit
         : baseUnit === 'ডজন'
         ? 12
+        : baseUnit === 'পাতা'
+        ? 10
+        : baseUnit === 'বক্স' || baseUnit === 'কার্টুন'
+        ? 24
+        : baseUnit === 'প্যাকেট'
+        ? 12
         : 1;
 
     // Single piece price (১ পিসের দাম)
+    const unitPrice = Number(prod.unitPrice) || 0;
     const onePiecePrice =
       baseUnit === 'পিস'
-        ? prod.unitPrice
-        : prod.unitPrice / piecesPerBase;
+        ? unitPrice
+        : unitPrice / piecesPerBase;
 
     if (targetUnit === baseUnit) {
-      return prod.unitPrice;
+      return unitPrice;
     }
     if (targetUnit === 'পিস') {
       return +(onePiecePrice.toFixed(2));
@@ -306,11 +313,20 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
     if (targetUnit === 'ডজন') {
       return +((onePiecePrice * 12).toFixed(2));
     }
+    if (targetUnit === 'পাতা') {
+      return +((onePiecePrice * 10).toFixed(2));
+    }
+    if (targetUnit === 'বক্স' || targetUnit === 'কার্টুন') {
+      return +((onePiecePrice * 24).toFixed(2));
+    }
+    if (targetUnit === 'প্যাকেট') {
+      return +((onePiecePrice * 12).toFixed(2));
+    }
     if (prod.piecesPerUnit && prod.piecesPerUnit > 0 && targetUnit === prod.unit) {
-      return prod.unitPrice;
+      return unitPrice;
     }
 
-    return prod.unitPrice;
+    return unitPrice;
   };
 
   // Helper to calculate max available stock in terms of the chosen unit
@@ -321,16 +337,23 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
         ? prod.piecesPerUnit
         : baseUnit === 'ডজন'
         ? 12
+        : baseUnit === 'পাতা'
+        ? 10
+        : baseUnit === 'বক্স' || baseUnit === 'কার্টুন'
+        ? 24
+        : baseUnit === 'প্যাকেট'
+        ? 12
         : 1;
 
     // Total stock in single pieces
+    const stock = Number(prod.stock) || 0;
     const totalPieces =
       baseUnit === 'পিস'
-        ? prod.stock
-        : prod.stock * piecesPerBase;
+        ? stock
+        : stock * piecesPerBase;
 
     if (targetUnit === baseUnit) {
-      return prod.stock;
+      return stock;
     }
     if (targetUnit === 'পিস') {
       return totalPieces;
@@ -338,8 +361,17 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
     if (targetUnit === 'ডজন') {
       return Math.floor(totalPieces / 12);
     }
+    if (targetUnit === 'পাতা') {
+      return Math.floor(totalPieces / 10);
+    }
+    if (targetUnit === 'বক্স' || targetUnit === 'কার্টুন') {
+      return Math.floor(totalPieces / 24);
+    }
+    if (targetUnit === 'প্যাকেট') {
+      return Math.floor(totalPieces / 12);
+    }
 
-    return prod.stock;
+    return stock;
   };
 
   const handleUnitChange = (productId: string, newUnit: string) => {
