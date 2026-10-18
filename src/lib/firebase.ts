@@ -347,7 +347,7 @@ export async function readFirestoreCatalogDirect<T = any>(catalogKey: string): P
   }
 }
 
-// Helper to merge cloud/mirror items with local items without ever losing newly added local items
+// Helper to merge cloud/mirror items with local items, ensuring Firebase (remote) has top priority
 function mergeLocalAndCloud<T extends Record<string, any>>(
   localItems: T[],
   remoteItems: T[],
@@ -355,19 +355,53 @@ function mergeLocalAndCloud<T extends Record<string, any>>(
   idField = 'id'
 ): T[] {
   const map = new Map<string, T>();
-  for (const item of remoteItems) {
+  const localMap = new Map<string, T>();
+
+  // Index local items
+  for (const item of (localItems || [])) {
     const key = item?.[idField] ? String(item[idField]) : '';
     if (key && !deletedIds.has(key)) {
-      map.set(key, item);
+      localMap.set(key, item);
     }
   }
-  for (const item of localItems) {
+
+  // 1. Remote (Firebase) items are top priority: all remote fields overwrite local fields!
+  for (const item of (remoteItems || [])) {
     const key = item?.[idField] ? String(item[idField]) : '';
     if (key && !deletedIds.has(key)) {
-      const existing = map.get(key);
-      map.set(key, existing ? { ...existing, ...item } : item);
+      const local = localMap.get(key);
+      if (local) {
+        const bestImage =
+          (item.imageUrl && !item.imageUrl.startsWith('/uploads/') ? item.imageUrl : null) ||
+          (local.imageUrl && local.imageUrl.startsWith('data:') ? local.imageUrl : null) ||
+          local.imageUrl ||
+          '';
+
+        map.set(key, {
+          ...local,
+          ...item, // Remote (Firebase) overwrites local!
+          ...('imageUrl' in item || 'imageUrl' in local ? { imageUrl: bestImage } : {}),
+        });
+      } else {
+        map.set(key, item);
+      }
     }
   }
+
+  // 2. Only preserve local items if they are brand-new un-synced offline creations (< 5 mins or pending sync)
+  // Old stale local items that do not exist in Firebase were deleted on another device and must NOT resurrect!
+  const now = Date.now();
+  localMap.forEach((localItem, key) => {
+    if (map.has(key) || deletedIds.has(key)) return;
+    const isPending = (localItem as any).syncedWithSheets === false || (localItem as any)._isOfflinePending;
+    const itemTime = (localItem as any).createdAt || (localItem as any).orderDate || (localItem as any).timestamp;
+    const isVeryRecent = itemTime && (now - new Date(itemTime).getTime() < 5 * 60 * 1000);
+
+    if (isPending || isVeryRecent) {
+      map.set(key, localItem);
+    }
+  });
+
   return Array.from(map.values());
 }
 
@@ -1189,7 +1223,11 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
             shops.push(s);
           }
         });
-        pollFirebaseDirect(shops);
+        // Real-time Firestore snapshot received: Firebase has top priority!
+        const merged = mergeLocalAndCloud(getShops(), shops, deletedIds);
+        if (merged.length > 0) {
+          onData(merged);
+        }
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, path);
@@ -1252,7 +1290,11 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
             products.push(p);
           }
         });
-        pollFirebaseDirect(products);
+        // Real-time Firestore snapshot received: Firebase has top priority!
+        const merged = mergeLocalAndCloud(getProducts(), products, deletedIds);
+        if (merged.length > 0) {
+          onData(merged);
+        }
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, path);
@@ -1317,7 +1359,13 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
             orders.push(o);
           }
         });
-        pollFirebaseDirect(orders);
+        // Real-time Firestore snapshot received: Firebase has top priority!
+        const merged = mergeLocalAndCloud(getOrders(), orders, deletedIds).sort(
+          (a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime()
+        );
+        if (merged.length > 0) {
+          onData(merged);
+        }
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, path);
@@ -1338,28 +1386,40 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
   };
 }
 
-// Cloud Mutation Operations (Server Mirror + Safe Quota-Aware Firestore Write)
+// Cloud Mutation Operations (Real-Time Firestore First + Background Safe Mirror Sync)
 export async function saveShopToCloud(shop: Shop) {
   const path = `shops/${shop.id}`;
   const cleaned = cleanForFirestore(shop);
-  await syncItemToServerMirror('shops', cleaned);
-  if (isFirestoreWriteQuotaExhausted()) return;
-  await upsertItemInFirebaseCatalog('shops', cleaned, 'id');
-  if (isFirestoreQuotaExhausted()) return;
-  setDoc(doc(db, 'shops', shop.id), cleaned).catch((error) => {
-    handleFirestoreError(error, OperationType.WRITE, path);
-  });
+
+  // 1. Direct real-time Firestore write (triggers onSnapshot immediately across all devices!)
+  if (!isFirestoreQuotaExhausted()) {
+    setDoc(doc(db, 'shops', shop.id), cleaned).catch((error) => {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    });
+  }
+
+  // 2. Parallel background mirror & catalog sync (prevents latency or blocks)
+  syncItemToServerMirror('shops', cleaned).catch(() => {});
+  if (!isFirestoreWriteQuotaExhausted()) {
+    upsertItemInFirebaseCatalog('shops', cleaned, 'id').catch(() => {});
+  }
 }
 
 export async function deleteShopFromCloud(shopId: string) {
   const path = `shops/${shopId}`;
-  await deleteItemFromServerMirror('shops', shopId);
-  if (isFirestoreWriteQuotaExhausted()) return;
-  await removeItemFromFirebaseCatalog('shops', shopId, 'id');
-  if (isFirestoreQuotaExhausted()) return;
-  deleteDoc(doc(db, 'shops', shopId)).catch((error) => {
-    handleFirestoreError(error, OperationType.DELETE, path);
-  });
+
+  // 1. Direct real-time Firestore deletion
+  if (!isFirestoreQuotaExhausted()) {
+    deleteDoc(doc(db, 'shops', shopId)).catch((error) => {
+      handleFirestoreError(error, OperationType.DELETE, path);
+    });
+  }
+
+  // 2. Parallel background mirror & catalog update
+  deleteItemFromServerMirror('shops', shopId).catch(() => {});
+  if (!isFirestoreWriteQuotaExhausted()) {
+    removeItemFromFirebaseCatalog('shops', shopId, 'id').catch(() => {});
+  }
 }
 
 export async function saveProductToCloud(product: Product) {
@@ -1371,60 +1431,91 @@ export async function saveProductToCloud(product: Product) {
     ...product,
     imageUrl: safeImageUrl,
   });
-  await syncItemToServerMirror('products', cleaned);
-  if (isFirestoreWriteQuotaExhausted()) return;
-  await upsertItemInFirebaseCatalog('products', cleaned, 'id');
-  if (isFirestoreQuotaExhausted()) return;
-  setDoc(doc(db, 'products', product.id), cleaned).catch((error) => {
-    handleFirestoreError(error, OperationType.WRITE, path);
-  });
+
+  // 1. Direct real-time Firestore write
+  if (!isFirestoreQuotaExhausted()) {
+    setDoc(doc(db, 'products', product.id), cleaned).catch((error) => {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    });
+  }
+
+  // 2. Parallel background mirror & catalog sync
+  syncItemToServerMirror('products', cleaned).catch(() => {});
+  if (!isFirestoreWriteQuotaExhausted()) {
+    upsertItemInFirebaseCatalog('products', cleaned, 'id').catch(() => {});
+  }
 }
 
 export async function deleteProductFromCloud(productId: string) {
   const path = `products/${productId}`;
-  await deleteItemFromServerMirror('products', productId);
-  if (isFirestoreWriteQuotaExhausted()) return;
-  await removeItemFromFirebaseCatalog('products', productId, 'id');
-  if (isFirestoreQuotaExhausted()) return;
-  deleteDoc(doc(db, 'products', productId)).catch((error) => {
-    handleFirestoreError(error, OperationType.DELETE, path);
-  });
+
+  // 1. Direct real-time Firestore deletion
+  if (!isFirestoreQuotaExhausted()) {
+    deleteDoc(doc(db, 'products', productId)).catch((error) => {
+      handleFirestoreError(error, OperationType.DELETE, path);
+    });
+  }
+
+  // 2. Parallel background mirror & catalog deletion
+  deleteItemFromServerMirror('products', productId).catch(() => {});
+  if (!isFirestoreWriteQuotaExhausted()) {
+    removeItemFromFirebaseCatalog('products', productId, 'id').catch(() => {});
+  }
 }
 
 export async function saveOrderToCloud(order: Order) {
   const path = `orders/${order.id}`;
   const cleaned = cleanForFirestore(order);
-  await syncItemToServerMirror('orders', cleaned);
-  if (isFirestoreWriteQuotaExhausted()) return;
-  await upsertItemInFirebaseCatalog('orders', cleaned, 'id');
-  if (isFirestoreQuotaExhausted()) return;
-  setDoc(doc(db, 'orders', order.id), cleaned).catch((error) => {
-    handleFirestoreError(error, OperationType.WRITE, path);
-  });
+
+  // 1. Direct real-time Firestore write
+  if (!isFirestoreQuotaExhausted()) {
+    setDoc(doc(db, 'orders', order.id), cleaned).catch((error) => {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    });
+  }
+
+  // 2. Parallel background mirror & catalog sync
+  syncItemToServerMirror('orders', cleaned).catch(() => {});
+  if (!isFirestoreWriteQuotaExhausted()) {
+    upsertItemInFirebaseCatalog('orders', cleaned, 'id').catch(() => {});
+  }
 }
 
 export async function deleteOrderFromCloud(orderId: string) {
   const path = `orders/${orderId}`;
-  await deleteItemFromServerMirror('orders', orderId);
-  if (isFirestoreWriteQuotaExhausted()) return;
-  await removeItemFromFirebaseCatalog('orders', orderId, 'id');
-  if (isFirestoreQuotaExhausted()) return;
-  deleteDoc(doc(db, 'orders', orderId)).catch((error) => {
-    handleFirestoreError(error, OperationType.DELETE, path);
-  });
+
+  // 1. Direct real-time Firestore deletion
+  if (!isFirestoreQuotaExhausted()) {
+    deleteDoc(doc(db, 'orders', orderId)).catch((error) => {
+      handleFirestoreError(error, OperationType.DELETE, path);
+    });
+  }
+
+  // 2. Parallel background mirror & catalog deletion
+  deleteItemFromServerMirror('orders', orderId).catch(() => {});
+  if (!isFirestoreWriteQuotaExhausted()) {
+    removeItemFromFirebaseCatalog('orders', orderId, 'id').catch(() => {});
+  }
 }
 
 export async function saveDueCollectionToCloud(record: DueCollectionRecord) {
   const path = `dueCollections/${record.id}`;
   const cleaned = cleanForFirestore(record);
-  await syncItemToServerMirror('dueCollections', cleaned);
-  if (isFirestoreWriteQuotaExhausted()) return;
-  await upsertItemInFirebaseCatalog('dueCollections', cleaned, 'id');
-  if (isFirestoreQuotaExhausted()) return;
-  setDoc(doc(db, 'dueCollections', record.id), cleaned).catch((error) => {
-    handleFirestoreError(error, OperationType.WRITE, path);
-  });
+
+  // 1. Direct real-time Firestore write
+  if (!isFirestoreQuotaExhausted()) {
+    setDoc(doc(db, 'dueCollections', record.id), cleaned).catch((error) => {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    });
+  }
+
+  // 2. Parallel background mirror & catalog sync
+  syncItemToServerMirror('dueCollections', cleaned).catch(() => {});
+  if (!isFirestoreWriteQuotaExhausted()) {
+    upsertItemInFirebaseCatalog('dueCollections', cleaned, 'id').catch(() => {});
+  }
 }
+
 
 // Category Cloud Methods
 export function subscribeToCloudCategories(onData: (categories: Category[]) => void) {
@@ -1482,27 +1573,35 @@ export function subscribeToCloudCategories(onData: (categories: Category[]) => v
 export async function saveCategoryToCloud(category: Category) {
   const path = `categories/${category.id}`;
   const cleaned = cleanForFirestore(category);
-  syncItemToServerMirror('categories', cleaned);
-  if (isFirestoreWriteQuotaExhausted()) return;
-  try {
-    await upsertItemInFirebaseCatalog('categories', cleaned, 'id');
-    if (isFirestoreQuotaExhausted()) return;
-    await setDoc(doc(db, 'categories', category.id), cleaned);
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
+
+  // 1. Immediate real-time Firestore write
+  if (!isFirestoreQuotaExhausted()) {
+    setDoc(doc(db, 'categories', category.id), cleaned).catch((error) => {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    });
+  }
+
+  // 2. Parallel background mirror & catalog sync
+  syncItemToServerMirror('categories', cleaned).catch(() => {});
+  if (!isFirestoreWriteQuotaExhausted()) {
+    upsertItemInFirebaseCatalog('categories', cleaned, 'id').catch(() => {});
   }
 }
 
 export async function deleteCategoryFromCloud(categoryId: string) {
   const path = `categories/${categoryId}`;
-  deleteItemFromServerMirror('categories', categoryId);
-  if (isFirestoreWriteQuotaExhausted()) return;
-  try {
-    await removeItemFromFirebaseCatalog('categories', categoryId, 'id');
-    if (isFirestoreQuotaExhausted()) return;
-    await deleteDoc(doc(db, 'categories', categoryId));
-  } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, path);
+
+  // 1. Immediate real-time Firestore delete
+  if (!isFirestoreQuotaExhausted()) {
+    deleteDoc(doc(db, 'categories', categoryId)).catch((error) => {
+      handleFirestoreError(error, OperationType.DELETE, path);
+    });
+  }
+
+  // 2. Parallel background mirror & catalog update
+  deleteItemFromServerMirror('categories', categoryId).catch(() => {});
+  if (!isFirestoreWriteQuotaExhausted()) {
+    removeItemFromFirebaseCatalog('categories', categoryId, 'id').catch(() => {});
   }
 }
 
@@ -1562,27 +1661,35 @@ export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
 export async function saveRouteToCloud(route: Route) {
   const path = `routes/${route.id}`;
   const cleaned = cleanForFirestore(route);
-  syncItemToServerMirror('routes', cleaned);
-  if (isFirestoreWriteQuotaExhausted()) return;
-  try {
-    await upsertItemInFirebaseCatalog('routes', cleaned, 'id');
-    if (isFirestoreQuotaExhausted()) return;
-    await setDoc(doc(db, 'routes', route.id), cleaned);
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
+
+  // 1. Immediate real-time Firestore write
+  if (!isFirestoreQuotaExhausted()) {
+    setDoc(doc(db, 'routes', route.id), cleaned).catch((error) => {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    });
+  }
+
+  // 2. Parallel background mirror & catalog sync
+  syncItemToServerMirror('routes', cleaned).catch(() => {});
+  if (!isFirestoreWriteQuotaExhausted()) {
+    upsertItemInFirebaseCatalog('routes', cleaned, 'id').catch(() => {});
   }
 }
 
 export async function deleteRouteFromCloud(routeId: string) {
   const path = `routes/${routeId}`;
-  deleteItemFromServerMirror('routes', routeId);
-  if (isFirestoreWriteQuotaExhausted()) return;
-  try {
-    await removeItemFromFirebaseCatalog('routes', routeId, 'id');
-    if (isFirestoreQuotaExhausted()) return;
-    await deleteDoc(doc(db, 'routes', routeId));
-  } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, path);
+
+  // 1. Immediate real-time Firestore delete
+  if (!isFirestoreQuotaExhausted()) {
+    deleteDoc(doc(db, 'routes', routeId)).catch((error) => {
+      handleFirestoreError(error, OperationType.DELETE, path);
+    });
+  }
+
+  // 2. Parallel background mirror & catalog update
+  deleteItemFromServerMirror('routes', routeId).catch(() => {});
+  if (!isFirestoreWriteQuotaExhausted()) {
+    removeItemFromFirebaseCatalog('routes', routeId, 'id').catch(() => {});
   }
 }
 

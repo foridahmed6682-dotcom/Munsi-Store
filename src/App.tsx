@@ -437,57 +437,66 @@ export default function App() {
     // Subscribe to Firestore Real-time Collections (if online)
     seedInitialCloudDataIfEmpty();
 
-    // Sync with Server-Side & Firestore Write-Channel Mirror so data is never lost across devices or during Firebase read quota limits
+    // Sync with Server-Side & Firestore Write-Channel Mirror: Firebase (remote) has TOP PRIORITY
     const mergeById = <T extends Record<string, any>>(localArr: T[], remoteArr: T[], deletedIds: Set<string>, idKey = 'id'): T[] => {
+      if (!Array.isArray(remoteArr)) return localArr || [];
+      if (remoteArr.length === 0 && (!localArr || localArr.length === 0)) return [];
+
       const map = new Map<string, T>();
-      remoteArr.forEach((item) => {
-        const key = item?.[idKey] ? String(item[idKey]) : '';
-        if (key && !deletedIds.has(key)) map.set(key, item);
-      });
-      localArr.forEach((item) => {
+      const localMap = new Map<string, T>();
+
+      (localArr || []).forEach((item) => {
         const key = item?.[idKey] ? String(item[idKey]) : '';
         if (key && !deletedIds.has(key)) {
-          const prev = map.get(key);
-          if (prev) {
-            const validImage =
-              (item.imageUrl && item.imageUrl.startsWith('data:') ? item.imageUrl : null) ||
-              (prev.imageUrl && prev.imageUrl.startsWith('data:') ? prev.imageUrl : null) ||
-              (item.imageUrl && item.imageUrl.startsWith('http') ? item.imageUrl : null) ||
-              (prev.imageUrl && prev.imageUrl.startsWith('http') ? prev.imageUrl : null) ||
-              (item.imageUrl && !item.imageUrl.startsWith('/uploads/') ? item.imageUrl : null) ||
-              (prev.imageUrl && !prev.imageUrl.startsWith('/uploads/') ? prev.imageUrl : null) ||
-              '';
-            map.set(key, {
-              ...prev,
-              ...item,
-              ...('imageUrl' in prev || 'imageUrl' in item ? { imageUrl: validImage } : {}),
-            });
-          } else {
-            map.set(key, item);
-          }
+          localMap.set(key, item);
         }
       });
+
+      // 1. Remote (Firebase) items are authoritative: all remote properties overwrite local properties
+      remoteArr.forEach((remoteItem) => {
+        const key = remoteItem?.[idKey] ? String(remoteItem[idKey]) : '';
+        if (!key || deletedIds.has(key)) return;
+
+        const localItem = localMap.get(key);
+        if (localItem) {
+          const validImage =
+            (remoteItem.imageUrl && !remoteItem.imageUrl.startsWith('/uploads/') ? remoteItem.imageUrl : null) ||
+            (localItem.imageUrl && localItem.imageUrl.startsWith('data:') ? localItem.imageUrl : null) ||
+            (remoteItem.imageUrl && remoteItem.imageUrl.startsWith('http') ? remoteItem.imageUrl : null) ||
+            (localItem.imageUrl && localItem.imageUrl.startsWith('http') ? localItem.imageUrl : null) ||
+            localItem.imageUrl ||
+            '';
+
+          map.set(key, {
+            ...localItem,
+            ...remoteItem, // Remote (Firebase) overwrites local!
+            ...('imageUrl' in remoteItem || 'imageUrl' in localItem ? { imageUrl: validImage } : {}),
+          });
+        } else {
+          map.set(key, remoteItem);
+        }
+      });
+
+      // 2. Only keep local items if they are brand new un-synced creations (< 5 mins or pending sync)
+      // Any older local item absent from Firebase was deleted on another device and must NOT resurrect!
+      const now = Date.now();
+      localMap.forEach((localItem, key) => {
+        if (map.has(key) || deletedIds.has(key)) return;
+        const isPending = (localItem as any).syncedWithSheets === false || (localItem as any)._isOfflinePending;
+        const itemTime = (localItem as any).createdAt || (localItem as any).orderDate || (localItem as any).timestamp;
+        const isVeryRecent = itemTime && (now - new Date(itemTime).getTime() < 5 * 60 * 1000);
+
+        if (isPending || isVeryRecent) {
+          map.set(key, localItem);
+        }
+      });
+
       return Array.from(map.values());
     };
 
     (async () => {
       try {
-        const localProds = getProducts();
-        const localShps = getShops();
-        const localOrds = getOrders();
-        const localCats = getCategories();
-        const localRts = getRoutes();
-
-        if (localProds.length > 0 || localShps.length > 0 || localOrds.length > 0 || localCats.length > 0) {
-          await pushBulkDataToServerMirror({
-            products: localProds,
-            shops: localShps,
-            orders: localOrds,
-            categories: localCats,
-            routes: localRts,
-          });
-        }
-
+        // Safe read-only sync on mount: we never push stale local data to overwrite remote!
         const mirror = await fetchServerDatabaseMirror();
         if (mirror) {
           let updatedAny = false;
