@@ -12,12 +12,17 @@ import {
   Trash2,
   Plus,
   Save,
-  Send,
-  Scissors
+  Send
 } from 'lucide-react';
 import { Order, OrderItem, Product } from '../types';
 import { getBusinessInfo } from '../lib/storage';
-import { PrintOrientation, printOrdersBatch } from '../lib/printService';
+import {
+  PrintOrientation,
+  PrintPaperSize,
+  getSavedPrintPaperSize,
+  setSavedPrintPaperSize,
+  printOrdersBatch,
+} from '../lib/printService';
 
 interface MemoModalProps {
   order: Order | null;
@@ -56,6 +61,7 @@ export const MemoModal: React.FC<MemoModalProps> = ({
     }
     return 'portrait';
   });
+  const [printPaperSize, setPrintPaperSize] = useState<PrintPaperSize>(() => getSavedPrintPaperSize());
 
   // Editable state
   const [editShopName, setEditShopName] = useState('');
@@ -81,7 +87,10 @@ export const MemoModal: React.FC<MemoModalProps> = ({
   const biz = getBusinessInfo();
 
   const handlePrint = () => {
-    printOrdersBatch([order], 'slips', '(সিঙ্গেল মেমো)', { orientation: printOrientation });
+    printOrdersBatch([order], 'slips', '(সিঙ্গেল মেমো)', {
+      orientation: printOrientation,
+      paperSize: printPaperSize,
+    });
   };
 
   const handleOpenPairModal = () => {
@@ -328,6 +337,28 @@ export const MemoModal: React.FC<MemoModalProps> = ({
               </button>
             </div>
 
+            {/* Paper Size Selector */}
+            <div className="flex items-center bg-neutral-900 border border-neutral-700 rounded-lg p-0.5 shrink-0" title="কাগজের সাইজ (Paper Size)">
+              {(['A4', 'A5', 'Letter', 'Legal', 'auto'] as const).map((sz) => (
+                <button
+                  key={sz}
+                  type="button"
+                  onClick={() => {
+                    setPrintPaperSize(sz);
+                    setSavedPrintPaperSize(sz);
+                  }}
+                  className={`p-1 px-1.5 rounded text-[10px] font-bold cursor-pointer transition-colors ${
+                    printPaperSize === sz
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'text-neutral-400 hover:text-white'
+                  }`}
+                  title={`কাগজের সাইজ: ${sz === 'auto' ? 'প্রিন্টার অটো' : sz}`}
+                >
+                  {sz === 'auto' ? 'Auto' : sz}
+                </button>
+              ))}
+            </div>
+
             <button
               onClick={handlePrint}
               className="p-1.5 px-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs flex items-center gap-1 font-bold shadow-xs shrink-0 cursor-pointer"
@@ -339,10 +370,10 @@ export const MemoModal: React.FC<MemoModalProps> = ({
             <button
               onClick={handleOpenPairModal}
               className="p-1.5 px-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs flex items-center gap-1 font-bold shadow-xs shrink-0 cursor-pointer"
-              title="১টি A4 পেপারে ২টি মেমো (আলাদা আলাদা দোকান কপি) প্রিন্ট করুন"
+              title="১টি পেপারে ২টি মেমো (আলাদা আলাদা দোকান কপি) প্রিন্ট করুন"
             >
-              <Scissors className="w-3.5 h-3.5" />
-              <span>২-ইন-১ A4</span>
+              <Copy className="w-3.5 h-3.5" />
+              <span>২-ইন-১ ({printPaperSize})</span>
             </button>
             {isAdmin && onDeleteOrder && (
               <button
@@ -721,8 +752,8 @@ export const MemoModal: React.FC<MemoModalProps> = ({
           <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl border border-neutral-200 overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95">
             <div className="bg-gradient-to-r from-blue-900 to-indigo-950 text-white p-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Scissors className="w-5 h-5 text-amber-300" />
-                <h4 className="font-black text-sm text-white">২টি মেমো ১টি A4 পেপারে প্রিন্ট</h4>
+                <Printer className="w-5 h-5 text-amber-300" />
+                <h4 className="font-black text-sm text-white">২টি মেমো ১টি পেপারে প্রিন্ট ({printPaperSize})</h4>
               </div>
               <button
                 type="button"
@@ -832,6 +863,31 @@ export const MemoModal: React.FC<MemoModalProps> = ({
                     </button>
                   </div>
                 </div>
+
+                {/* Paper Size Selector */}
+                <div className="space-y-1.5 pt-2">
+                  <label className="text-[11px] font-bold text-neutral-700 block">কাগজের সাইজ (Paper Size):</label>
+                  <div className="grid grid-cols-5 gap-1.5">
+                    {(['A4', 'A5', 'Letter', 'Legal', 'auto'] as const).map((sz) => (
+                      <button
+                        key={sz}
+                        type="button"
+                        onClick={() => {
+                          setPrintPaperSize(sz);
+                          setSavedPrintPaperSize(sz);
+                        }}
+                        className={`p-2 rounded-xl border text-center cursor-pointer transition-all ${
+                          printPaperSize === sz
+                            ? 'border-indigo-600 bg-indigo-50 font-black text-indigo-950 ring-1 ring-indigo-500'
+                            : 'border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-100 font-bold'
+                        }`}
+                      >
+                        <div className="text-xs">{sz === 'auto' ? 'অটো' : sz}</div>
+                        <div className="text-[9px] opacity-75">{sz === 'auto' ? 'ডিফল্ট' : 'সাইজ'}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -853,14 +909,14 @@ export const MemoModal: React.FC<MemoModalProps> = ({
                     [order, targetSecond],
                     'slips_2in1',
                     pairMode === 'same' ? '(২টি দোকান কপি - ডুপ্লিকেট)' : '(২টি আলাদা দোকান কপি)',
-                    { orientation: printOrientation }
+                    { orientation: printOrientation, paperSize: printPaperSize }
                   );
                   setIsPairModalOpen(false);
                 }}
                 className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-md flex items-center gap-1.5 cursor-pointer"
               >
                 <Printer className="w-3.5 h-3.5" />
-                <span>১টি A4 পেপারে ২টি মেমো প্রিন্ট ({printOrientation === 'landscape' ? 'ল্যান্ডস্কেপ' : 'পোর্ট্রেট'})</span>
+                <span>১টি {printPaperSize === 'auto' ? '' : `${printPaperSize} `}পেপারে ২টি মেমো প্রিন্ট ({printOrientation === 'landscape' ? 'ল্যান্ডস্কেপ' : 'পোর্ট্রেট'})</span>
               </button>
             </div>
           </div>

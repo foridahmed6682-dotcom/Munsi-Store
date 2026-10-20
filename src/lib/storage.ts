@@ -816,6 +816,9 @@ export function getCategories(): Category[] {
 export function saveCategories(categories: Category[]) {
   const deletedIds = getDeletedCategoryIds();
   const clean = categories.filter((c) => !deletedIds.has(c.id));
+  if (isIndexedDBSupported()) {
+    saveItemsToIndexedDB('categories', clean).catch(() => {});
+  }
   safeSetLocalStorage(STORAGE_KEYS.CATEGORIES, JSON.stringify(clean));
 }
 
@@ -957,6 +960,9 @@ export function getRoutes(): Route[] {
 export function saveRoutes(routes: Route[]) {
   const deletedIds = getDeletedRouteIds();
   const clean = routes.filter((r) => !deletedIds.has(r.id));
+  if (isIndexedDBSupported()) {
+    saveItemsToIndexedDB('routes', clean).catch(() => {});
+  }
   safeSetLocalStorage(STORAGE_KEYS.ROUTES, JSON.stringify(clean));
 }
 
@@ -1428,6 +1434,9 @@ export function deleteCustomerDeliveryAddress(): void {
 }
 
 export function saveDueCollections(collections: DueCollectionRecord[]): void {
+  if (isIndexedDBSupported()) {
+    saveItemsToIndexedDB('dueCollections', collections).catch(() => {});
+  }
   safeSetLocalStorage(STORAGE_KEYS.COLLECTIONS, JSON.stringify(collections));
 }
 
@@ -1441,6 +1450,9 @@ export function getDailyExpenses(): DailyExpenseRecord[] {
 }
 
 export function saveDailyExpenses(expenses: DailyExpenseRecord[]): void {
+  if (isIndexedDBSupported()) {
+    saveItemsToIndexedDB('dailyExpenses', expenses).catch(() => {});
+  }
   safeSetLocalStorage(STORAGE_KEYS.DAILY_EXPENSES, JSON.stringify(expenses));
 }
 

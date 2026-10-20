@@ -34,6 +34,9 @@ import {
 import {
   OrderPrintMode,
   PrintOrientation,
+  PrintPaperSize,
+  getSavedPrintPaperSize,
+  setSavedPrintPaperSize,
   printOrdersBatch,
   printProductsBatch,
   printShopsBatch,
@@ -88,6 +91,7 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
     }
     return 'portrait';
   });
+  const [printPaperSize, setPrintPaperSize] = useState<PrintPaperSize>(() => getSavedPrintPaperSize());
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -386,7 +390,10 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
     switch (activeListType) {
       case 'orders': {
         const found = orders.filter((o) => o.id === id);
-        printOrdersBatch(found, orderPrintMode, '(সিঙ্গেল মেমো)', { orientation: printOrientation });
+        printOrdersBatch(found, orderPrintMode, '(সিঙ্গেল মেমো)', {
+          orientation: printOrientation,
+          paperSize: printPaperSize,
+        });
         break;
       }
       case 'products': {
@@ -438,7 +445,7 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
           orders.filter((o) => selectedIds.has(o.id)),
           overrideMode || orderPrintMode,
           suffix,
-          { orientation: printOrientation }
+          { orientation: printOrientation, paperSize: printPaperSize }
         );
         break;
       case 'products':
@@ -493,7 +500,10 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
     const suffix = activeFilterSummaryLabel || '(সকল ডাটা)';
     switch (activeListType) {
       case 'orders':
-        printOrdersBatch(filteredOrders, overrideMode || orderPrintMode, suffix, { orientation: printOrientation });
+        printOrdersBatch(filteredOrders, overrideMode || orderPrintMode, suffix, {
+          orientation: printOrientation,
+          paperSize: printPaperSize,
+        });
         break;
       case 'products':
         printProductsBatch(products, '(সকল পণ্য)');
@@ -545,16 +555,16 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
           filteredOrders,
           'slips',
           `${activeFilterSummaryLabel || '(সকল মেমো স্লিপ)'}`,
-          { orientation: printOrientation }
+          { orientation: printOrientation, paperSize: printPaperSize }
         ),
       bulkBtnText: `১-ক্লিকে মেমো স্লিপ প্রিন্ট (${filteredOrders.length})`,
-      twoInOneBtnText: `📑 ২ মেমো প্রতি A4 প্রিন্ট (${filteredOrders.length}টি)`,
+      twoInOneBtnText: `📑 ২ মেমো প্রতি ${printPaperSize} প্রিন্ট (${filteredOrders.length}টি)`,
       onTwoInOnePrint: () =>
         printOrdersBatch(
           filteredOrders,
           'slips_2in1',
-          `${activeFilterSummaryLabel || '(২টি আলাদা দোকান কপি - A4)'}`,
-          { orientation: printOrientation }
+          `${activeFilterSummaryLabel || '(২টি আলাদা দোকান কপি)'}`,
+          { orientation: printOrientation, paperSize: printPaperSize }
         ),
       secondaryBtnText: `📊 অর্ডার সামারি টেবিল প্রিন্ট (${filteredOrders.length})`,
       onSecondaryPrint: () =>
@@ -562,7 +572,7 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
           filteredOrders,
           'table',
           `${activeFilterSummaryLabel || '(অর্ডার সামারি)'}`,
-          { orientation: printOrientation }
+          { orientation: printOrientation, paperSize: printPaperSize }
         ),
       tertiaryBtnText: `📦 পণ্যের সামারি / লোডিং শীট প্রিন্ট (${filteredOrders.length})`,
       onTertiaryPrint: () =>
@@ -570,7 +580,7 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
           filteredOrders,
           'product_summary',
           `${activeFilterSummaryLabel || '(পণ্যের সামারি)'}`,
-          { orientation: printOrientation }
+          { orientation: printOrientation, paperSize: printPaperSize }
         ),
     },
     {
@@ -694,6 +704,29 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
               </button>
             </div>
 
+            {/* Paper Size Selector */}
+            <div className="flex items-center bg-blue-950/60 border border-blue-400/40 rounded-2xl p-1" title="কাগজের সাইজ (Paper Size)">
+              <span className="text-[10px] font-bold text-blue-200 px-1 hidden sm:inline">সাইজ:</span>
+              {(['A4', 'A5', 'Letter', 'Legal', 'auto'] as const).map((sz) => (
+                <button
+                  key={sz}
+                  type="button"
+                  onClick={() => {
+                    setPrintPaperSize(sz);
+                    setSavedPrintPaperSize(sz);
+                  }}
+                  className={`px-2.5 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors ${
+                    printPaperSize === sz
+                      ? 'bg-blue-500 text-white shadow-xs'
+                      : 'text-blue-200 hover:text-white'
+                  }`}
+                  title={`কাগজের সাইজ: ${sz === 'auto' ? 'প্রিন্টার অটো' : sz}`}
+                >
+                  {sz === 'auto' ? 'Auto' : sz}
+                </button>
+              ))}
+            </div>
+
             <button
               type="button"
               onClick={() =>
@@ -701,7 +734,7 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
                   filteredOrders,
                   'product_summary',
                   activeFilterSummaryLabel || '(পণ্যের সামারি)',
-                  { orientation: printOrientation }
+                  { orientation: printOrientation, paperSize: printPaperSize }
                 )
               }
               disabled={filteredOrders.length === 0}
@@ -718,7 +751,7 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
                   filteredOrders,
                   'slips',
                   activeFilterSummaryLabel || '(সকল মেমো স্লিপ)',
-                  { orientation: printOrientation }
+                  { orientation: printOrientation, paperSize: printPaperSize }
                 )
               }
               disabled={filteredOrders.length === 0}
@@ -734,16 +767,16 @@ export const AdminPrintCenter: React.FC<AdminPrintCenterProps> = ({
                 printOrdersBatch(
                   filteredOrders,
                   'slips_2in1',
-                  activeFilterSummaryLabel || '(২টি আলাদা দোকান কপি - A4)',
-                  { orientation: printOrientation }
+                  activeFilterSummaryLabel || `(২টি আলাদা দোকান কপি - ${printPaperSize})`,
+                  { orientation: printOrientation, paperSize: printPaperSize }
                 )
               }
               disabled={filteredOrders.length === 0}
               className="px-4 py-2.5 rounded-2xl bg-indigo-300 hover:bg-indigo-200 disabled:opacity-40 text-neutral-950 font-black text-xs flex items-center gap-1.5 shadow-lg cursor-pointer transition-all active:scale-95"
-              title="১টি A4 পেপারে ২টি আলাদা মেমো (দোকান কপি) প্রিন্ট হবে"
+              title={`১টি ${printPaperSize} পেপারে ২টি আলাদা মেমো (দোকান কপি) প্রিন্ট হবে`}
             >
               <Printer className="w-4 h-4" />
-              <span>📑 ২ মেমো প্রতি A4 প্রিন্ট ({filteredOrders.length}টি)</span>
+              <span>📑 ২ মেমো প্রতি {printPaperSize} প্রিন্ট ({filteredOrders.length}টি)</span>
             </button>
 
             <button

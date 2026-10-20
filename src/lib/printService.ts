@@ -53,12 +53,34 @@ function getSignatureFooterHtml(): string {
 }
 
 export type PrintOrientation = 'portrait' | 'landscape';
+export type PrintPaperSize = 'A4' | 'A5' | 'Letter' | 'Legal' | 'auto';
+
+const PREFERRED_PAPER_SIZE_KEY = 'munsi_preferred_print_paper_size';
+
+export function getSavedPrintPaperSize(): PrintPaperSize {
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem(PREFERRED_PAPER_SIZE_KEY);
+    if (saved === 'A4' || saved === 'A5' || saved === 'Letter' || saved === 'Legal' || saved === 'auto') {
+      return saved as PrintPaperSize;
+    }
+  }
+  return 'A4';
+}
+
+export function setSavedPrintPaperSize(size: PrintPaperSize): void {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(PREFERRED_PAPER_SIZE_KEY, size);
+  }
+}
 
 export function triggerGlobalPrint(
   htmlContent: string,
-  orientation: PrintOrientation = 'portrait'
+  orientation: PrintOrientation = 'portrait',
+  paperSize?: PrintPaperSize
 ): void {
   if (typeof document === 'undefined' || typeof window === 'undefined') return;
+
+  const resolvedPaperSize: PrintPaperSize = paperSize || getSavedPrintPaperSize();
 
   let styleEl = document.getElementById('global-print-dynamic-style') as HTMLStyleElement | null;
   if (!styleEl) {
@@ -67,10 +89,46 @@ export function triggerGlobalPrint(
     document.head.appendChild(styleEl);
   }
 
+  // Paper Size CSS rule:
+  // If 'auto', browser print window paper selection controls the physical size without CSS override.
+  // If A4/A5/Letter/Legal, @page explicitly sets the geometry for consistent printer rendering.
+  const pageRule = resolvedPaperSize === 'auto'
+    ? 'size: auto;'
+    : `size: ${resolvedPaperSize} ${orientation};`;
+
+  const marginRule = resolvedPaperSize === 'A5'
+    ? 'margin: 3mm;'
+    : 'margin: 4mm;';
+
   styleEl.textContent = `
     @page {
-      size: A4 ${orientation};
-      margin: 5mm;
+      ${pageRule}
+      ${marginRule}
+    }
+    @media print {
+      html, body {
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #ffffff !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+      #global-print-container {
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+      .print-sheet-two-memos, .a4-sheet-two-memos {
+        box-sizing: border-box !important;
+        width: 100% !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
+      .page-break-after {
+        page-break-after: always !important;
+        break-after: page !important;
+      }
     }
   `;
 
@@ -81,12 +139,25 @@ export function triggerGlobalPrint(
     document.body.appendChild(container);
   }
 
-  container.className = `print-container-orientation-${orientation}`;
+  container.className = `print-container-orientation-${orientation} print-container-paper-${resolvedPaperSize.toLowerCase()}`;
   container.innerHTML = htmlContent;
-  document.body.classList.add('is-printing-global', `print-is-${orientation}`);
+  document.body.classList.add(
+    'is-printing-global',
+    `print-is-${orientation}`,
+    `print-paper-${resolvedPaperSize.toLowerCase()}`
+  );
 
   const cleanup = () => {
-    document.body.classList.remove('is-printing-global', 'print-is-portrait', 'print-is-landscape');
+    document.body.classList.remove(
+      'is-printing-global',
+      'print-is-portrait',
+      'print-is-landscape',
+      'print-paper-a4',
+      'print-paper-a5',
+      'print-paper-letter',
+      'print-paper-legal',
+      'print-paper-auto'
+    );
     if (styleEl && styleEl.parentNode) {
       styleEl.parentNode.removeChild(styleEl);
     }
@@ -99,7 +170,16 @@ export function triggerGlobalPrint(
     window.print();
     // Fallback cleanup for browsers/iframes where afterprint fires late
     setTimeout(() => {
-      document.body.classList.remove('is-printing-global', 'print-is-portrait', 'print-is-landscape');
+      document.body.classList.remove(
+        'is-printing-global',
+        'print-is-portrait',
+        'print-is-landscape',
+        'print-paper-a4',
+        'print-paper-a5',
+        'print-paper-letter',
+        'print-paper-legal',
+        'print-paper-auto'
+      );
       if (styleEl && styleEl.parentNode) {
         styleEl.parentNode.removeChild(styleEl);
       }
@@ -114,6 +194,7 @@ export interface PrintOrdersOptions {
   groupBySupplier?: boolean;
   products?: Product[];
   orientation?: PrintOrientation;
+  paperSize?: PrintPaperSize;
 }
 
 // 1. PRINT ORDERS (Individual Memo Slips OR Summary Table OR Product Summary / Loading Sheet)
@@ -131,6 +212,7 @@ export function printOrdersBatch(
       ? { orientation: options }
       : (options || {});
   const orientation: PrintOrientation = resolvedOptions.orientation || 'portrait';
+  const paperSize: PrintPaperSize = resolvedOptions.paperSize || getSavedPrintPaperSize();
 
   if (mode === 'product_summary') {
     const allProducts = resolvedOptions.products || getProducts();
@@ -369,11 +451,11 @@ export function printOrdersBatch(
       </div>
     `;
 
-    triggerGlobalPrint(html, orientation);
+    triggerGlobalPrint(html, orientation, paperSize);
     return;
   }
 
-  // 2 Memos per single A4 sheet mode (Two distinct shop copies with cutting divider)
+  // 2 Memos per single sheet mode (Two distinct shop copies with cutting divider)
   if (mode === 'slips_2in1') {
     const orderPairs: Order[][] = [];
     for (let i = 0; i < orders.length; i += 2) {
@@ -381,6 +463,23 @@ export function printOrdersBatch(
     }
 
     const isLandscape = orientation === 'landscape';
+    const isA5 = paperSize === 'A5';
+
+    // Calculate sheet height styles matched to the physical paper size so it never spills into a 2nd page
+    let sheetHeightStyle = '';
+    if (isLandscape) {
+      if (paperSize === 'A4') sheetHeightStyle = 'height: 198mm; max-height: 202mm;';
+      else if (paperSize === 'Letter') sheetHeightStyle = 'height: 200mm; max-height: 205mm;';
+      else if (paperSize === 'Legal') sheetHeightStyle = 'height: 200mm; max-height: 205mm;';
+      else if (paperSize === 'A5') sheetHeightStyle = 'height: 138mm; max-height: 142mm;';
+      else sheetHeightStyle = 'height: 98vh; max-height: 99vh;';
+    } else {
+      if (paperSize === 'A4') sheetHeightStyle = 'height: 280mm; max-height: 286mm;';
+      else if (paperSize === 'Letter') sheetHeightStyle = 'height: 262mm; max-height: 268mm;';
+      else if (paperSize === 'Legal') sheetHeightStyle = 'height: 338mm; max-height: 344mm;';
+      else if (paperSize === 'A5') sheetHeightStyle = 'height: 196mm; max-height: 201mm;';
+      else sheetHeightStyle = 'height: 98vh; max-height: 99vh;';
+    }
 
     const pagesHtml = orderPairs
       .map((pair, pageIdx) => {
@@ -393,30 +492,42 @@ export function printOrdersBatch(
             minute: '2-digit',
           });
           const isDelivered = order.deliveryStatus === 'DELIVERED';
-          const isCompact = layout === 'landscape';
+          const isCompact = layout === 'landscape' || isA5;
+          const itemsCount = order.items?.length || 0;
+
+          // Adaptive font size & row padding based on item count to prevent page overflow
+          const rowPadding = isCompact || itemsCount > 8
+            ? (itemsCount > 12 ? '1.5px 3px' : '2px 4px')
+            : (itemsCount > 6 ? '2.5px 5px' : '3.5px 6px');
+
+          const rowFontSize = isCompact || itemsCount > 8
+            ? (itemsCount > 12 ? '8.5px' : '9px')
+            : (itemsCount > 6 ? '9.5px' : '10.5px');
+
+          const titleFontSize = isCompact || isA5 ? '14px' : '16px';
 
           const rowsHtml = order.items
             .map(
               (item, i) => `
               <tr style="border-bottom: 1px solid #e2e8f0;">
-                <td style="padding: ${isCompact ? '3px 4px' : '4px 6px'}; text-align: center; color: #64748b; font-size: ${isCompact ? '9px' : '10px'};">${i + 1}</td>
-                <td style="padding: ${isCompact ? '3px 4px' : '4px 6px'}; font-weight: 700; color: #0f172a; font-size: ${isCompact ? '9.5px' : '10.5px'};">
+                <td style="padding: ${rowPadding}; text-align: center; color: #64748b; font-size: ${rowFontSize};">${i + 1}</td>
+                <td style="padding: ${rowPadding}; font-weight: 700; color: #0f172a; font-size: ${rowFontSize};">
                   ${escapeHtml(item.productName)}
                   ${
                     item.tradeOfferQty
-                      ? `<span style="font-size: ${isCompact ? '8.5px' : '9.5px'}; color: #059669; font-weight: 700; margin-left: 3px;">(+ ফ্রি: ${escapeHtml(
+                      ? `<span style="font-size: ${rowFontSize}; color: #059669; font-weight: 700; margin-left: 3px;">(+ ফ্রি: ${escapeHtml(
                           item.tradeOfferQty
                         )} ${escapeHtml(item.unit)})</span>`
                       : ''
                   }
                 </td>
-                <td style="padding: ${isCompact ? '3px 4px' : '4px 6px'}; text-align: center; font-weight: 700; font-size: ${isCompact ? '9.5px' : '10.5px'};">
-                  ${escapeHtml(item.quantity)} <span style="font-size: ${isCompact ? '8.5px' : '9.5px'}; font-weight: 500; color: #475569;">${escapeHtml(
+                <td style="padding: ${rowPadding}; text-align: center; font-weight: 700; font-size: ${rowFontSize};">
+                  ${escapeHtml(item.quantity)} <span style="font-size: ${rowFontSize}; font-weight: 500; color: #475569;">${escapeHtml(
                 item.unit
               )}</span>
                 </td>
-                <td style="padding: ${isCompact ? '3px 4px' : '4px 6px'}; text-align: right; font-size: ${isCompact ? '9.5px' : '10.5px'};">৳${Number(item.unitPrice || 0).toLocaleString()}</td>
-                <td style="padding: ${isCompact ? '3px 4px' : '4px 6px'}; text-align: right; font-weight: 800; font-size: ${isCompact ? '9.5px' : '10.5px'};">৳${Number(
+                <td style="padding: ${rowPadding}; text-align: right; font-size: ${rowFontSize};">৳${Number(item.unitPrice || 0).toLocaleString()}</td>
+                <td style="padding: ${rowPadding}; text-align: right; font-weight: 800; font-size: ${rowFontSize};">৳${Number(
                   item.lineTotal || 0
                 ).toLocaleString()}</td>
               </tr>
@@ -425,49 +536,49 @@ export function printOrdersBatch(
             .join('');
 
           return `
-            <div style="flex: 1; display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box; padding: ${isCompact ? '2px 4px' : '4px 6px'};">
+            <div style="flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box; padding: ${isCompact ? '2px 4px' : '3px 6px'}; overflow: hidden;">
               <!-- Header -->
               <div>
-                <div style="display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: ${isCompact ? '4px' : '6px'}; border-bottom: 1.5px dashed #94a3b8;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: ${isCompact ? '3px' : '5px'}; border-bottom: 1.5px dashed #94a3b8;">
                   <div>
                     <div style="display: flex; align-items: center; gap: 6px;">
-                      <h2 style="font-size: ${isCompact ? '15px' : '17px'}; font-weight: 900; margin: 0; color: #0f172a; line-height: 1.2;">${escapeHtml(
+                      <h2 style="font-size: ${titleFontSize}; font-weight: 900; margin: 0; color: #0f172a; line-height: 1.2;">${escapeHtml(
                         biz.banglaName || 'মুন্সী স্টোর'
                       )}</h2>
-                      <span style="background: #0284c7; color: #ffffff; border-radius: 4px; padding: 1px 6px; font-size: ${isCompact ? '9px' : '10px'}; font-weight: 900; letter-spacing: 0.2px;">
+                      <span style="background: #0284c7; color: #ffffff; border-radius: 4px; padding: 1px 6px; font-size: ${isCompact ? '8.5px' : '9.5px'}; font-weight: 900; letter-spacing: 0.2px;">
                         🏪 দোকান কপি (${copyIndex === 1 ? 'মেমো ১' : 'মেমো ২'})
                       </span>
                     </div>
-                    <p style="font-size: ${isCompact ? '9px' : '10px'}; color: #475569; margin: 1px 0 0 0;">${escapeHtml(biz.tagline || '')}</p>
-                    <p style="font-size: ${isCompact ? '8.5px' : '9.5px'}; color: #64748b; margin: 1px 0 0 0;">${escapeHtml(biz.address || '')} | হটলাইন: ${escapeHtml(biz.hotline || '')}</p>
+                    <p style="font-size: ${isCompact ? '8.5px' : '9.5px'}; color: #475569; margin: 1px 0 0 0;">${escapeHtml(biz.tagline || '')}</p>
+                    <p style="font-size: ${isCompact ? '8px' : '9px'}; color: #64748b; margin: 1px 0 0 0;">${escapeHtml(biz.address || '')} | হটলাইন: ${escapeHtml(biz.hotline || '')}</p>
                   </div>
                   <div style="text-align: right;">
-                    <div style="font-weight: 900; font-size: ${isCompact ? '11.5px' : '13px'}; color: #0f172a;">মেমো: ${escapeHtml(order.memoNumber)}</div>
-                    <div style="font-size: ${isCompact ? '9px' : '10px'}; color: #475569; margin-top: 1px;">তারিখ: ${escapeHtml(dateStr)} ${escapeHtml(timeStr)}</div>
-                    <div style="font-size: ${isCompact ? '8.5px' : '9.5px'}; margin-top: 1px; font-weight: 700; color: ${isDelivered ? '#047857' : '#d97706'};">
+                    <div style="font-weight: 900; font-size: ${isCompact ? '11px' : '12.5px'}; color: #0f172a;">মেমো: ${escapeHtml(order.memoNumber)}</div>
+                    <div style="font-size: ${isCompact ? '8.5px' : '9.5px'}; color: #475569; margin-top: 1px;">তারিখ: ${escapeHtml(dateStr)} ${escapeHtml(timeStr)}</div>
+                    <div style="font-size: ${isCompact ? '8px' : '9px'}; margin-top: 1px; font-weight: 700; color: ${isDelivered ? '#047857' : '#d97706'};">
                       ${isDelivered ? '● ডেলিভারি সম্পন্ন' : '○ অপেক্ষমান'}
                     </div>
                   </div>
                 </div>
 
                 <!-- Customer Details Bar -->
-                <div style="display: flex; justify-content: space-between; align-items: center; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: ${isCompact ? '3px 6px' : '4px 8px'}; margin: ${isCompact ? '4px 0' : '6px 0'}; font-size: ${isCompact ? '10px' : '11px'};">
-                  <div style="display: flex; align-items: center; gap: ${isCompact ? '8px' : '12px'}; flex-wrap: wrap;">
-                    <div><span style="color: #64748b;">দোকান:</span> <strong style="font-size: ${isCompact ? '11px' : '12.5px'}; color: #0f172a;">${escapeHtml(order.shopName || order.customerName || 'কাস্টমার')}</strong></div>
+                <div style="display: flex; justify-content: space-between; align-items: center; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: ${isCompact ? '2px 5px' : '3px 6px'}; margin: ${isCompact ? '3px 0' : '4px 0'}; font-size: ${isCompact ? '9.5px' : '10.5px'};">
+                  <div style="display: flex; align-items: center; gap: ${isCompact ? '6px' : '10px'}; flex-wrap: wrap;">
+                    <div><span style="color: #64748b;">দোকান:</span> <strong style="font-size: ${isCompact ? '10.5px' : '11.5px'}; color: #0f172a;">${escapeHtml(order.shopName || order.customerName || 'কাস্টমার')}</strong></div>
                     <div><span style="color: #64748b;">মোবাইল:</span> <strong style="color: #1e293b;">${escapeHtml(order.shopPhone || order.customerPhone || '---')}</strong></div>
                     <div><span style="color: #64748b;">ঠিকানা:</span> <span style="color: #334155;">${escapeHtml(order.shopAddress || order.customerAddress || '---')} ${order.shopRoute ? `(${escapeHtml(order.shopRoute)})` : ''}</span></div>
                   </div>
                 </div>
 
                 <!-- Items Table -->
-                <table style="width: 100%; border-collapse: collapse; font-size: ${isCompact ? '9.5px' : '10.5px'}; margin-top: 3px; border: 1px solid #cbd5e1;">
+                <table style="width: 100%; border-collapse: collapse; font-size: ${rowFontSize}; margin-top: 2px; border: 1px solid #cbd5e1;">
                   <thead>
                     <tr style="border-bottom: 1.5px solid #64748b; background: #f1f5f9; color: #334155; font-weight: 800;">
-                      <th style="padding: ${isCompact ? '3px 4px' : '4px 6px'}; width: ${isCompact ? '20px' : '26px'}; text-align: center;">#</th>
-                      <th style="padding: ${isCompact ? '3px 4px' : '4px 6px'}; text-align: left;">পণ্যের বিবরণ</th>
-                      <th style="padding: ${isCompact ? '3px 4px' : '4px 6px'}; text-align: center;">পরিমাণ</th>
-                      <th style="padding: ${isCompact ? '3px 4px' : '4px 6px'}; text-align: right;">দর (৳)</th>
-                      <th style="padding: ${isCompact ? '3px 4px' : '4px 6px'}; text-align: right;">মোট (৳)</th>
+                      <th style="padding: ${rowPadding}; width: ${isCompact ? '18px' : '22px'}; text-align: center;">#</th>
+                      <th style="padding: ${rowPadding}; text-align: left;">পণ্যের বিবরণ</th>
+                      <th style="padding: ${rowPadding}; text-align: center;">পরিমাণ</th>
+                      <th style="padding: ${rowPadding}; text-align: right;">দর (৳)</th>
+                      <th style="padding: ${rowPadding}; text-align: right;">মোট (৳)</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -477,37 +588,40 @@ export function printOrdersBatch(
               </div>
 
               <!-- Bottom Financial Breakdown + Signatures -->
-              <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-top: 4px; padding-top: 3px; border-top: 1px solid #cbd5e1;">
-                <!-- Left Signatures -->
-                <div style="display: flex; gap: ${isCompact ? '10px' : '18px'}; font-size: ${isCompact ? '9px' : '10.5px'}; font-weight: 700; color: #334155; text-align: center;">
-                  <div style="width: ${isCompact ? '80px' : '105px'};">
-                    <div style="border-bottom: 1px dashed #475569; margin-bottom: 2px; height: ${isCompact ? '14px' : '18px'};"></div>
-                    <span>ক্রেতার স্বাক্ষর</span>
+              <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-top: 3px; padding-top: 2px; border-top: 1px solid #cbd5e1;">
+                <!-- Left Signatures & Notice -->
+                <div style="display: flex; flex-direction: column; justify-content: flex-end;">
+                  <div style="display: flex; gap: ${isCompact ? '8px' : '14px'}; font-size: ${isCompact ? '8.5px' : '9.5px'}; font-weight: 700; color: #334155; text-align: center;">
+                    <div style="width: ${isCompact ? '75px' : '90px'};">
+                      <div style="border-bottom: 1px dashed #475569; margin-bottom: 2px; height: ${isCompact ? '12px' : '15px'};"></div>
+                      <span>ক্রেতার স্বাক্ষর</span>
+                    </div>
+                    <div style="width: ${isCompact ? '75px' : '90px'};">
+                      <div style="border-bottom: 1px dashed #475569; margin-bottom: 2px; height: ${isCompact ? '12px' : '15px'};"></div>
+                      <span>বিক্রেতার স্বাক্ষর</span>
+                    </div>
                   </div>
-                  <div style="width: ${isCompact ? '80px' : '105px'};">
-                    <div style="border-bottom: 1px dashed #475569; margin-bottom: 2px; height: ${isCompact ? '14px' : '18px'};"></div>
-                    <span>বিক্রেতার স্বাক্ষর</span>
-                  </div>
+                  ${biz.memoFooterNotice ? `<div style="font-size: 8px; color: #64748b; margin-top: 2px; max-width: 220px; line-height: 1.1;">${escapeHtml(biz.memoFooterNotice)}</div>` : ''}
                 </div>
 
                 <!-- Right Total Box -->
-                <table style="width: ${isCompact ? '165px' : '195px'}; border-collapse: collapse; border: 1px solid #64748b; font-size: ${isCompact ? '10px' : '11px'}; font-weight: 700;">
+                <table style="width: ${isCompact ? '155px' : '185px'}; border-collapse: collapse; border: 1px solid #64748b; font-size: ${isCompact ? '9px' : '10px'}; font-weight: 700;">
                   <tbody>
                     <tr style="border-bottom: 1px solid #64748b;">
-                      <td style="border-right: 1px solid #64748b; padding: 2px 6px; background: #f1f5f9; width: ${isCompact ? '70px' : '85px'};">মোট বিল</td>
-                      <td style="padding: 2px 6px; text-align: right; font-size: ${isCompact ? '11px' : '12.5px'}; font-weight: 900; color: #0f172a;">৳${Number(
+                      <td style="border-right: 1px solid #64748b; padding: 1.5px 5px; background: #f1f5f9; width: ${isCompact ? '65px' : '75px'};">মোট বিল</td>
+                      <td style="padding: 1.5px 5px; text-align: right; font-size: ${isCompact ? '10px' : '11.5px'}; font-weight: 900; color: #0f172a;">৳${Number(
                         order.netTotal || 0
                       ).toLocaleString()}</td>
                     </tr>
                     <tr style="border-bottom: 1px solid #64748b;">
-                      <td style="border-right: 1px solid #64748b; padding: 2px 6px; background: #f1f5f9;">অগ্রিম / জমা</td>
-                      <td style="padding: 2px 6px; text-align: right; height: ${isCompact ? '15px' : '18px'}; color: #047857;">${
+                      <td style="border-right: 1px solid #64748b; padding: 1.5px 5px; background: #f1f5f9;">অগ্রিম / জমা</td>
+                      <td style="padding: 1.5px 5px; text-align: right; height: ${isCompact ? '14px' : '16px'}; color: #047857;">${
                         isDelivered ? `৳${Number(order.paidAmount || 0).toLocaleString()}` : '---'
                       }</td>
                     </tr>
                     <tr>
-                      <td style="border-right: 1px solid #64748b; padding: 2px 6px; background: #f1f5f9;">বাঁকী</td>
-                      <td style="padding: 2px 6px; text-align: right; height: ${isCompact ? '15px' : '18px'}; color: #be123c;">${
+                      <td style="border-right: 1px solid #64748b; padding: 1.5px 5px; background: #f1f5f9;">বাঁকী</td>
+                      <td style="padding: 1.5px 5px; text-align: right; height: ${isCompact ? '14px' : '16px'}; color: #be123c;">${
                         isDelivered ? `৳${Number(order.dueAmount || 0).toLocaleString()}` : '---'
                       }</td>
                     </tr>
@@ -520,20 +634,21 @@ export function printOrdersBatch(
 
         if (isLandscape) {
           return `
-            <div class="a4-sheet-two-memos ${!isLastPage ? 'page-break-after' : ''}" style="width: 100%; box-sizing: border-box; page-break-inside: avoid; min-height: 190mm; display: flex; flex-direction: row; justify-content: space-between; padding: 4mm 5mm; background: #ffffff; color: #0f172a; font-family: 'Hind Siliguri', sans-serif; gap: 8px;">
-              <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: space-between;">
+            <div class="print-sheet-two-memos a4-sheet-two-memos ${!isLastPage ? 'page-break-after' : ''}" style="width: 100%; box-sizing: border-box; page-break-inside: avoid; break-inside: avoid; ${sheetHeightStyle} display: flex; flex-direction: row; justify-content: space-between; padding: ${isA5 ? '2mm 3mm' : '3mm 4mm'}; background: #ffffff; color: #0f172a; font-family: 'Hind Siliguri', sans-serif; gap: 6px; overflow: hidden;">
+              <div style="flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;">
                 ${renderHalfMemo(pair[0], 1, 'landscape')}
               </div>
 
-              <!-- Vertical Cut Line for Landscape (Side by Side) -->
-              <div style="width: 1px; border-left: 1.5px dashed #475569; margin: 0 4px; align-self: stretch;"></div>
+              <!-- Vertical Cutting Line for Landscape -->
+              <div style="width: 1px; border-left: 1.5px dashed #64748b; margin: 0 4px; align-self: stretch;"></div>
 
-              <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: space-between;">
+              <div style="flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;">
                 ${
                   pair.length > 1
                     ? renderHalfMemo(pair[1], 2, 'landscape')
                     : `
-                    <div style="flex: 1; border: 1.5px dashed #e2e8f0; border-radius: 8px; display: flex; align-items: center; justify-content: center; min-height: 120px;">
+                    <div style="flex: 1; border: 1.5px dashed #cbd5e1; border-radius: 8px; display: flex; align-items: center; justify-content: center; min-height: 120px; color: #94a3b8; font-size: 11px;">
+                      (খালি অর্ধেকাংশ)
                     </div>
                   `
                 }
@@ -542,31 +657,36 @@ export function printOrdersBatch(
           `;
         }
 
-        // Default Portrait: Top and bottom memos with horizontal dashed line (only line, no text)
+        // Portrait: Top and bottom memos with clean horizontal dashed cutting line
         const dividerHtml = `
-          <div style="border-top: 1.5px dashed #475569; margin: 8px 0; width: 100%;"></div>
+          <div style="border-top: 1.5px dashed #64748b; margin: 4px 0; width: 100%;"></div>
         `;
 
         return `
-          <div class="a4-sheet-two-memos ${!isLastPage ? 'page-break-after' : ''}" style="width: 100%; box-sizing: border-box; page-break-inside: avoid; min-height: 270mm; display: flex; flex-direction: column; justify-content: space-between; padding: 5mm 6mm; background: #ffffff; color: #0f172a; font-family: 'Hind Siliguri', sans-serif;">
-            ${renderHalfMemo(pair[0], 1, 'portrait')}
+          <div class="print-sheet-two-memos a4-sheet-two-memos ${!isLastPage ? 'page-break-after' : ''}" style="width: 100%; box-sizing: border-box; page-break-inside: avoid; break-inside: avoid; ${sheetHeightStyle} display: flex; flex-direction: column; justify-content: space-between; padding: ${isA5 ? '2mm 3mm' : '3mm 4mm'}; background: #ffffff; color: #0f172a; font-family: 'Hind Siliguri', sans-serif; overflow: hidden;">
+            <div style="flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;">
+              ${renderHalfMemo(pair[0], 1, 'portrait')}
+            </div>
 
             ${dividerHtml}
 
-            ${
-              pair.length > 1
-                ? renderHalfMemo(pair[1], 2, 'portrait')
-                : `
-                <div style="flex: 1; border: 1.5px dashed #e2e8f0; border-radius: 8px; margin-top: 6px; display: flex; align-items: center; justify-content: center; min-height: 120px;">
-                </div>
-              `
-            }
+            <div style="flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;">
+              ${
+                pair.length > 1
+                  ? renderHalfMemo(pair[1], 2, 'portrait')
+                  : `
+                  <div style="flex: 1; border: 1.5px dashed #cbd5e1; border-radius: 8px; margin-top: 4px; display: flex; align-items: center; justify-content: center; min-height: 80px; color: #94a3b8; font-size: 11px;">
+                    (খালি অর্ধেকাংশ)
+                  </div>
+                `
+              }
+            </div>
           </div>
         `;
       })
       .join('');
 
-    triggerGlobalPrint(pagesHtml, orientation);
+    triggerGlobalPrint(pagesHtml, orientation, paperSize);
     return;
   }
 
@@ -702,7 +822,7 @@ export function printOrdersBatch(
       })
       .join('');
 
-    triggerGlobalPrint(slipsHtml, orientation);
+    triggerGlobalPrint(slipsHtml, orientation, paperSize);
     return;
   }
 
@@ -779,7 +899,7 @@ export function printOrdersBatch(
     </div>
   `;
 
-  triggerGlobalPrint(html, orientation);
+  triggerGlobalPrint(html, orientation, paperSize);
 }
 
 // 2. PRINT PRODUCTS (Price & Stock Inventory Sheet)

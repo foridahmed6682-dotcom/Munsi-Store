@@ -477,16 +477,11 @@ export default function App() {
         }
       });
 
-      // 2. Only keep local items if they are brand new un-synced creations (< 5 mins or pending sync)
-      // Any older local item absent from Firebase was deleted on another device and must NOT resurrect!
-      const now = Date.now();
+      // 2. Only keep local items if they were created offline on this device and are explicitly pending sync
       localMap.forEach((localItem, key) => {
         if (map.has(key) || deletedIds.has(key)) return;
-        const isPending = (localItem as any).syncedWithSheets === false || (localItem as any)._isOfflinePending;
-        const itemTime = (localItem as any).createdAt || (localItem as any).orderDate || (localItem as any).timestamp;
-        const isVeryRecent = itemTime && (now - new Date(itemTime).getTime() < 5 * 60 * 1000);
-
-        if (isPending || isVeryRecent) {
+        const isPending = (localItem as any)._isOfflinePending === true;
+        if (isPending) {
           map.set(key, localItem);
         }
       });
@@ -517,81 +512,6 @@ export default function App() {
             merged.sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
             saveOrders(merged);
             setOrders(merged);
-            updatedAny = true;
-          }
-          // Auto-recover any products referenced inside orders that are missing from catalog and not deleted
-          const currentOrds = getOrders();
-          const currentProds = getProducts();
-          const delProdIds = getDeletedProductIds();
-          const existingProdIds = new Set(currentProds.map((p) => p.id));
-          let recoveredAnyProd = false;
-          for (const ord of currentOrds) {
-            for (const item of ord.items || []) {
-              if (
-                item.productId &&
-                item.productName &&
-                !existingProdIds.has(item.productId) &&
-                !delProdIds.has(item.productId)
-              ) {
-                existingProdIds.add(item.productId);
-                const recoveredProd: Product = {
-                  id: item.productId,
-                  name: item.productName,
-                  banglaName: item.productName,
-                  sku: `SKU-${item.productId.slice(-5)}`,
-                  category: 'সাবান ও ডিটারজেন্ট',
-                  unit: item.unit || 'পিস',
-                  unitPrice: item.unitPrice || 100,
-                  costPrice: Math.max(1, Math.round((item.unitPrice || 100) * 0.88)),
-                  stock: 50,
-                  minStockAlert: 5,
-                  imageUrl: 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500&auto=format&fit=crop&q=80',
-                };
-                currentProds.unshift(recoveredProd);
-                saveProductToCloud(recoveredProd).catch(() => {});
-                recoveredAnyProd = true;
-              }
-            }
-          }
-          if (recoveredAnyProd) {
-            saveProducts(currentProds);
-            setProducts([...currentProds]);
-            updatedAny = true;
-          }
-          // Auto-recover any shops referenced inside orders that are missing from catalog and not deleted
-          const currentShps = getShops();
-          const delShopIds = getDeletedShopIds();
-          const existingShopIds = new Set(currentShps.map((s) => s.id));
-          let recoveredAnyShop = false;
-          for (const ord of currentOrds) {
-            if (
-              ord.shopId &&
-              ord.shopId !== 'shop-direct-customer' &&
-              ord.shopName &&
-              !existingShopIds.has(ord.shopId) &&
-              !delShopIds.has(ord.shopId)
-            ) {
-              existingShopIds.add(ord.shopId);
-              const recoveredShop: Shop = {
-                id: ord.shopId,
-                name: ord.shopName,
-                ownerName: ord.customerName || 'মালিক',
-                phone: ord.shopPhone || '',
-                routeArea: ord.deliveryZoneName || (ord as any).deliveryZone || 'পলাশবাড়ী',
-                address: ord.shopAddress || 'পলাশবাড়ী',
-                previousDue: 0,
-                category: 'জেনারেল স্টোর / মুদি',
-                lastVisitDate: ord.orderDate ? ord.orderDate.split('T')[0] : new Date().toISOString().split('T')[0],
-                createdAt: ord.orderDate || new Date().toISOString(),
-              };
-              currentShps.unshift(recoveredShop);
-              saveShopToCloud(recoveredShop).catch(() => {});
-              recoveredAnyShop = true;
-            }
-          }
-          if (recoveredAnyShop) {
-            saveShops(currentShps);
-            setShops([...currentShps]);
             updatedAny = true;
           }
           if (Array.isArray(mirror.categories) && mirror.categories.length > 0) {
@@ -650,46 +570,32 @@ export default function App() {
       });
 
       unsubscribeShops = subscribeToCloudShops((cloudShops) => {
-        const merged = mergeById(getShops(), cloudShops, getDeletedShopIds());
-        if (merged.length > 0 || getShops().length === 0) {
-          saveShops(merged);
-          setShops(merged);
-        }
+        saveShops(cloudShops);
+        setShops(cloudShops);
       });
 
       unsubscribeProducts = subscribeToCloudProducts((cloudProducts) => {
-        const merged = mergeById(getProducts(), cloudProducts, getDeletedProductIds());
-        if (merged.length > 0 || getProducts().length === 0) {
-          saveProducts(merged);
-          setProducts(merged);
-        }
+        saveProducts(cloudProducts);
+        setProducts(cloudProducts);
       });
 
       unsubscribeOrders = subscribeToCloudOrders((cloudOrders) => {
-        const merged = mergeById(getOrders(), cloudOrders, getDeletedOrderIds());
-        merged.sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
-        if (merged.length > 0 || getOrders().length === 0) {
-          saveOrders(merged);
-          setOrders(merged);
-        }
+        const sorted = [...cloudOrders].sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
+        saveOrders(sorted);
+        setOrders(sorted);
       });
 
       unsubscribeCategories = subscribeToCloudCategories((cloudCategories) => {
-        const merged = mergeById(getCategories(), cloudCategories, getDeletedCategoryIds());
-        if (merged.length > 0 || getCategories().length === 0) {
-          saveCategories(merged);
-          setCategories(merged);
-        }
+        saveCategories(cloudCategories);
+        setCategories(cloudCategories);
       });
 
       unsubscribeRoutes = subscribeToCloudRoutes((cloudRoutes) => {
-        const merged = mergeById(getRoutes(), cloudRoutes || [], getDeletedRouteIds());
-        if (merged.length > 0) {
-          saveRoutes(merged);
-          setRoutes(merged);
+        if (cloudRoutes && cloudRoutes.length > 0) {
+          saveRoutes(cloudRoutes);
+          setRoutes(cloudRoutes);
         } else {
-          const fallbackRoutes = getRoutes();
-          setRoutes(fallbackRoutes);
+          setRoutes(getRoutes());
         }
       });
 

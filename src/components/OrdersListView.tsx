@@ -30,12 +30,18 @@ import {
   CheckSquare,
   Square,
   Building2,
-  Copy,
-  Scissors
+  Copy
 } from 'lucide-react';
 import { Order, Shop, PaymentMethod, DueCollectionRecord, DailyExpenseRecord, Product, Supplier, ReturnedOrderItem } from '../types';
 import { getBusinessInfo, getProducts } from '../lib/storage';
-import { OrderPrintMode, PrintOrientation, printOrdersBatch } from '../lib/printService';
+import {
+  OrderPrintMode,
+  PrintOrientation,
+  PrintPaperSize,
+  getSavedPrintPaperSize,
+  setSavedPrintPaperSize,
+  printOrdersBatch,
+} from '../lib/printService';
 
 interface OrdersListViewProps {
   orders: Order[];
@@ -164,6 +170,7 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
     }
     return 'portrait';
   });
+  const [bulkPrintPaperSize, setBulkPrintPaperSize] = useState<PrintPaperSize>(() => getSavedPrintPaperSize());
 
   const toggleSelectOrder = (id: string) => {
     setSelectedOrderIds((prev) => {
@@ -1003,6 +1010,29 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
               </button>
             </div>
 
+            {/* Paper Size Selector */}
+            <div className="flex items-center bg-white border border-blue-200 rounded-xl p-0.5" title="কাগজের সাইজ (Paper Size)">
+              <span className="text-[10px] font-bold text-neutral-500 px-2 hidden sm:inline">সাইজ:</span>
+              {(['A4', 'A5', 'Letter', 'Legal', 'auto'] as const).map((sz) => (
+                <button
+                  key={sz}
+                  type="button"
+                  onClick={() => {
+                    setBulkPrintPaperSize(sz);
+                    setSavedPrintPaperSize(sz);
+                  }}
+                  className={`px-2 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
+                    bulkPrintPaperSize === sz
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-neutral-700 hover:bg-neutral-100'
+                  }`}
+                  title={`কাগজের সাইজ: ${sz === 'auto' ? 'প্রিন্টার অটো' : sz}`}
+                >
+                  {sz === 'auto' ? 'Auto' : sz}
+                </button>
+              ))}
+            </div>
+
             {/* Select All / Deselect All Button */}
             <button
               type="button"
@@ -1038,13 +1068,16 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                 type="button"
                 onClick={() => {
                   const chosen = orders.filter((o) => selectedOrderIds.has(o.id));
-                  printOrdersBatch(chosen, 'slips_2in1', '(নির্বাচিত ২টি আলাদা দোকান কপি)', { orientation: bulkPrintOrientation });
+                  printOrdersBatch(chosen, 'slips_2in1', '(নির্বাচিত ২টি আলাদা দোকান কপি)', {
+                    orientation: bulkPrintOrientation,
+                    paperSize: bulkPrintPaperSize,
+                  });
                 }}
                 className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer animate-in zoom-in-95"
-                title="বাছাইকৃত ২টি আলাদা মেমো ১টি A4 পেপারে প্রিন্ট করুন"
+                title={`বাছাইকৃত ২টি আলাদা মেমো ১টি ${bulkPrintPaperSize} পেপারে প্রিন্ট করুন`}
               >
-                <Scissors className="w-3.5 h-3.5" />
-                <span>📑 এই ২টি মেমো ১টি A4-এ প্রিন্ট করুন ({bulkPrintOrientation === 'landscape' ? 'ল্যান্ডস্কেপ' : 'পোর্ট্রেট'})</span>
+                <Printer className="w-3.5 h-3.5" />
+                <span>📑 এই ২টি মেমো ১টি {bulkPrintPaperSize === 'auto' ? '' : `${bulkPrintPaperSize} `}পেপারে প্রিন্ট ({bulkPrintOrientation === 'landscape' ? 'ল্যান্ডস্কেপ' : 'পোর্ট্রেট'})</span>
               </button>
             )}
 
@@ -1054,14 +1087,17 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                 type="button"
                 onClick={() => {
                   const chosen = orders.filter((o) => selectedOrderIds.has(o.id));
-                  printOrdersBatch(chosen, bulkPrintMode, `(নির্বাচিত ${chosen.length} টি)`, { orientation: bulkPrintOrientation });
+                  printOrdersBatch(chosen, bulkPrintMode, `(নির্বাচিত ${chosen.length} টি)`, {
+                    orientation: bulkPrintOrientation,
+                    paperSize: bulkPrintPaperSize,
+                  });
                 }}
                 className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
               >
                 <Printer className="w-3.5 h-3.5" />
                 <span>
                   {bulkPrintMode === 'slips_2in1'
-                    ? `নির্বাচিত (${selectedOrderIds.size}টি) [২ মেমো/A4] প্রিন্ট`
+                    ? `নির্বাচিত (${selectedOrderIds.size}টি) [২ মেমো/${bulkPrintPaperSize}] প্রিন্ট`
                     : `নির্বাচিত (${selectedOrderIds.size}টি) প্রিন্ট করুন`}
                 </span>
               </button>
@@ -1075,7 +1111,10 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                   filteredOrders,
                   bulkPrintMode,
                   `(${filteredOrders.length} টি মেমো)`,
-                  { orientation: bulkPrintOrientation }
+                  {
+                    orientation: bulkPrintOrientation,
+                    paperSize: bulkPrintPaperSize,
+                  }
                 );
               }}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
@@ -1083,7 +1122,7 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
               <Printer className="w-3.5 h-3.5" />
               <span>
                 {bulkPrintMode === 'slips_2in1'
-                  ? `১-ক্লিকে সব প্রিন্ট (${filteredOrders.length}টি) [২ মেমো/A4]`
+                  ? `১-ক্লিকে সব প্রিন্ট (${filteredOrders.length}টি) [২ মেমো/${bulkPrintPaperSize}]`
                   : `১-ক্লিকে সব প্রিন্ট (${filteredOrders.length}টি)`}
               </span>
             </button>
@@ -1271,7 +1310,12 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                     {/* Direct 1-Click Print Single Memo Button */}
                     <button
                       type="button"
-                      onClick={() => printOrdersBatch([order], 'slips', '(সিঙ্গেল মেমো)', { orientation: bulkPrintOrientation })}
+                      onClick={() =>
+                        printOrdersBatch([order], 'slips', '(সিঙ্গেল মেমো)', {
+                          orientation: bulkPrintOrientation,
+                          paperSize: bulkPrintPaperSize,
+                        })
+                      }
                       className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-600 text-blue-700 hover:text-white border border-blue-200 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
                       title="এই মেমোটি ১-ক্লিকে পুরো পেজে প্রিন্ট করুন"
                     >
@@ -1294,10 +1338,10 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                         }
                       }}
                       className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-600 text-indigo-700 hover:text-white border border-indigo-200 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
-                      title="অন্য দোকানের মেমোর সাথে মিলিয়ে ১টি A4 পেপারে ২টি দোকান কপি প্রিন্ট করুন"
+                      title="অন্য দোকানের মেমোর সাথে মিলিয়ে ১টি পেপারে ২টি দোকান কপি প্রিন্ট করুন"
                     >
-                      <Scissors className="w-3.5 h-3.5" />
-                      <span>২-ইন-১ A4</span>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>২-ইন-১</span>
                     </button>
                   </div>
                 </div>
@@ -2223,6 +2267,7 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                             groupBySupplier: loadSheetGroupBySupplier,
                             products: products,
                             orientation: bulkPrintOrientation,
+                            paperSize: bulkPrintPaperSize,
                           }
                         )
                       }
@@ -2475,11 +2520,11 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
             <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white p-4 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 bg-white/10 rounded-xl">
-                  <Scissors className="w-5 h-5 text-amber-300" />
+                  <Printer className="w-5 h-5 text-amber-300" />
                 </div>
                 <div>
                   <h3 className="font-black text-sm text-white">
-                    ২টি মেমো ১টি A4 পেপারে প্রিন্ট (দোকান কপি)
+                    ২টি মেমো ১টি পেপারে প্রিন্ট ({bulkPrintPaperSize})
                   </h3>
                   <p className="text-[11px] text-blue-200">
                     কাগজ সাশ্রয়ী: ২টি আলাদা দোকানের মেমো ১ পাতায় পাশাপাশি/উপরে-নিচে প্রিন্ট হবে
@@ -2511,7 +2556,7 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                 </div>
               </div>
 
-              {/* Scissors Cut Line Indicator */}
+              {/* Cutting Line Indicator */}
               <div className="w-full border-t-2 border-dashed border-neutral-300 my-2"></div>
 
               {/* Selection for 2nd Memo (Bottom Half) */}
@@ -2631,6 +2676,30 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                     </button>
                   </div>
                 </div>
+                {/* Paper Size Selector */}
+                <div className="space-y-1.5 pt-2">
+                  <label className="text-[11px] font-bold text-neutral-700 block">কাগজের সাইজ (Paper Size):</label>
+                  <div className="grid grid-cols-5 gap-1.5">
+                    {(['A4', 'A5', 'Letter', 'Legal', 'auto'] as const).map((sz) => (
+                      <button
+                        key={sz}
+                        type="button"
+                        onClick={() => {
+                          setBulkPrintPaperSize(sz);
+                          setSavedPrintPaperSize(sz);
+                        }}
+                        className={`p-2 rounded-xl border text-center cursor-pointer transition-all ${
+                          bulkPrintPaperSize === sz
+                            ? 'border-indigo-600 bg-indigo-50 font-black text-indigo-950 ring-1 ring-indigo-500'
+                            : 'border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-100 font-bold'
+                        }`}
+                      >
+                        <div className="text-xs">{sz === 'auto' ? 'অটো' : sz}</div>
+                        <div className="text-[9px] opacity-75">{sz === 'auto' ? 'ডিফল্ট' : 'সাইজ'}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -2653,14 +2722,14 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
                     [twoInOnePairingOrder, targetSecond],
                     'slips_2in1',
                     secondPairOption === 'same' ? '(২টি দোকান কপি - ডুপ্লিকেট)' : '(২টি আলাদা দোকান কপি)',
-                    { orientation: secondPairOrientation }
+                    { orientation: secondPairOrientation, paperSize: bulkPrintPaperSize }
                   );
                   setTwoInOnePairingOrder(null);
                 }}
                 className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-md flex items-center gap-1.5 cursor-pointer active:scale-95 transition-all"
               >
                 <Printer className="w-4 h-4" />
-                <span>১টি A4 পেপারে ২টি মেমো প্রিন্ট ({secondPairOrientation === 'landscape' ? 'ল্যান্ডস্কেপ' : 'পোর্ট্রেট'})</span>
+                <span>১টি {bulkPrintPaperSize === 'auto' ? '' : `${bulkPrintPaperSize} `}পেপারে ২টি মেমো প্রিন্ট ({secondPairOrientation === 'landscape' ? 'ল্যান্ডস্কেপ' : 'পোর্ট্রেট'})</span>
               </button>
             </div>
           </div>

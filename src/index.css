@@ -71,15 +71,18 @@
     color: black;
   }
   .page-break-after {
-    page-break-after: always;
-    break-after: page;
+    page-break-after: always !important;
+    break-after: page !important;
   }
-  .a4-sheet-two-memos {
-    page-break-inside: avoid;
-    break-inside: avoid;
+  .a4-sheet-two-memos,
+  .print-sheet-two-memos {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    box-sizing: border-box !important;
   }
-  @page {
-    margin: 5mm;
+  html, body {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 }
 

@@ -354,55 +354,60 @@ function mergeLocalAndCloud<T extends Record<string, any>>(
   deletedIds: Set<string>,
   idField = 'id'
 ): T[] {
-  const map = new Map<string, T>();
-  const localMap = new Map<string, T>();
+  // If remote items exist from Firebase, Firebase is the SINGLE SOURCE OF TRUTH.
+  if (Array.isArray(remoteItems) && remoteItems.length > 0) {
+    const map = new Map<string, T>();
+    const localMap = new Map<string, T>();
 
-  // Index local items
-  for (const item of (localItems || [])) {
-    const key = item?.[idField] ? String(item[idField]) : '';
-    if (key && !deletedIds.has(key)) {
-      localMap.set(key, item);
-    }
-  }
-
-  // 1. Remote (Firebase) items are top priority: all remote fields overwrite local fields!
-  for (const item of (remoteItems || [])) {
-    const key = item?.[idField] ? String(item[idField]) : '';
-    if (key && !deletedIds.has(key)) {
-      const local = localMap.get(key);
-      if (local) {
-        const bestImage =
-          (item.imageUrl && !item.imageUrl.startsWith('/uploads/') ? item.imageUrl : null) ||
-          (local.imageUrl && local.imageUrl.startsWith('data:') ? local.imageUrl : null) ||
-          local.imageUrl ||
-          '';
-
-        map.set(key, {
-          ...local,
-          ...item, // Remote (Firebase) overwrites local!
-          ...('imageUrl' in item || 'imageUrl' in local ? { imageUrl: bestImage } : {}),
-        });
-      } else {
-        map.set(key, item);
+    // Index local items
+    for (const item of (localItems || [])) {
+      const key = item?.[idField] ? String(item[idField]) : '';
+      if (key && !deletedIds.has(key)) {
+        localMap.set(key, item);
       }
     }
+
+    // 1. Remote (Firebase) items are top priority: all remote fields overwrite local fields!
+    for (const item of remoteItems) {
+      const key = item?.[idField] ? String(item[idField]) : '';
+      if (key && !deletedIds.has(key)) {
+        const local = localMap.get(key);
+        if (local) {
+          const bestImage =
+            (item.imageUrl && !item.imageUrl.startsWith('/uploads/') ? item.imageUrl : null) ||
+            (local.imageUrl && local.imageUrl.startsWith('data:') ? local.imageUrl : null) ||
+            local.imageUrl ||
+            '';
+
+          map.set(key, {
+            ...local,
+            ...item, // Remote (Firebase) overwrites local!
+            ...('imageUrl' in item || 'imageUrl' in local ? { imageUrl: bestImage } : {}),
+          });
+        } else {
+          map.set(key, item);
+        }
+      }
+    }
+
+    // 2. ONLY keep local items if they were created offline on this device and are explicitly pending sync
+    // Old cached items from IndexedDB/localStorage that do not exist in Firebase were deleted and must NOT resurrect!
+    localMap.forEach((localItem, key) => {
+      if (map.has(key) || deletedIds.has(key)) return;
+      const isPending = (localItem as any)._isOfflinePending === true;
+      if (isPending) {
+        map.set(key, localItem);
+      }
+    });
+
+    return Array.from(map.values());
   }
 
-  // 2. Only preserve local items if they are brand-new un-synced offline creations (< 5 mins or pending sync)
-  // Old stale local items that do not exist in Firebase were deleted on another device and must NOT resurrect!
-  const now = Date.now();
-  localMap.forEach((localItem, key) => {
-    if (map.has(key) || deletedIds.has(key)) return;
-    const isPending = (localItem as any).syncedWithSheets === false || (localItem as any)._isOfflinePending;
-    const itemTime = (localItem as any).createdAt || (localItem as any).orderDate || (localItem as any).timestamp;
-    const isVeryRecent = itemTime && (now - new Date(itemTime).getTime() < 5 * 60 * 1000);
-
-    if (isPending || isVeryRecent) {
-      map.set(key, localItem);
-    }
+  // If remote items list is empty or offline, return clean local items
+  return (localItems || []).filter((item) => {
+    const key = item?.[idField] ? String(item[idField]) : '';
+    return key && !deletedIds.has(key);
   });
-
-  return Array.from(map.values());
 }
 
 // Debounce map to strictly respect Google Cloud Firestore's single-document 1 write/second limit
