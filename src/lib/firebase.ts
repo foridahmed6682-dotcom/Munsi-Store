@@ -8,6 +8,9 @@ import {
   signOut
 } from 'firebase/auth';
 import {
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   getFirestore,
   doc,
   getDoc,
@@ -51,11 +54,37 @@ import {
   getRoutes,
   recordDiagnosticEvent,
 } from './storage';
+import {
+  getPendingOfflineActions,
+  removeOfflineAction,
+  markEntityPendingOffline,
+  enqueueOfflineAction,
+  isEntityPendingOffline,
+} from './offlineSyncQueue';
 
 export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
-/* CRITICAL: The app will break without this line */
-export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
+/* CRITICAL: Enable Firestore multi-tab IndexedDB offline persistence for instant offline read/write and automatic online sync */
+let firestoreDb;
+try {
+  firestoreDb = initializeFirestore(
+    app,
+    {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager(),
+      }),
+    },
+    (firebaseConfig as any).firestoreDatabaseId
+  );
+} catch (e) {
+  try {
+    firestoreDb = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
+  } catch {
+    firestoreDb = getFirestore(app);
+  }
+}
+
+export const db = firestoreDb;
 export const auth = getAuth(app);
 export const storage = getStorage(app);
 
@@ -347,15 +376,16 @@ export async function readFirestoreCatalogDirect<T = any>(catalogKey: string): P
   }
 }
 
-// Helper to merge cloud/mirror items with local items, ensuring Firebase (remote) has top priority
-function mergeLocalAndCloud<T extends Record<string, any>>(
+// Helper to merge cloud/mirror items with local items, ensuring Firebase (remote) is Single Source of Truth
+export function mergeLocalAndCloud<T extends Record<string, any>>(
   localItems: T[],
   remoteItems: T[],
   deletedIds: Set<string>,
-  idField = 'id'
+  idField = 'id',
+  isServerAuthoritative = true
 ): T[] {
-  // If remote items exist from Firebase, Firebase is the SINGLE SOURCE OF TRUTH.
-  if (Array.isArray(remoteItems) && remoteItems.length > 0) {
+  // If remote items exist as an array from Firestore or mirror
+  if (Array.isArray(remoteItems)) {
     const map = new Map<string, T>();
     const localMap = new Map<string, T>();
 
@@ -383,9 +413,10 @@ function mergeLocalAndCloud<T extends Record<string, any>>(
             ...local,
             ...item, // Remote (Firebase) overwrites local!
             ...('imageUrl' in item || 'imageUrl' in local ? { imageUrl: bestImage } : {}),
+            _isOfflinePending: false,
           });
         } else {
-          map.set(key, item);
+          map.set(key, { ...item, _isOfflinePending: false });
         }
       }
     }
@@ -395,7 +426,7 @@ function mergeLocalAndCloud<T extends Record<string, any>>(
     localMap.forEach((localItem, key) => {
       if (map.has(key) || deletedIds.has(key)) return;
       const isPending = (localItem as any)._isOfflinePending === true;
-      if (isPending) {
+      if (isPending || (!isServerAuthoritative && remoteItems.length === 0)) {
         map.set(key, localItem);
       }
     });
@@ -403,7 +434,7 @@ function mergeLocalAndCloud<T extends Record<string, any>>(
     return Array.from(map.values());
   }
 
-  // If remote items list is empty or offline, return clean local items
+  // If remote items list is completely absent (offline and no snapshot), return clean local items
   return (localItems || []).filter((item) => {
     const key = item?.[idField] ? String(item[idField]) : '';
     return key && !deletedIds.has(key);
@@ -1198,17 +1229,17 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
     const deletedIds = getDeletedShopIds();
     const mirrorShops: Shop[] = Array.isArray(mirror?.shops) ? mirror.shops : [];
     const combinedRemote = mergeLocalAndCloud(
-      mergeLocalAndCloud(mirrorShops, directShops, deletedIds),
+      mergeLocalAndCloud(mirrorShops, directShops, deletedIds, 'id', false),
       extraShops,
-      deletedIds
+      deletedIds,
+      'id',
+      false
     );
-    const merged = mergeLocalAndCloud(getShops(), combinedRemote, deletedIds);
-    if (merged.length > 0) {
-      onData(merged);
-    }
+    const merged = mergeLocalAndCloud(getShops(), combinedRemote, deletedIds, 'id', false);
+    onData(merged);
   };
 
-  // Always run direct catalog + server mirror merge immediately on mount so newer items in catalog/mirror are never hidden by stale IndexedDB cache
+  // Always run direct catalog + server mirror merge immediately on mount
   pollFirebaseDirect();
 
   let unsub = () => {};
@@ -1216,10 +1247,7 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
     unsub = onSnapshot(
       collection(db, path),
       (snapshot) => {
-        if (snapshot.empty) {
-          pollFirebaseDirect();
-          return;
-        }
+        const isServerAuthoritative = !snapshot.metadata.hasPendingWrites;
         const shops: Shop[] = [];
         const deletedIds = getDeletedShopIds();
         snapshot.forEach((d) => {
@@ -1229,10 +1257,8 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
           }
         });
         // Real-time Firestore snapshot received: Firebase has top priority!
-        const merged = mergeLocalAndCloud(getShops(), shops, deletedIds);
-        if (merged.length > 0) {
-          onData(merged);
-        }
+        const merged = mergeLocalAndCloud(getShops(), shops, deletedIds, 'id', isServerAuthoritative);
+        onData(merged);
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, path);
@@ -1264,15 +1290,15 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
     const deletedIds = getDeletedProductIds();
     const mirrorProducts: Product[] = Array.isArray(mirror?.products) ? mirror.products : [];
     const combinedRemote = mergeLocalAndCloud(
-      mergeLocalAndCloud(mirrorProducts, directProducts, deletedIds),
+      mergeLocalAndCloud(mirrorProducts, directProducts, deletedIds, 'id', false),
       extraProducts,
-      deletedIds
+      deletedIds,
+      'id',
+      false
     );
     const localProds = getProducts();
-    const merged = mergeLocalAndCloud(localProds, combinedRemote, deletedIds);
-    if (merged.length > 0) {
-      onData(merged);
-    }
+    const merged = mergeLocalAndCloud(localProds, combinedRemote, deletedIds, 'id', false);
+    onData(merged);
   };
 
   // Always run direct catalog + server mirror merge immediately on mount
@@ -1283,10 +1309,7 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
     unsub = onSnapshot(
       collection(db, path),
       (snapshot) => {
-        if (snapshot.empty) {
-          pollFirebaseDirect();
-          return;
-        }
+        const isServerAuthoritative = !snapshot.metadata.hasPendingWrites;
         const products: Product[] = [];
         const deletedIds = getDeletedProductIds();
         snapshot.forEach((d) => {
@@ -1296,10 +1319,8 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
           }
         });
         // Real-time Firestore snapshot received: Firebase has top priority!
-        const merged = mergeLocalAndCloud(getProducts(), products, deletedIds);
-        if (merged.length > 0) {
-          onData(merged);
-        }
+        const merged = mergeLocalAndCloud(getProducts(), products, deletedIds, 'id', isServerAuthoritative);
+        onData(merged);
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, path);
@@ -1332,16 +1353,16 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
     const deletedIds = getDeletedOrderIds();
     const mirrorOrders: Order[] = Array.isArray(mirror?.orders) ? mirror.orders : [];
     const combinedRemote = mergeLocalAndCloud(
-      mergeLocalAndCloud(mirrorOrders, directOrders, deletedIds),
+      mergeLocalAndCloud(mirrorOrders, directOrders, deletedIds, 'id', false),
       extraOrders,
-      deletedIds
+      deletedIds,
+      'id',
+      false
     );
-    const merged = mergeLocalAndCloud(getOrders(), combinedRemote, deletedIds).sort(
+    const merged = mergeLocalAndCloud(getOrders(), combinedRemote, deletedIds, 'id', false).sort(
       (a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime()
     );
-    if (merged.length > 0) {
-      onData(merged);
-    }
+    onData(merged);
   };
 
   // Always run direct catalog + server mirror merge immediately on mount
@@ -1352,10 +1373,7 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
     unsub = onSnapshot(
       q,
       (snapshot) => {
-        if (snapshot.empty) {
-          pollFirebaseDirect();
-          return;
-        }
+        const isServerAuthoritative = !snapshot.metadata.hasPendingWrites;
         const orders: Order[] = [];
         const deletedIds = getDeletedOrderIds();
         snapshot.forEach((d) => {
@@ -1365,12 +1383,10 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
           }
         });
         // Real-time Firestore snapshot received: Firebase has top priority!
-        const merged = mergeLocalAndCloud(getOrders(), orders, deletedIds).sort(
+        const merged = mergeLocalAndCloud(getOrders(), orders, deletedIds, 'id', isServerAuthoritative).sort(
           (a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime()
         );
-        if (merged.length > 0) {
-          onData(merged);
-        }
+        onData(merged);
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, path);
@@ -1396,6 +1412,10 @@ export async function saveShopToCloud(shop: Shop) {
   const path = `shops/${shop.id}`;
   const cleaned = cleanForFirestore(shop);
 
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    enqueueOfflineAction('upsert', 'shops', shop.id, cleaned);
+  }
+
   // 1. Direct real-time Firestore write (triggers onSnapshot immediately across all devices!)
   if (!isFirestoreQuotaExhausted()) {
     setDoc(doc(db, 'shops', shop.id), cleaned).catch((error) => {
@@ -1412,6 +1432,10 @@ export async function saveShopToCloud(shop: Shop) {
 
 export async function deleteShopFromCloud(shopId: string) {
   const path = `shops/${shopId}`;
+
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    enqueueOfflineAction('delete', 'shops', shopId);
+  }
 
   // 1. Direct real-time Firestore deletion
   if (!isFirestoreQuotaExhausted()) {
@@ -1437,6 +1461,10 @@ export async function saveProductToCloud(product: Product) {
     imageUrl: safeImageUrl,
   });
 
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    enqueueOfflineAction('upsert', 'products', product.id, cleaned);
+  }
+
   // 1. Direct real-time Firestore write
   if (!isFirestoreQuotaExhausted()) {
     setDoc(doc(db, 'products', product.id), cleaned).catch((error) => {
@@ -1453,6 +1481,10 @@ export async function saveProductToCloud(product: Product) {
 
 export async function deleteProductFromCloud(productId: string) {
   const path = `products/${productId}`;
+
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    enqueueOfflineAction('delete', 'products', productId);
+  }
 
   // 1. Direct real-time Firestore deletion
   if (!isFirestoreQuotaExhausted()) {
@@ -1472,6 +1504,10 @@ export async function saveOrderToCloud(order: Order) {
   const path = `orders/${order.id}`;
   const cleaned = cleanForFirestore(order);
 
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    enqueueOfflineAction('upsert', 'orders', order.id, cleaned);
+  }
+
   // 1. Direct real-time Firestore write
   if (!isFirestoreQuotaExhausted()) {
     setDoc(doc(db, 'orders', order.id), cleaned).catch((error) => {
@@ -1488,6 +1524,10 @@ export async function saveOrderToCloud(order: Order) {
 
 export async function deleteOrderFromCloud(orderId: string) {
   const path = `orders/${orderId}`;
+
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    enqueueOfflineAction('delete', 'orders', orderId);
+  }
 
   // 1. Direct real-time Firestore deletion
   if (!isFirestoreQuotaExhausted()) {
@@ -1506,6 +1546,10 @@ export async function deleteOrderFromCloud(orderId: string) {
 export async function saveDueCollectionToCloud(record: DueCollectionRecord) {
   const path = `dueCollections/${record.id}`;
   const cleaned = cleanForFirestore(record);
+
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    enqueueOfflineAction('upsert', 'dueCollections', record.id, cleaned);
+  }
 
   // 1. Direct real-time Firestore write
   if (!isFirestoreQuotaExhausted()) {
@@ -1548,10 +1592,7 @@ export function subscribeToCloudCategories(onData: (categories: Category[]) => v
   const unsub = onSnapshot(
     collection(db, path),
     (snapshot) => {
-      if (snapshot.empty) {
-        pollFirebaseDirect();
-        return;
-      }
+      const isServerAuthoritative = !snapshot.metadata.hasPendingWrites;
       const list: Category[] = [];
       const deletedIds = getDeletedCategoryIds();
       snapshot.forEach((d) => {
@@ -1560,9 +1601,8 @@ export function subscribeToCloudCategories(onData: (categories: Category[]) => v
           list.push(c);
         }
       });
-      if (list.length > 0) {
-        onData(list);
-      }
+      const merged = mergeLocalAndCloud(getCategories(), list, deletedIds, 'id', isServerAuthoritative);
+      onData(merged);
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, path);
@@ -1578,6 +1618,10 @@ export function subscribeToCloudCategories(onData: (categories: Category[]) => v
 export async function saveCategoryToCloud(category: Category) {
   const path = `categories/${category.id}`;
   const cleaned = cleanForFirestore(category);
+
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    enqueueOfflineAction('upsert', 'categories', category.id, cleaned);
+  }
 
   // 1. Immediate real-time Firestore write
   if (!isFirestoreQuotaExhausted()) {
@@ -1595,6 +1639,10 @@ export async function saveCategoryToCloud(category: Category) {
 
 export async function deleteCategoryFromCloud(categoryId: string) {
   const path = `categories/${categoryId}`;
+
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    enqueueOfflineAction('delete', 'categories', categoryId);
+  }
 
   // 1. Immediate real-time Firestore delete
   if (!isFirestoreQuotaExhausted()) {
@@ -1620,11 +1668,9 @@ export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
       ? []
       : await readFirestoreCatalogDirect<Route>('routes');
     const deletedIds = getDeletedRouteIds();
-    const combined = mergeLocalAndCloud(mirrorRoutes, directRoutes, deletedIds);
+    const combined = mergeLocalAndCloud(mirrorRoutes, directRoutes, deletedIds, 'id', false);
     const filtered = combined.filter((r) => r && !deletedIds.has(r.id));
-    if (filtered.length > 0) {
-      onData(filtered);
-    }
+    onData(filtered);
   };
 
   pollFirebaseDirect();
@@ -1636,10 +1682,7 @@ export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
   const unsub = onSnapshot(
     collection(db, path),
     (snapshot) => {
-      if (snapshot.empty) {
-        pollFirebaseDirect();
-        return;
-      }
+      const isServerAuthoritative = !snapshot.metadata.hasPendingWrites;
       const list: Route[] = [];
       const deletedIds = getDeletedRouteIds();
       snapshot.forEach((d) => {
@@ -1648,9 +1691,8 @@ export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
           list.push(r);
         }
       });
-      if (list.length > 0) {
-        onData(list);
-      }
+      const merged = mergeLocalAndCloud(getRoutes(), list, deletedIds, 'id', isServerAuthoritative);
+      onData(merged);
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, path);
@@ -1666,6 +1708,10 @@ export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
 export async function saveRouteToCloud(route: Route) {
   const path = `routes/${route.id}`;
   const cleaned = cleanForFirestore(route);
+
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    enqueueOfflineAction('upsert', 'routes', route.id, cleaned);
+  }
 
   // 1. Immediate real-time Firestore write
   if (!isFirestoreQuotaExhausted()) {
@@ -1683,6 +1729,10 @@ export async function saveRouteToCloud(route: Route) {
 
 export async function deleteRouteFromCloud(routeId: string) {
   const path = `routes/${routeId}`;
+
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    enqueueOfflineAction('delete', 'routes', routeId);
+  }
 
   // 1. Immediate real-time Firestore delete
   if (!isFirestoreQuotaExhausted()) {
@@ -2306,5 +2356,75 @@ export async function deleteAllStaffAuthorizedEmailsFromCloud(emails: string[]) 
     if (isFirestoreQuotaExhausted()) break;
     await deleteAuthorizedEmailFromCloud(email).catch((e) => tripFirestoreQuotaCircuitBreaker(e));
   }
+}
+
+/**
+ * Flush all pending offline mutations (Add, Update, Delete) to Firebase Firestore and Server Mirror
+ */
+export async function flushOfflinePendingActionsToFirebase(): Promise<number> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return 0;
+  const actions = getPendingOfflineActions();
+  if (!actions || actions.length === 0) return 0;
+
+  let syncedCount = 0;
+  for (const act of [...actions]) {
+    try {
+      if (act.type === 'delete') {
+        if (act.entity === 'products') await deleteDoc(doc(db, 'products', act.entityId)).catch(() => {});
+        else if (act.entity === 'shops') await deleteDoc(doc(db, 'shops', act.entityId)).catch(() => {});
+        else if (act.entity === 'orders') await deleteDoc(doc(db, 'orders', act.entityId)).catch(() => {});
+        else if (act.entity === 'categories') await deleteDoc(doc(db, 'categories', act.entityId)).catch(() => {});
+        else if (act.entity === 'routes') await deleteDoc(doc(db, 'routes', act.entityId)).catch(() => {});
+        deleteItemFromServerMirror(act.entity, act.entityId).catch(() => {});
+        removeItemFromFirebaseCatalog(act.entity, act.entityId, 'id').catch(() => {});
+      } else if (act.type === 'upsert' && act.payload) {
+        const cleaned = cleanForFirestore({ ...act.payload, _isOfflinePending: false });
+        if (act.entity === 'products') {
+          await setDoc(doc(db, 'products', act.entityId), cleaned).catch(() => {});
+          syncItemToServerMirror('products', cleaned).catch(() => {});
+          upsertItemInFirebaseCatalog('products', cleaned, 'id').catch(() => {});
+        } else if (act.entity === 'shops') {
+          await setDoc(doc(db, 'shops', act.entityId), cleaned).catch(() => {});
+          syncItemToServerMirror('shops', cleaned).catch(() => {});
+          upsertItemInFirebaseCatalog('shops', cleaned, 'id').catch(() => {});
+        } else if (act.entity === 'orders') {
+          await setDoc(doc(db, 'orders', act.entityId), cleaned).catch(() => {});
+          syncItemToServerMirror('orders', cleaned).catch(() => {});
+          upsertItemInFirebaseCatalog('orders', cleaned, 'id').catch(() => {});
+        } else if (act.entity === 'categories') {
+          await setDoc(doc(db, 'categories', act.entityId), cleaned).catch(() => {});
+          syncItemToServerMirror('categories', cleaned).catch(() => {});
+          upsertItemInFirebaseCatalog('categories', cleaned, 'id').catch(() => {});
+        } else if (act.entity === 'routes') {
+          await setDoc(doc(db, 'routes', act.entityId), cleaned).catch(() => {});
+          syncItemToServerMirror('routes', cleaned).catch(() => {});
+          upsertItemInFirebaseCatalog('routes', cleaned, 'id').catch(() => {});
+        } else if (act.entity === 'dueCollections') {
+          await setDoc(doc(db, 'dueCollections', act.entityId), cleaned).catch(() => {});
+          syncItemToServerMirror('dueCollections', cleaned).catch(() => {});
+          upsertItemInFirebaseCatalog('dueCollections', cleaned, 'id').catch(() => {});
+        } else if (act.entity === 'dailyExpenses') {
+          await setDoc(doc(db, 'dailyExpenses', act.entityId), cleaned).catch(() => {});
+          syncItemToServerMirror('dailyExpenses', cleaned).catch(() => {});
+          upsertItemInFirebaseCatalog('dailyExpenses', cleaned, 'id').catch(() => {});
+        } else if (act.entity === 'businessInfo') {
+          await setDoc(doc(db, 'settings', 'businessInfo'), cleaned).catch(() => {});
+          saveBusinessInfoToServerMirror(cleaned).catch(() => {});
+        }
+      }
+      removeOfflineAction(act.id);
+      markEntityPendingOffline(act.entity, act.entityId, false);
+      syncedCount++;
+    } catch (err) {
+      console.warn('Failed to flush offline action:', act, err);
+    }
+  }
+  return syncedCount;
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    flushOfflinePendingActionsToFirebase().catch(() => {});
+  });
 }
 

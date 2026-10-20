@@ -36,6 +36,7 @@ export interface HeaderProps {
   onInstallApp?: () => void;
   isAppInstalled?: boolean;
   activeRole?: UserRole;
+  isAdmin?: boolean;
   onSwitchRole?: (role: UserRole) => void;
   onOpenAdmin?: () => void;
   businessInfo?: BusinessInfo;
@@ -56,6 +57,7 @@ export const Header: React.FC<HeaderProps> = ({
   onInstallApp = () => {},
   isAppInstalled = false,
   activeRole = 'customer',
+  isAdmin,
   onSwitchRole,
   onOpenAdmin,
   businessInfo,
@@ -77,7 +79,9 @@ export const Header: React.FC<HeaderProps> = ({
   const activeUser = userProfile || directUser;
 
   const isActualAdmin =
-    (activeUser && (activeUser.role === 'admin' || isMainSuperAdmin(activeUser.email))) || false;
+    isAdmin !== undefined
+      ? isAdmin
+      : ((activeUser && (activeUser.role === 'admin' || isMainSuperAdmin(activeUser.email))) || false);
 
   const handleSignIn = async () => {
     try {
@@ -444,8 +448,8 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
               )}
 
-              {/* Role Switcher */}
-              {onSwitchRole && (
+              {/* Role Switcher - শুধুমাত্র এডমিন দেখতে পারবেন */}
+              {isActualAdmin && onSwitchRole && (
                 <div className="p-3 rounded-2xl bg-purple-50/70 border border-purple-200 space-y-2">
                   <p className="text-[11px] font-extrabold text-purple-900 uppercase">
                     রোল ভিউ পরিবর্তন করুন:

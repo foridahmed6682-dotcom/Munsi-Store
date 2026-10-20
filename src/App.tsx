@@ -110,7 +110,8 @@ import {
   pushBulkDataToServerMirror,
   readFirestoreCatalogDirect,
   writeFirestoreCatalogDirect,
-  setRestoreCooldown
+  setRestoreCooldown,
+  flushOfflinePendingActionsToFirebase
 } from './lib/firebase';
 import { getStoredGoogleToken } from './lib/firebaseAuth';
 import {
@@ -199,6 +200,15 @@ export default function App() {
   const [userProfile, setUserProfileState] = useState<UserProfile | null>(null);
   const [activeSimulatedRole, setActiveSimulatedRole] = useState<UserRole>('customer');
   const [businessInfo, setBusinessInfo] = useState<BusinessInfo>(getBusinessInfo());
+
+  const isActualAdmin =
+    userProfile?.role === 'admin' ||
+    userProfile?.email?.toLowerCase().trim() === 'foridahmed6682@gmail.com' ||
+    authorizedEmails.some(
+      (a) =>
+        a.email?.toLowerCase().trim() === userProfile?.email?.toLowerCase().trim() &&
+        a.role === 'admin'
+    );
 
   // Sync state
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
@@ -388,9 +398,18 @@ export default function App() {
       }).catch(() => {});
     }
 
-    const handleOnline = () => {
+    const handleOnline = async () => {
       setIsOnline(true);
       showToast('ইন্টারনেট সংযোগ পাওয়া গেছে। ফায়ারবেস ক্লাউড সিঙ্ক চালু হয়েছে।', 'success');
+      try {
+        const synced = await flushOfflinePendingActionsToFirebase();
+        if (synced > 0) {
+          showToast(`ইন্টারনেট সংযোগ ফিরে এসেছে: ${synced}টি অফলাইন অ্যাকশন ফায়ারবেজে সিঙ্ক হয়েছে!`, 'success');
+        }
+      } catch (err) {
+        console.warn('Offline flush error on reconnect:', err);
+      }
+      reloadData();
     };
     const handleOffline = () => {
       setIsOnline(false);
@@ -809,6 +828,7 @@ export default function App() {
   // Order Creation Handler
   const handleOrderCreated = async (orderData: any) => {
     try {
+      const isCurrentlyOffline = typeof navigator !== 'undefined' && !navigator.onLine;
       const memoNumber = orderData.memoNumber || `MS-${Date.now().toString().slice(-6)}`;
       const newOrder: Order = {
         id: orderData.id || `ord-${Date.now()}`,
@@ -817,6 +837,7 @@ export default function App() {
         bookedByUid: userProfile?.uid || orderData.bookedByUid || 'usr-local',
         bookedByName: userProfile?.displayName || orderData.bookedByName || (activeSimulatedRole === 'dsr' ? 'হাবিবুর রহমান (DSR)' : activeSimulatedRole === 'customer' ? 'অনলাইন কাস্টমার' : 'এডমিন অফিসার'),
         bookedByRole: orderData.bookedByRole || activeSimulatedRole,
+        _isOfflinePending: isCurrentlyOffline,
         ...orderData,
         memoNumber,
       };
@@ -938,11 +959,13 @@ export default function App() {
 
   // Add Shop Handler (also auto-creates Route if custom/new routeArea)
   const handleAddShop = (shop: Shop) => {
-    setShops((prev) => [shop, ...prev.filter((s) => s.id !== shop.id)]);
-    saveShop(shop);
-    saveShopToCloud(shop).catch(() => {});
-    if (shop.routeArea && shop.routeArea.trim()) {
-      const cleanArea = shop.routeArea.trim();
+    const isCurrentlyOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    const finalShop: Shop = { ...shop, _isOfflinePending: isCurrentlyOffline };
+    setShops((prev) => [finalShop, ...prev.filter((s) => s.id !== finalShop.id)]);
+    saveShop(finalShop);
+    saveShopToCloud(finalShop).catch(() => {});
+    if (finalShop.routeArea && finalShop.routeArea.trim()) {
+      const cleanArea = finalShop.routeArea.trim();
       const exists = routes.some(
         (r) =>
           r.banglaName.trim() === cleanArea ||
@@ -955,28 +978,31 @@ export default function App() {
           banglaName: cleanArea,
           description: `${cleanArea} এরিয়া ও বাজার জোন`,
           createdAt: new Date().toISOString(),
+          _isOfflinePending: isCurrentlyOffline,
         };
         addOrUpdateRouteLocal(newRoute);
         saveRouteToCloud(newRoute).catch(() => {});
       }
     }
     reloadData();
-    showToast(`দোকান "${shop.name}" সফলভাবে যুক্ত হয়েছে!`, 'success');
+    showToast(`দোকান "${finalShop.name}" সফলভাবে যুক্ত হয়েছে!`, 'success');
   };
 
   // Update Shop Handler (also auto-creates Route if custom/new routeArea)
   const handleUpdateShop = (shop: Shop) => {
+    const isCurrentlyOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    const finalShop: Shop = { ...shop, _isOfflinePending: isCurrentlyOffline };
     setShops((prev) => {
-      const idx = prev.findIndex((s) => s.id === shop.id);
+      const idx = prev.findIndex((s) => s.id === finalShop.id);
       if (idx >= 0) {
         const next = [...prev];
-        next[idx] = shop;
+        next[idx] = finalShop;
         return next;
       }
-      return [shop, ...prev];
+      return [finalShop, ...prev];
     });
-    saveShop(shop);
-    saveShopToCloud(shop).catch(() => {});
+    saveShop(finalShop);
+    saveShopToCloud(finalShop).catch(() => {});
     if (shop.routeArea && shop.routeArea.trim()) {
       const cleanArea = shop.routeArea.trim();
       const exists = routes.some(
@@ -1053,13 +1079,15 @@ export default function App() {
 
   // Add Product Handler
   const handleAddProduct = (product: Product) => {
-    saveProduct(product);
-    setProducts((prev) => [product, ...prev.filter((p) => p.id !== product.id)]);
-    saveProductToCloud(product).catch((err) => {
+    const isCurrentlyOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    const finalProduct: Product = { ...product, _isOfflinePending: isCurrentlyOffline };
+    saveProduct(finalProduct);
+    setProducts((prev) => [finalProduct, ...prev.filter((p) => p.id !== finalProduct.id)]);
+    saveProductToCloud(finalProduct).catch((err) => {
       console.warn('Could not sync added product to cloud:', err);
     });
-    if (product.category && product.category.trim()) {
-      const cleanCat = product.category.trim();
+    if (finalProduct.category && finalProduct.category.trim()) {
+      const cleanCat = finalProduct.category.trim();
       const catExists = categories.some(
         (c) =>
           c.banglaName.trim() === cleanCat ||
@@ -1073,28 +1101,31 @@ export default function App() {
           description: `${cleanCat} পণ্য সমূহ`,
           color: '#10b981',
           createdAt: new Date().toISOString(),
+          _isOfflinePending: isCurrentlyOffline,
         };
         addOrUpdateCategory(newCat);
         saveCategoryToCloud(newCat).catch(() => {});
       }
     }
     reloadData();
-    showToast(`পণ্য "${product.banglaName}" সফলভাবে যুক্ত হয়েছে!`, 'success');
+    showToast(`পণ্য "${finalProduct.banglaName}" সফলভাবে যুক্ত হয়েছে!`, 'success');
   };
 
   // Bulk / Batch Add Products Handler
   const handleBatchAddProducts = (newProducts: Product[]) => {
     if (!newProducts || newProducts.length === 0) return;
+    const isCurrentlyOffline = typeof navigator !== 'undefined' && !navigator.onLine;
     const existing = getProducts();
     const existingMap = new Map(existing.map((p) => [p.id, p]));
     newProducts.forEach((p) => {
-      existingMap.set(p.id, p);
-      saveProductToCloud(p).catch((err) => {
-        console.warn('Could not sync bulk product to cloud:', p.banglaName, err);
+      const finalP: Product = { ...p, _isOfflinePending: isCurrentlyOffline };
+      existingMap.set(finalP.id, finalP);
+      saveProductToCloud(finalP).catch((err) => {
+        console.warn('Could not sync bulk product to cloud:', finalP.banglaName, err);
       });
       // Auto register category if new
-      if (p.category && p.category.trim()) {
-        const cleanCat = p.category.trim();
+      if (finalP.category && finalP.category.trim()) {
+        const cleanCat = finalP.category.trim();
         const catExists = categories.some(
           (c) =>
             c.banglaName.trim() === cleanCat ||
@@ -1108,6 +1139,7 @@ export default function App() {
             description: `${cleanCat} পণ্য সমূহ`,
             color: '#10b981',
             createdAt: new Date().toISOString(),
+            _isOfflinePending: isCurrentlyOffline,
           };
           addOrUpdateCategory(newCat);
           saveCategoryToCloud(newCat).catch(() => {});
@@ -1124,17 +1156,19 @@ export default function App() {
 
   // Update Product Handler
   const handleUpdateProduct = (product: Product) => {
-    saveProduct(product);
+    const isCurrentlyOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    const finalProduct: Product = { ...product, _isOfflinePending: isCurrentlyOffline };
+    saveProduct(finalProduct);
     setProducts((prev) => {
-      const idx = prev.findIndex((p) => p.id === product.id);
+      const idx = prev.findIndex((p) => p.id === finalProduct.id);
       if (idx >= 0) {
         const next = [...prev];
-        next[idx] = product;
+        next[idx] = finalProduct;
         return next;
       }
-      return [product, ...prev];
+      return [finalProduct, ...prev];
     });
-    saveProductToCloud(product).catch((err) => {
+    saveProductToCloud(finalProduct).catch((err) => {
       console.warn('Could not sync updated product to cloud:', err);
     });
 
@@ -1223,6 +1257,7 @@ export default function App() {
 
   const executeDeleteCategory = (categoryId: string) => {
     deleteCategory(categoryId);
+    setCategories((prev) => prev.filter((c) => c.id !== categoryId));
     deleteCategoryFromCloud(categoryId).catch(() => {});
     reloadData();
     showToast('ক্যাটাগরি মুছে ফেলা হয়েছে', 'info');
@@ -1291,6 +1326,7 @@ export default function App() {
       deleteRouteLocal(routeId);
       deleteRouteFromCloud(routeId).catch(() => {});
     }
+    setRoutes((prev) => prev.filter((r) => r.id !== routeId));
 
     const deletedBanglaName = targetRoute?.banglaName || shopDerivedName;
     const deletedEngName = targetRoute?.name || shopDerivedName;
@@ -2471,6 +2507,7 @@ export default function App() {
         isSyncing={isSyncing}
         userProfile={userProfile}
         activeRole={activeSimulatedRole}
+        isAdmin={isActualAdmin}
         installPrompt={deferredPrompt}
         isAppInstalled={isAppInstalled}
         businessInfo={businessInfo}
