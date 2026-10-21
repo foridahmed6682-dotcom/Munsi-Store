@@ -158,3 +158,29 @@ export function getPendingEntityIds(entity: OfflineEntityType): Set<string> {
     return new Set();
   }
 }
+
+/**
+ * Clear all queued offline operations and pending flags (used during clean backup restore)
+ */
+export function clearAllOfflineQueue(): void {
+  memoryQueue = [];
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem(QUEUE_STORAGE_KEY);
+    const entities: OfflineEntityType[] = [
+      'products',
+      'shops',
+      'orders',
+      'categories',
+      'routes',
+      'dueCollections',
+      'dailyExpenses',
+      'businessInfo',
+    ];
+    for (const ent of entities) {
+      localStorage.removeItem(`${PENDING_IDS_KEY_PREFIX}${ent}`);
+    }
+  } catch {
+    // ignore
+  }
+}

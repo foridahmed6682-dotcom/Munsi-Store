@@ -111,7 +111,8 @@ import {
   readFirestoreCatalogDirect,
   writeFirestoreCatalogDirect,
   setRestoreCooldown,
-  flushOfflinePendingActionsToFirebase
+  flushOfflinePendingActionsToFirebase,
+  restoreBulkDataToFirestore
 } from './lib/firebase';
 import { getStoredGoogleToken } from './lib/firebaseAuth';
 import {
@@ -167,7 +168,9 @@ import {
   getItemsFromIndexedDB,
   isIndexedDBSupported,
   getAllProductImagesFromIndexedDB,
+  saveProductImageToIndexedDB,
 } from './lib/indexedDb';
+import { clearAllOfflineQueue } from './lib/offlineSyncQueue';
 import { setMemoryOrdersCache } from './lib/storage';
 
 export default function App() {
@@ -2407,7 +2410,10 @@ export default function App() {
         ? { ...getBusinessInfo(), ...backupData.businessInfo }
         : getBusinessInfo();
 
-      // 2. Save to LocalStorage & React State immediately
+      // 2. Clear old offline queue to prevent stale offline overwrites
+      clearAllOfflineQueue();
+
+      // 3. Save to LocalStorage & React State immediately
       saveProducts(finalProducts);
       setProducts([...finalProducts]);
 
@@ -2435,8 +2441,41 @@ export default function App() {
       saveBusinessInfoLocal(finalBizInfo);
       setBusinessInfo(finalBizInfo);
 
-      // 3. Push to Server Mirror (with replaceAll when replacing) & Firestore Catalog Vaults
+      // 4. Save directly into Browser IndexedDB for high-capacity offline persistence
+      if (isIndexedDBSupported()) {
+        try {
+          await syncAppDataToIndexedDB({
+            products: finalProducts,
+            shops: finalShops,
+            orders: finalOrders,
+            categories: finalCategories,
+            routes: finalRoutes,
+            dueCollections: finalDueCollections,
+            dailyExpenses: finalDailyExpenses,
+          });
+          for (const p of finalProducts) {
+            if (p.id && p.imageUrl && p.imageUrl.startsWith('data:')) {
+              saveProductImageToIndexedDB(p.id, p.imageUrl).catch(() => {});
+            }
+          }
+        } catch (idbErr) {
+          console.warn('IndexedDB backup sync warning:', idbErr);
+        }
+      }
+
+      // 5. Restore directly into Firebase Firestore Backend collections & Server Mirror
       await Promise.allSettled([
+        restoreBulkDataToFirestore({
+          products: finalProducts,
+          shops: finalShops,
+          orders: finalOrders,
+          categories: finalCategories,
+          routes: finalRoutes,
+          dueCollections: finalDueCollections,
+          dailyExpenses: finalDailyExpenses,
+          businessInfo: finalBizInfo,
+          mode,
+        }),
         pushBulkDataToServerMirror({
           replaceAll: mode === 'replace',
           products: finalProducts,

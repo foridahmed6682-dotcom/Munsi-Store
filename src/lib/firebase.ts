@@ -25,7 +25,8 @@ import {
   getDocFromServer,
   addDoc,
   setLogLevel,
-  disableNetwork
+  disableNetwork,
+  writeBatch
 } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
@@ -2409,7 +2410,7 @@ export async function flushOfflinePendingActionsToFirebase(): Promise<number> {
           upsertItemInFirebaseCatalog('dailyExpenses', cleaned, 'id').catch(() => {});
         } else if (act.entity === 'businessInfo') {
           await setDoc(doc(db, 'settings', 'businessInfo'), cleaned).catch(() => {});
-          saveBusinessInfoToServerMirror(cleaned).catch(() => {});
+          pushBulkDataToServerMirror({ businessInfo: cleaned }).catch(() => {});
         }
       }
       removeOfflineAction(act.id);
@@ -2426,5 +2427,188 @@ if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
     flushOfflinePendingActionsToFirebase().catch(() => {});
   });
+}
+
+/**
+ * Restore Bulk Data directly into Firebase Firestore Backend
+ * Updates collections: products, shops, orders, categories, routes, dueCollections, dailyExpenses, and settings/businessInfo
+ * In 'replace' mode, removes obsolete/purged documents from Firestore so Firebase exactly mirrors the backup file.
+ */
+export async function restoreBulkDataToFirestore(payload: {
+  products: Product[];
+  shops: Shop[];
+  orders: Order[];
+  categories: Category[];
+  routes: Route[];
+  dueCollections?: DueCollectionRecord[];
+  dailyExpenses?: DailyExpenseRecord[];
+  businessInfo?: BusinessInfo;
+  mode?: 'replace' | 'merge';
+}): Promise<{ success: boolean; writtenCount: number; deletedCount: number }> {
+  const mode = payload.mode || 'replace';
+  let writtenCount = 0;
+  let deletedCount = 0;
+
+  if (isFirestoreQuotaExhausted()) {
+    console.warn('Firestore write quota circuit breaker is tripped, relying on server mirror & IndexedDB');
+    return { success: false, writtenCount: 0, deletedCount: 0 };
+  }
+
+  try {
+    let currentBatch = writeBatch(db);
+    let opCount = 0;
+
+    const commitBatchIfNeeded = async (force = false) => {
+      if (opCount > 0 && (opCount >= 350 || force)) {
+        await currentBatch.commit();
+        currentBatch = writeBatch(db);
+        opCount = 0;
+      }
+    };
+
+    // 1. In 'replace' mode: purge existing Firestore docs that are not present in the backup file
+    if (mode === 'replace') {
+      const collectionsToCheck = [
+        { name: 'products', newIds: new Set(payload.products.map((p) => p.id)) },
+        { name: 'shops', newIds: new Set(payload.shops.map((s) => s.id)) },
+        { name: 'orders', newIds: new Set(payload.orders.map((o) => o.id)) },
+        { name: 'categories', newIds: new Set(payload.categories.map((c) => c.id)) },
+        { name: 'routes', newIds: new Set(payload.routes.map((r) => r.id)) },
+        ...(payload.dueCollections
+          ? [{ name: 'dueCollections', newIds: new Set(payload.dueCollections.map((d) => d.id)) }]
+          : []),
+        ...(payload.dailyExpenses
+          ? [{ name: 'dailyExpenses', newIds: new Set(payload.dailyExpenses.map((e) => e.id)) }]
+          : []),
+      ];
+
+      for (const colInfo of collectionsToCheck) {
+        try {
+          const snap = await getDocs(collection(db, colInfo.name));
+          for (const d of snap.docs) {
+            if (!colInfo.newIds.has(d.id)) {
+              currentBatch.delete(d.ref);
+              opCount++;
+              deletedCount++;
+              await commitBatchIfNeeded();
+            }
+          }
+        } catch (err) {
+          console.warn(`Could not check obsolete docs in ${colInfo.name}:`, err);
+        }
+      }
+    }
+
+    // 2. Batch-write all products (compress huge data-url images if > 500KB to stay safely under Firestore 1MB doc limit)
+    for (const p of payload.products) {
+      if (!p?.id) continue;
+      let safeImageUrl = p.imageUrl || '';
+      if (safeImageUrl && safeImageUrl.length > 500000) {
+        try {
+          safeImageUrl = await compressDataUrlIfNeeded(safeImageUrl);
+        } catch {
+          // ignore compression error
+        }
+      }
+      const cleaned = cleanForFirestore({
+        ...p,
+        imageUrl: safeImageUrl,
+        _isOfflinePending: false,
+      });
+      const ref = doc(db, 'products', p.id);
+      currentBatch.set(ref, cleaned);
+      opCount++;
+      writtenCount++;
+      await commitBatchIfNeeded();
+    }
+
+    // 3. Batch-write shops
+    for (const s of payload.shops) {
+      if (!s?.id) continue;
+      const cleaned = cleanForFirestore({ ...s, _isOfflinePending: false });
+      const ref = doc(db, 'shops', s.id);
+      currentBatch.set(ref, cleaned);
+      opCount++;
+      writtenCount++;
+      await commitBatchIfNeeded();
+    }
+
+    // 4. Batch-write orders
+    for (const o of payload.orders) {
+      if (!o?.id) continue;
+      const cleaned = cleanForFirestore({ ...o, _isOfflinePending: false });
+      const ref = doc(db, 'orders', o.id);
+      currentBatch.set(ref, cleaned);
+      opCount++;
+      writtenCount++;
+      await commitBatchIfNeeded();
+    }
+
+    // 5. Batch-write categories
+    for (const c of payload.categories) {
+      if (!c?.id) continue;
+      const cleaned = cleanForFirestore({ ...c, _isOfflinePending: false });
+      const ref = doc(db, 'categories', c.id);
+      currentBatch.set(ref, cleaned);
+      opCount++;
+      writtenCount++;
+      await commitBatchIfNeeded();
+    }
+
+    // 6. Batch-write routes
+    for (const r of payload.routes) {
+      if (!r?.id) continue;
+      const cleaned = cleanForFirestore({ ...r, _isOfflinePending: false });
+      const ref = doc(db, 'routes', r.id);
+      currentBatch.set(ref, cleaned);
+      opCount++;
+      writtenCount++;
+      await commitBatchIfNeeded();
+    }
+
+    // 7. Batch-write due collections
+    if (payload.dueCollections && payload.dueCollections.length > 0) {
+      for (const d of payload.dueCollections) {
+        if (!d?.id) continue;
+        const cleaned = cleanForFirestore(d);
+        const ref = doc(db, 'dueCollections', d.id);
+        currentBatch.set(ref, cleaned);
+        opCount++;
+        writtenCount++;
+        await commitBatchIfNeeded();
+      }
+    }
+
+    // 8. Batch-write daily expenses
+    if (payload.dailyExpenses && payload.dailyExpenses.length > 0) {
+      for (const e of payload.dailyExpenses) {
+        if (!e?.id) continue;
+        const cleaned = cleanForFirestore(e);
+        const ref = doc(db, 'dailyExpenses', e.id);
+        currentBatch.set(ref, cleaned);
+        opCount++;
+        writtenCount++;
+        await commitBatchIfNeeded();
+      }
+    }
+
+    // 9. Batch-write business info
+    if (payload.businessInfo) {
+      const cleaned = cleanForFirestore(payload.businessInfo);
+      const ref = doc(db, 'settings', 'businessInfo');
+      currentBatch.set(ref, cleaned);
+      opCount++;
+      writtenCount++;
+    }
+
+    // Commit any remaining operations in the final batch
+    await commitBatchIfNeeded(true);
+
+    return { success: true, writtenCount, deletedCount };
+  } catch (err: any) {
+    console.warn('restoreBulkDataToFirestore encountered error:', err);
+    tripFirestoreQuotaCircuitBreaker(err);
+    return { success: false, writtenCount, deletedCount };
+  }
 }
 
