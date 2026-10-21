@@ -578,17 +578,13 @@ export default function App() {
       });
 
       unsubscribeDueCollections = subscribeToCloudDueCollections((cloudCols) => {
-        if (cloudCols.length > 0 || getDueCollections().length === 0) {
-          saveDueCollections(cloudCols);
-          setDueCollections(cloudCols);
-        }
+        saveDueCollections(cloudCols);
+        setDueCollections(cloudCols);
       });
 
       unsubscribeDailyExpenses = subscribeToCloudDailyExpenses((cloudExps) => {
-        if (cloudExps.length > 0 || getDailyExpenses().length === 0) {
-          saveDailyExpenses(cloudExps);
-          setDailyExpenses(cloudExps);
-        }
+        saveDailyExpenses(cloudExps);
+        setDailyExpenses(cloudExps);
       });
 
       unsubscribeShops = subscribeToCloudShops((cloudShops) => {
@@ -613,12 +609,8 @@ export default function App() {
       });
 
       unsubscribeRoutes = subscribeToCloudRoutes((cloudRoutes) => {
-        if (cloudRoutes && cloudRoutes.length > 0) {
-          saveRoutes(cloudRoutes);
-          setRoutes(cloudRoutes);
-        } else {
-          setRoutes(getRoutes());
-        }
+        saveRoutes(cloudRoutes);
+        setRoutes(cloudRoutes);
       });
 
       unsubscribeAuthEmails = subscribeToAuthorizedEmails((cloudAuths) => {

@@ -422,12 +422,13 @@ export function mergeLocalAndCloud<T extends Record<string, any>>(
       }
     }
 
-    // 2. ONLY keep local items if they were created offline on this device and are explicitly pending sync
-    // Old cached items from IndexedDB/localStorage that do not exist in Firebase were deleted and must NOT resurrect!
+    // 2. Preserve local items:
+    // If not server authoritative (e.g. background mirror poll or offline cache), ALWAYS preserve local items!
+    // If server authoritative, preserve items created/edited offline that are pending sync.
     localMap.forEach((localItem, key) => {
       if (map.has(key) || deletedIds.has(key)) return;
       const isPending = (localItem as any)._isOfflinePending === true;
-      if (isPending || (!isServerAuthoritative && remoteItems.length === 0)) {
+      if (!isServerAuthoritative || isPending) {
         map.set(key, localItem);
       }
     });
@@ -616,7 +617,6 @@ export async function pushBulkDataToServerMirror(payload: {
   authorizedEmails?: AuthorizedUserEmail[];
   businessInfo?: BusinessInfo;
 }) {
-  if (isServerBackendAvailable === false) return;
   try {
     const res = await fetch('/api/db/mirror', {
       method: 'POST',
@@ -1248,6 +1248,7 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
     unsub = onSnapshot(
       collection(db, path),
       (snapshot) => {
+        if (isRestoreCooldownActive()) return;
         const isServerAuthoritative = !snapshot.metadata.hasPendingWrites;
         const shops: Shop[] = [];
         const deletedIds = getDeletedShopIds();
@@ -1310,6 +1311,7 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
     unsub = onSnapshot(
       collection(db, path),
       (snapshot) => {
+        if (isRestoreCooldownActive()) return;
         const isServerAuthoritative = !snapshot.metadata.hasPendingWrites;
         const products: Product[] = [];
         const deletedIds = getDeletedProductIds();
@@ -1374,6 +1376,7 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
     unsub = onSnapshot(
       q,
       (snapshot) => {
+        if (isRestoreCooldownActive()) return;
         const isServerAuthoritative = !snapshot.metadata.hasPendingWrites;
         const orders: Order[] = [];
         const deletedIds = getDeletedOrderIds();
@@ -1593,6 +1596,7 @@ export function subscribeToCloudCategories(onData: (categories: Category[]) => v
   const unsub = onSnapshot(
     collection(db, path),
     (snapshot) => {
+      if (isRestoreCooldownActive()) return;
       const isServerAuthoritative = !snapshot.metadata.hasPendingWrites;
       const list: Category[] = [];
       const deletedIds = getDeletedCategoryIds();
@@ -1683,6 +1687,7 @@ export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
   const unsub = onSnapshot(
     collection(db, path),
     (snapshot) => {
+      if (isRestoreCooldownActive()) return;
       const isServerAuthoritative = !snapshot.metadata.hasPendingWrites;
       const list: Route[] = [];
       const deletedIds = getDeletedRouteIds();
@@ -1970,16 +1975,15 @@ export async function saveBusinessInfoToCloud(info: BusinessInfo) {
 export function subscribeToCloudDueCollections(onData: (collections: DueCollectionRecord[]) => void) {
   const path = 'dueCollections';
   const pollFirebaseDirect = async () => {
+    if (isRestoreCooldownActive()) return;
     const mirror = await fetchServerDatabaseMirror();
     const mirrorCols: DueCollectionRecord[] = Array.isArray(mirror?.dueCollections) ? mirror.dueCollections : [];
     const directCols = isFirestoreQuotaExhausted()
       ? []
       : await readFirestoreCatalogDirect<DueCollectionRecord>('dueCollections');
     const combined = mergeLocalAndCloud(mirrorCols, directCols, new Set());
-    if (combined.length > 0) {
-      const sorted = [...combined].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-      onData(sorted);
-    }
+    const sorted = [...combined].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    onData(sorted);
   };
 
   if (isFirestoreQuotaExhausted()) {
@@ -1990,18 +1994,17 @@ export function subscribeToCloudDueCollections(onData: (collections: DueCollecti
   const unsub = onSnapshot(
     collection(db, path),
     (snapshot) => {
+      if (isRestoreCooldownActive()) return;
       if (snapshot.empty) {
-        pollFirebaseDirect();
+        onData([]);
         return;
       }
       const list: DueCollectionRecord[] = [];
       snapshot.forEach((d) => {
         list.push(d.data() as DueCollectionRecord);
       });
-      if (list.length > 0) {
-        list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        onData(list);
-      }
+      list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      onData(list);
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, path);
@@ -2018,16 +2021,15 @@ export function subscribeToCloudDueCollections(onData: (collections: DueCollecti
 export function subscribeToCloudDailyExpenses(onData: (expenses: DailyExpenseRecord[]) => void) {
   const path = 'dailyExpenses';
   const pollFirebaseDirect = async () => {
+    if (isRestoreCooldownActive()) return;
     const mirror = await fetchServerDatabaseMirror();
     const mirrorExps: DailyExpenseRecord[] = Array.isArray(mirror?.dailyExpenses) ? mirror.dailyExpenses : [];
     const directExps = isFirestoreQuotaExhausted()
       ? []
       : await readFirestoreCatalogDirect<DailyExpenseRecord>('dailyExpenses');
     const combined = mergeLocalAndCloud(mirrorExps, directExps, new Set());
-    if (combined.length > 0) {
-      const sorted = [...combined].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      onData(sorted);
-    }
+    const sorted = [...combined].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    onData(sorted);
   };
 
   if (isFirestoreQuotaExhausted()) {
@@ -2038,18 +2040,17 @@ export function subscribeToCloudDailyExpenses(onData: (expenses: DailyExpenseRec
   const unsub = onSnapshot(
     collection(db, path),
     (snapshot) => {
+      if (isRestoreCooldownActive()) return;
       if (snapshot.empty) {
-        pollFirebaseDirect();
+        onData([]);
         return;
       }
       const list: DailyExpenseRecord[] = [];
       snapshot.forEach((d) => {
         list.push(d.data() as DailyExpenseRecord);
       });
-      if (list.length > 0) {
-        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        onData(list);
-      }
+      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      onData(list);
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, path);
