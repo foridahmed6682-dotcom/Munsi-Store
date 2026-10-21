@@ -337,32 +337,8 @@ export async function readFirestoreDocDirect(docPath: string): Promise<Record<st
     }
   }
 
-  // Fallback to Write-Channel PATCH (returns full document even when Free Daily Read Units are 0!)
-  if (isFirestoreWriteQuotaExhausted()) return null;
-  try {
-    const patchRes = await fetch(
-      `${FIRESTORE_BASE_URL}/${docPath}?updateMask.fieldPaths=_ping&key=${FIRESTORE_API_KEY}`,
-      {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fields: {
-            _ping: { booleanValue: true },
-          },
-        }),
-      }
-    );
-    if (patchRes.status === 429) {
-      tripFirestoreQuotaCircuitBreaker({ status: 429, message: `PATCH ${docPath} -> 429 Write quota exceeded` }, 'write');
-      return null;
-    }
-    if (patchRes.status !== 200) return null;
-    const data = await patchRes.json();
-    if (!data || !data.fields) return null;
-    return parseFirestoreRestFields(data.fields);
-  } catch {
-    return null;
-  }
+  // If read quota is exhausted or GET failed, return null directly instead of burning Write Quota via artificial PATCH
+  return null;
 }
 
 // Reads a collection catalog directly from Firebase Firestore
@@ -1221,16 +1197,13 @@ export async function updateUserRoleAndRoute(uid: string, role: UserRole, assign
 // Real-time Cloud Sync Listeners (Server Mirror + Direct Firebase Read + Local Merge Protection, zero redundant writes)
 export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
   const path = 'shops';
-  const pollFirebaseDirect = async (extraShops: Shop[] = []) => {
+  const syncFromLocalMirror = async (extraShops: Shop[] = []) => {
     if (isRestoreCooldownActive()) return;
     const mirror = await fetchServerDatabaseMirror();
-    const directShops = isFirestoreWriteQuotaExhausted()
-      ? []
-      : await readFirestoreCatalogDirect<Shop>('shops');
     const deletedIds = getDeletedShopIds();
     const mirrorShops: Shop[] = Array.isArray(mirror?.shops) ? mirror.shops : [];
     const combinedRemote = mergeLocalAndCloud(
-      mergeLocalAndCloud(mirrorShops, directShops, deletedIds, 'id', false),
+      mirrorShops,
       extraShops,
       deletedIds,
       'id',
@@ -1240,8 +1213,8 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
     onData(merged);
   };
 
-  // Always run direct catalog + server mirror merge immediately on mount
-  pollFirebaseDirect();
+  // Immediate local/mirror sync on mount
+  syncFromLocalMirror();
 
   let unsub = () => {};
   if (!isFirestoreQuotaExhausted()) {
@@ -1264,16 +1237,17 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, path);
-        pollFirebaseDirect();
+        syncFromLocalMirror();
       }
     );
   }
 
+  // Periodic fallback sync ONLY hits our local Express server mirror (0 Firestore cost!)
   const timer = setInterval(() => {
     if (typeof document === 'undefined' || document.visibilityState === 'visible') {
-      pollFirebaseDirect();
+      syncFromLocalMirror();
     }
-  }, 20000);
+  }, 25000);
 
   return () => {
     clearInterval(timer);
@@ -1283,28 +1257,24 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
 
 export function subscribeToCloudProducts(onData: (products: Product[]) => void) {
   const path = 'products';
-  const pollFirebaseDirect = async (extraProducts: Product[] = []) => {
+  const syncFromLocalMirror = async (extraProducts: Product[] = []) => {
     if (isRestoreCooldownActive()) return;
     const mirror = await fetchServerDatabaseMirror();
-    const directProducts = isFirestoreWriteQuotaExhausted()
-      ? []
-      : await readFirestoreCatalogDirect<Product>('products');
     const deletedIds = getDeletedProductIds();
     const mirrorProducts: Product[] = Array.isArray(mirror?.products) ? mirror.products : [];
     const combinedRemote = mergeLocalAndCloud(
-      mergeLocalAndCloud(mirrorProducts, directProducts, deletedIds, 'id', false),
+      mirrorProducts,
       extraProducts,
       deletedIds,
       'id',
       false
     );
-    const localProds = getProducts();
-    const merged = mergeLocalAndCloud(localProds, combinedRemote, deletedIds, 'id', false);
+    const merged = mergeLocalAndCloud(getProducts(), combinedRemote, deletedIds, 'id', false);
     onData(merged);
   };
 
-  // Always run direct catalog + server mirror merge immediately on mount
-  pollFirebaseDirect();
+  // Immediate local/mirror sync on mount
+  syncFromLocalMirror();
 
   let unsub = () => {};
   if (!isFirestoreQuotaExhausted()) {
@@ -1327,16 +1297,17 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, path);
-        pollFirebaseDirect();
+        syncFromLocalMirror();
       }
     );
   }
 
+  // Periodic fallback sync ONLY hits our local Express server mirror (0 Firestore cost!)
   const timer = setInterval(() => {
     if (typeof document === 'undefined' || document.visibilityState === 'visible') {
-      pollFirebaseDirect();
+      syncFromLocalMirror();
     }
-  }, 20000);
+  }, 25000);
 
   return () => {
     clearInterval(timer);
@@ -1347,16 +1318,13 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
 export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
   const path = 'orders';
   const q = query(collection(db, path), orderBy('orderDate', 'desc'));
-  const pollFirebaseDirect = async (extraOrders: Order[] = []) => {
+  const syncFromLocalMirror = async (extraOrders: Order[] = []) => {
     if (isRestoreCooldownActive()) return;
     const mirror = await fetchServerDatabaseMirror();
-    const directOrders = isFirestoreWriteQuotaExhausted()
-      ? []
-      : await readFirestoreCatalogDirect<Order>('orders');
     const deletedIds = getDeletedOrderIds();
     const mirrorOrders: Order[] = Array.isArray(mirror?.orders) ? mirror.orders : [];
     const combinedRemote = mergeLocalAndCloud(
-      mergeLocalAndCloud(mirrorOrders, directOrders, deletedIds, 'id', false),
+      mirrorOrders,
       extraOrders,
       deletedIds,
       'id',
@@ -1368,8 +1336,8 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
     onData(merged);
   };
 
-  // Always run direct catalog + server mirror merge immediately on mount
-  pollFirebaseDirect();
+  // Immediate local/mirror sync on mount
+  syncFromLocalMirror();
 
   let unsub = () => {};
   if (!isFirestoreQuotaExhausted()) {
@@ -1394,16 +1362,17 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, path);
-        pollFirebaseDirect();
+        syncFromLocalMirror();
       }
     );
   }
 
+  // Periodic fallback sync ONLY hits our local Express server mirror (0 Firestore cost!)
   const timer = setInterval(() => {
     if (typeof document === 'undefined' || document.visibilityState === 'visible') {
-      pollFirebaseDirect();
+      syncFromLocalMirror();
     }
-  }, 18000);
+  }, 25000);
 
   return () => {
     clearInterval(timer);

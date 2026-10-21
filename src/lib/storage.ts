@@ -651,7 +651,7 @@ export function prepareDeletedIdsForRestore(
     if (!Array.isArray(incomingItems)) return;
     const incomingIds = new Set(incomingItems.map((x) => x?.id).filter(Boolean));
     const nextDeleted = new Set(currentDeleted);
-    if (mode === 'replace') {
+    if (mode === 'replace' && incomingItems.length > 0) {
       currentItems.forEach((item) => {
         if (item?.id && !incomingIds.has(item.id)) {
           nextDeleted.add(item.id);

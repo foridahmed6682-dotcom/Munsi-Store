@@ -2360,7 +2360,11 @@ export default function App() {
 
       const incomingOrders = Array.isArray(backupData.orders) ? backupData.orders : [];
       const finalOrders = (
-        mode === 'merge' ? mergeItems(existingOrders, incomingOrders) : incomingOrders
+        mode === 'merge'
+          ? mergeItems(existingOrders, incomingOrders)
+          : incomingOrders.length > 0
+          ? incomingOrders
+          : existingOrders
       ).sort((a, b) => new Date(b.orderDate || 0).getTime() - new Date(a.orderDate || 0).getTime());
 
       const incomingCategories = Array.isArray(backupData.categories)

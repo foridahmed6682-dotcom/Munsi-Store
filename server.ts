@@ -169,37 +169,8 @@ async function readFirestoreDocViaPatch(docPath: string): Promise<Record<string,
     }
   }
 
-  // 2. Fallback to Write-Channel PATCH (works even when Free Daily Read Units are 0!)
-  if (isServerFirestoreWriteQuotaExhausted()) return null;
-  try {
-    const patchRes = await fetch(`${baseUrl}/${docPath}?updateMask.fieldPaths=_ping&key=${fbConfig.apiKey}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fields: {
-          _ping: { booleanValue: true },
-        },
-      }),
-    });
-    if (patchRes.status === 429) {
-      serverFirestoreWriteQuotaExhaustedDate = new Date().toISOString().split('T')[0];
-      addServerDiagnosticEvent({
-        source: 'firestore',
-        severity: 'error',
-        category: 'quota_429',
-        titleBn: 'ফায়ারবেজ ডেইলি Write কোটা (২০,০০০/দিন) পূর্ণ হয়েছে',
-        detailsBn: 'ফায়ারবেজের প্রতিদিনের ফ্রি রাইট কোটা শেষ হওয়ায় ডাটা এখন সার্ভার ডিস্ক মিরর (.server_database_mirror.json) এবং লোকাল স্টোরেজে সংরক্ষিত হচ্ছে।',
-        technicalDetails: `PATCH ${docPath} returned HTTP 429.`,
-      });
-      return null;
-    }
-    if (patchRes.status !== 200) return null;
-    const data = await patchRes.json();
-    if (!data || !data.fields) return null;
-    return parseFirestoreFields(data.fields);
-  } catch {
-    return null;
-  }
+  // Do not fall back to artificial PATCH writes when reading, to protect Firebase write quota
+  return null;
 }
 
 // Saves a JSON catalog array into a single Firestore settings document via PATCH so it can always be recovered in 1 operation
