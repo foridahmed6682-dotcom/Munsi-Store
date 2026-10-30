@@ -130,6 +130,44 @@ export async function getItemsFromIndexedDB<T>(storeName: StoreName): Promise<T[
   }
 }
 
+export async function saveSingleItemToIndexedDB<T extends { id?: string | number }>(
+  storeName: StoreName,
+  item: T
+): Promise<boolean> {
+  if (!isIndexedDBSupported() || !item) return false;
+  try {
+    const db = await openOfflineDatabase();
+    return new Promise((resolve) => {
+      const tx = db.transaction(storeName, 'readwrite');
+      const store = tx.objectStore(storeName);
+      store.put(item);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+    });
+  } catch {
+    return false;
+  }
+}
+
+export async function deleteItemFromIndexedDB(
+  storeName: StoreName,
+  id: string | number
+): Promise<boolean> {
+  if (!isIndexedDBSupported() || !id) return false;
+  try {
+    const db = await openOfflineDatabase();
+    return new Promise((resolve) => {
+      const tx = db.transaction(storeName, 'readwrite');
+      const store = tx.objectStore(storeName);
+      store.delete(id);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+    });
+  } catch {
+    return false;
+  }
+}
+
 export async function setKeyValToIndexedDB<T = any>(key: string, value: T): Promise<boolean> {
   if (!isIndexedDBSupported()) return false;
   try {

@@ -5,13 +5,22 @@ import {
   isIndexedDBSupported,
   saveProductImageToIndexedDB,
   getAllProductImagesFromIndexedDB,
+  saveSingleItemToIndexedDB,
+  deleteItemFromIndexedDB,
   setKeyValToIndexedDB,
+  getKeyValFromIndexedDB,
 } from './indexedDb';
 
-// In-Memory Fast Caches to guarantee instant zero-lag operations even if localStorage is pruned
+// In-Memory Fast Caches to guarantee instant zero-lag operations backed solely by IndexedDB
 let memoryProductsCache: Product[] | null = null;
 let memoryShopsCache: Shop[] | null = null;
 let memoryOrdersCache: Order[] | null = null;
+let memoryCategoriesCache: Category[] | null = null;
+let memoryRoutesCache: Route[] | null = null;
+let memorySuppliersCache: Supplier[] | null = null;
+let memoryDueCollectionsCache: DueCollectionRecord[] | null = null;
+let memoryDailyExpensesCache: DailyExpenseRecord[] | null = null;
+let isStorageHydrated = false;
 
 export function setMemoryProductsCache(products: Product[]) {
   memoryProductsCache = products;
@@ -23,6 +32,18 @@ export function setMemoryOrdersCache(orders: Order[]) {
 
 export function setMemoryShopsCache(shops: Shop[]) {
   memoryShopsCache = shops;
+}
+
+export function setMemoryCategoriesCache(categories: Category[]) {
+  memoryCategoriesCache = categories;
+}
+
+export function setMemoryRoutesCache(routes: Route[]) {
+  memoryRoutesCache = routes;
+}
+
+export function isStorageHydratedFromIndexedDB(): boolean {
+  return isStorageHydrated;
 }
 
 const STORAGE_KEYS = {
@@ -681,43 +702,204 @@ export function getBusinessInfoLocal(): BusinessInfo | null {
   return getBusinessInfo();
 }
 
+// Main Storage Initializer: Hydrates RAM cache from IndexedDB and purges heavy keys from localStorage
+export async function initializeStorageFromIndexedDB(): Promise<{
+  products: Product[];
+  shops: Shop[];
+  orders: Order[];
+  categories: Category[];
+  routes: Route[];
+  suppliers: Supplier[];
+  dueCollections: DueCollectionRecord[];
+  dailyExpenses: DailyExpenseRecord[];
+}> {
+  if (!isIndexedDBSupported()) {
+    isStorageHydrated = true;
+    return {
+      products: memoryProductsCache || [],
+      shops: memoryShopsCache || [],
+      orders: memoryOrdersCache || [],
+      categories: memoryCategoriesCache || [],
+      routes: memoryRoutesCache || [],
+      suppliers: memorySuppliersCache || [],
+      dueCollections: memoryDueCollectionsCache || [],
+      dailyExpenses: memoryDailyExpensesCache || [],
+    };
+  }
+
+  try {
+    const [
+      idbProducts,
+      idbShops,
+      idbOrders,
+      idbCategories,
+      idbRoutes,
+      idbSuppliers,
+      idbDueCollections,
+      idbDailyExpenses,
+      idbImages,
+    ] = await Promise.all([
+      getItemsFromIndexedDB<Product>('products'),
+      getItemsFromIndexedDB<Shop>('shops'),
+      getItemsFromIndexedDB<Order>('orders'),
+      getItemsFromIndexedDB<Category>('categories'),
+      getItemsFromIndexedDB<Route>('routes'),
+      getItemsFromIndexedDB<Supplier>('suppliers'),
+      getItemsFromIndexedDB<DueCollectionRecord>('dueCollections'),
+      getItemsFromIndexedDB<DailyExpenseRecord>('dailyExpenses'),
+      getAllProductImagesFromIndexedDB(),
+    ]);
+
+    // Check if legacy localStorage has data to migrate to IndexedDB on first run
+    let prods = idbProducts;
+    if (prods.length === 0) {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEYS.PRODUCTS);
+        if (raw) prods = JSON.parse(raw);
+      } catch {}
+    }
+    let shops = idbShops;
+    if (shops.length === 0) {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEYS.SHOPS);
+        if (raw) shops = JSON.parse(raw);
+      } catch {}
+    }
+    let orders = idbOrders;
+    if (orders.length === 0) {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEYS.ORDERS);
+        if (raw) orders = JSON.parse(raw);
+      } catch {}
+    }
+    let categories = idbCategories;
+    if (categories.length === 0) {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEYS.CATEGORIES);
+        if (raw) categories = JSON.parse(raw);
+      } catch {}
+    }
+    let routes = idbRoutes;
+    if (routes.length === 0) {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEYS.ROUTES);
+        if (raw) routes = JSON.parse(raw);
+      } catch {}
+    }
+    let suppliers = idbSuppliers;
+    if (suppliers.length === 0) {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEYS.SUPPLIERS);
+        if (raw) suppliers = JSON.parse(raw);
+      } catch {}
+    }
+    let dueCollections = idbDueCollections;
+    if (dueCollections.length === 0) {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEYS.COLLECTIONS);
+        if (raw) dueCollections = JSON.parse(raw);
+      } catch {}
+    }
+    let dailyExpenses = idbDailyExpenses;
+    if (dailyExpenses.length === 0) {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEYS.DAILY_EXPENSES);
+        if (raw) dailyExpenses = JSON.parse(raw);
+      } catch {}
+    }
+
+    // Attach high-res images from IndexedDB
+    if (idbImages && Object.keys(idbImages).length > 0) {
+      prods = prods.map((p) => (!p.imageUrl && idbImages[p.id] ? { ...p, imageUrl: idbImages[p.id] } : p));
+    }
+
+    // Filter deleted tombstones
+    const delProducts = getDeletedProductIds();
+    const delShops = getDeletedShopIds();
+    const delOrders = getDeletedOrderIds();
+    const delCategories = getDeletedCategoryIds();
+    const delRoutes = getDeletedRouteIds();
+    const delSuppliers = getDeletedSupplierIds();
+
+    memoryProductsCache = prods.filter((p) => p && !delProducts.has(p.id));
+    memoryShopsCache = shops.filter((s) => s && !delShops.has(s.id));
+    memoryOrdersCache = orders.filter((o) => o && !delOrders.has(o.id));
+    memoryCategoriesCache = (categories.length > 0 ? categories : DEFAULT_CATEGORIES).filter((c) => c && !delCategories.has(c.id));
+    memoryRoutesCache = (routes.length > 0 ? routes : DEFAULT_ROUTES).filter((r) => r && !delRoutes.has(r.id));
+    memorySuppliersCache = suppliers.filter((s) => s && !delSuppliers.has(s.id));
+    memoryDueCollectionsCache = dueCollections;
+    memoryDailyExpensesCache = dailyExpenses;
+
+    // Firmly persist into IndexedDB
+    await Promise.allSettled([
+      saveItemsToIndexedDB('products', memoryProductsCache),
+      saveItemsToIndexedDB('shops', memoryShopsCache),
+      saveItemsToIndexedDB('orders', memoryOrdersCache),
+      saveItemsToIndexedDB('categories', memoryCategoriesCache),
+      saveItemsToIndexedDB('routes', memoryRoutesCache),
+      saveItemsToIndexedDB('suppliers', memorySuppliersCache),
+      saveItemsToIndexedDB('dueCollections', memoryDueCollectionsCache),
+      saveItemsToIndexedDB('dailyExpenses', memoryDailyExpensesCache),
+    ]);
+
+    // PURGE heavy arrays from localStorage to permanently prevent 5MB storage quota overflows
+    try {
+      localStorage.removeItem(STORAGE_KEYS.PRODUCTS);
+      localStorage.removeItem(STORAGE_KEYS.SHOPS);
+      localStorage.removeItem(STORAGE_KEYS.ORDERS);
+      localStorage.removeItem(STORAGE_KEYS.CATEGORIES);
+      localStorage.removeItem(STORAGE_KEYS.ROUTES);
+      localStorage.removeItem(STORAGE_KEYS.SUPPLIERS);
+      localStorage.removeItem(STORAGE_KEYS.COLLECTIONS);
+      localStorage.removeItem(STORAGE_KEYS.DAILY_EXPENSES);
+      localStorage.removeItem('dsr_local_snapshots_v1');
+    } catch {}
+
+    isStorageHydrated = true;
+
+    return {
+      products: memoryProductsCache,
+      shops: memoryShopsCache,
+      orders: memoryOrdersCache,
+      categories: memoryCategoriesCache,
+      routes: memoryRoutesCache,
+      suppliers: memorySuppliersCache,
+      dueCollections: memoryDueCollectionsCache,
+      dailyExpenses: memoryDailyExpensesCache,
+    };
+  } catch (err) {
+    console.warn('initializeStorageFromIndexedDB error:', err);
+    isStorageHydrated = true;
+    return {
+      products: memoryProductsCache || [],
+      shops: memoryShopsCache || [],
+      orders: memoryOrdersCache || [],
+      categories: memoryCategoriesCache || [],
+      routes: memoryRoutesCache || [],
+      suppliers: memorySuppliersCache || [],
+      dueCollections: memoryDueCollectionsCache || [],
+      dailyExpenses: memoryDailyExpensesCache || [],
+    };
+  }
+}
+
 // Storage Helpers
 export function getProducts(): Product[] {
-  if (memoryProductsCache && memoryProductsCache.length > 0) {
+  if (memoryProductsCache) {
     return memoryProductsCache;
   }
+  // Fallback to legacy localStorage if memory cache not yet populated
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.PRODUCTS);
-    const deletedIds = getDeletedProductIds();
-    if (!raw) {
-      return [];
+    if (raw) {
+      const parsed: Product[] = JSON.parse(raw);
+      const deletedIds = getDeletedProductIds();
+      const clean = parsed.filter((p) => !deletedIds.has(p.id));
+      memoryProductsCache = clean;
+      return clean;
     }
-    const parsed: Product[] = JSON.parse(raw);
-    const clean = parsed.filter((p) => !deletedIds.has(p.id));
-    memoryProductsCache = clean;
-
-    // Asynchronously restore any heavy product images from IndexedDB if needed
-    if (isIndexedDBSupported()) {
-      getAllProductImagesFromIndexedDB().then((imgMap) => {
-        if (imgMap && Object.keys(imgMap).length > 0 && memoryProductsCache) {
-          let updated = false;
-          memoryProductsCache.forEach((p) => {
-            if ((!p.imageUrl || p.imageUrl === '') && imgMap[p.id]) {
-              p.imageUrl = imgMap[p.id];
-              updated = true;
-            }
-          });
-        }
-      }).catch(() => {});
-    }
-
-    if (clean.length !== parsed.length) {
-      safeSetLocalStorage(STORAGE_KEYS.PRODUCTS, JSON.stringify(clean));
-    }
-    return clean;
-  } catch (e) {
-    return [];
-  }
+  } catch {}
+  return [];
 }
 
 export function saveProducts(products: Product[]) {
@@ -725,7 +907,7 @@ export function saveProducts(products: Product[]) {
   const clean = products.filter((p) => !deletedIds.has(p.id));
   memoryProductsCache = clean;
 
-  // 1. Dual-write to IndexedDB asynchronously (handles 50MB - 1GB capacity safely)
+  // Persist directly to IndexedDB (virtually unlimited capacity, zero 5MB limit)
   if (isIndexedDBSupported()) {
     saveItemsToIndexedDB('products', clean).catch(() => {});
     clean.forEach((p) => {
@@ -733,34 +915,6 @@ export function saveProducts(products: Product[]) {
         saveProductImageToIndexedDB(p.id, p.imageUrl).catch(() => {});
       }
     });
-  }
-
-  // 2. Prevent LocalStorage 5MB quota overflow:
-  // If products have heavy base64 images, save stripped version to localStorage,
-  // while memoryProductsCache and IndexedDB preserve high-resolution images!
-  const hasHeavyImages = clean.some((p) => p.imageUrl && p.imageUrl.startsWith('data:image/') && p.imageUrl.length > 25000);
-  const localPayload = hasHeavyImages
-    ? clean.map((p) => (
-        p.imageUrl && p.imageUrl.startsWith('data:image/') && p.imageUrl.length > 25000
-          ? { ...p, imageUrl: '' }
-          : p
-      ))
-    : clean;
-
-  if (!safeSetLocalStorage(STORAGE_KEYS.PRODUCTS, JSON.stringify(localPayload))) {
-    // Proactively free heavy local snapshot backups first
-    compactLocalBackupSnapshotsToFreeSpace();
-    if (!safeSetLocalStorage(STORAGE_KEYS.PRODUCTS, JSON.stringify(localPayload))) {
-      try {
-        const compacted = clean.map((p) => ({
-          ...p,
-          imageUrl: p.imageUrl && p.imageUrl.startsWith('data:image/') ? '' : p.imageUrl,
-        }));
-        safeSetLocalStorage(STORAGE_KEYS.PRODUCTS, JSON.stringify(compacted));
-      } catch (innerErr) {
-        console.warn('Could not write products to localStorage:', innerErr);
-      }
-    }
   }
 }
 
@@ -794,32 +948,19 @@ export function deleteProduct(productId: string) {
 
 // Categories Management
 export function getCategories(): Category[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.CATEGORIES);
-    const deletedIds = getDeletedCategoryIds();
-    const seedDone = isInitialSeedDone();
-
-    if (raw === null) {
-      if (!seedDone) {
-        localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(DEFAULT_CATEGORIES));
-        return DEFAULT_CATEGORIES;
-      }
-      return [];
-    }
-    const parsed: Category[] = JSON.parse(raw);
-    return parsed.filter((c) => !deletedIds.has(c.id));
-  } catch {
-    return [];
+  if (memoryCategoriesCache) {
+    return memoryCategoriesCache;
   }
+  return DEFAULT_CATEGORIES;
 }
 
 export function saveCategories(categories: Category[]) {
   const deletedIds = getDeletedCategoryIds();
   const clean = categories.filter((c) => !deletedIds.has(c.id));
+  memoryCategoriesCache = clean;
   if (isIndexedDBSupported()) {
     saveItemsToIndexedDB('categories', clean).catch(() => {});
   }
-  safeSetLocalStorage(STORAGE_KEYS.CATEGORIES, JSON.stringify(clean));
 }
 
 export function addOrUpdateCategory(category: Category): Category {
@@ -870,31 +1011,19 @@ const DEMO_SUPPLIER_IDS = new Set([
 ]);
 
 export function getSuppliers(): Supplier[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.SUPPLIERS);
-    const deletedIds = getDeletedSupplierIds();
-
-    if (raw === null) {
-      localStorage.setItem(STORAGE_KEYS.SUPPLIERS, JSON.stringify([]));
-      return [];
-    }
-    const parsed: Supplier[] = JSON.parse(raw);
-    const clean = parsed.filter(
-      (s) => !deletedIds.has(s.id) && !DEMO_SUPPLIER_IDS.has(s.id)
-    );
-    if (clean.length !== parsed.length) {
-      safeSetLocalStorage(STORAGE_KEYS.SUPPLIERS, JSON.stringify(clean));
-    }
-    return clean;
-  } catch {
-    return [];
+  if (memorySuppliersCache) {
+    return memorySuppliersCache;
   }
+  return [];
 }
 
 export function saveSuppliers(suppliers: Supplier[]) {
   const deletedIds = getDeletedSupplierIds();
   const clean = suppliers.filter((s) => !deletedIds.has(s.id));
-  safeSetLocalStorage(STORAGE_KEYS.SUPPLIERS, JSON.stringify(clean));
+  memorySuppliersCache = clean;
+  if (isIndexedDBSupported()) {
+    saveItemsToIndexedDB('suppliers', clean).catch(() => {});
+  }
 }
 
 export function addOrUpdateSupplier(supplier: Supplier): Supplier {
@@ -933,37 +1062,19 @@ export function deleteSupplier(supplierId: string) {
 
 // Routes Management
 export function getRoutes(): Route[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.ROUTES);
-    const deletedIds = getDeletedRouteIds();
-
-    if (raw === null) {
-      const initial = DEFAULT_ROUTES.filter((r) => !deletedIds.has(r.id));
-      localStorage.setItem(STORAGE_KEYS.ROUTES, JSON.stringify(initial));
-      return initial;
-    }
-    const parsed: Route[] = JSON.parse(raw);
-    const clean = parsed.filter((r) => !deletedIds.has(r.id));
-    if (clean.length === 0) {
-      const fallback = DEFAULT_ROUTES.filter((r) => !deletedIds.has(r.id));
-      if (fallback.length > 0) {
-        localStorage.setItem(STORAGE_KEYS.ROUTES, JSON.stringify(fallback));
-        return fallback;
-      }
-    }
-    return clean;
-  } catch {
-    return DEFAULT_ROUTES;
+  if (memoryRoutesCache) {
+    return memoryRoutesCache;
   }
+  return DEFAULT_ROUTES;
 }
 
 export function saveRoutes(routes: Route[]) {
   const deletedIds = getDeletedRouteIds();
   const clean = routes.filter((r) => !deletedIds.has(r.id));
+  memoryRoutesCache = clean;
   if (isIndexedDBSupported()) {
     saveItemsToIndexedDB('routes', clean).catch(() => {});
   }
-  safeSetLocalStorage(STORAGE_KEYS.ROUTES, JSON.stringify(clean));
 }
 
 export function addOrUpdateRoute(route: Route): Route {
@@ -1051,22 +1162,10 @@ export function adjustStock(productId: string, quantityDelta: number) {
 }
 
 export function getShops(): Shop[] {
-  if (memoryShopsCache && memoryShopsCache.length > 0) {
+  if (memoryShopsCache) {
     return memoryShopsCache;
   }
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.SHOPS);
-    if (!raw) {
-      return [];
-    }
-    const parsed: Shop[] = JSON.parse(raw);
-    const deletedIds = getDeletedShopIds();
-    const realShops = parsed.filter((s) => !deletedIds.has(s.id));
-    memoryShopsCache = realShops;
-    return realShops;
-  } catch (e) {
-    return [];
-  }
+  return [];
 }
 
 export function saveShops(shops: Shop[]) {
@@ -1077,11 +1176,6 @@ export function saveShops(shops: Shop[]) {
   // Persist safely in IndexedDB (virtually unlimited capacity)
   if (isIndexedDBSupported()) {
     saveItemsToIndexedDB('shops', clean).catch(() => {});
-  }
-
-  if (!safeSetLocalStorage(STORAGE_KEYS.SHOPS, JSON.stringify(clean))) {
-    compactLocalBackupSnapshotsToFreeSpace();
-    safeSetLocalStorage(STORAGE_KEYS.SHOPS, JSON.stringify(clean));
   }
 }
 
@@ -1124,6 +1218,9 @@ export function deleteShop(shopId: string) {
   const shops = getShops();
   const filtered = shops.filter((s) => s.id !== shopId);
   saveShops(filtered);
+  if (isIndexedDBSupported()) {
+    deleteItemFromIndexedDB('shops', shopId).catch(() => {});
+  }
 }
 
 export function updateShopDue(shopId: string, dueDelta: number) {
@@ -1137,22 +1234,10 @@ export function updateShopDue(shopId: string, dueDelta: number) {
 }
 
 export function getOrders(): Order[] {
-  if (memoryOrdersCache && memoryOrdersCache.length > 0) {
+  if (memoryOrdersCache) {
     return memoryOrdersCache;
   }
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.ORDERS);
-    if (!raw) {
-      return [];
-    }
-    const parsed: Order[] = JSON.parse(raw);
-    const deletedIds = getDeletedOrderIds();
-    const realOrders = parsed.filter((o) => !deletedIds.has(o.id));
-    memoryOrdersCache = realOrders;
-    return realOrders;
-  } catch (e) {
-    return [];
-  }
+  return [];
 }
 
 export function saveOrders(orders: Order[]) {
@@ -1164,26 +1249,16 @@ export function saveOrders(orders: Order[]) {
   if (isIndexedDBSupported()) {
     saveItemsToIndexedDB('orders', clean).catch(() => {});
   }
-
-  // To prevent LocalStorage 5MB quota exhaustion:
-  // If order history is large, store the latest 150 orders in localStorage,
-  // while memoryOrdersCache and IndexedDB keep 100% of all orders available!
-  let localPayload = clean;
-  if (clean.length > 150) {
-    localPayload = clean.slice(0, 150);
-  }
-
-  if (!safeSetLocalStorage(STORAGE_KEYS.ORDERS, JSON.stringify(localPayload))) {
-    compactLocalBackupSnapshotsToFreeSpace();
-    safeSetLocalStorage(STORAGE_KEYS.ORDERS, JSON.stringify(clean.slice(0, 100)));
-  }
 }
 
 export function deleteOrder(orderId: string) {
   addDeletedOrderId(orderId);
-  const orders = getOrders();
-  const filtered = orders.filter((o) => o.id !== orderId);
-  saveOrders(filtered);
+  const orders = getOrders().filter((o) => o.id !== orderId);
+  memoryOrdersCache = orders;
+  if (isIndexedDBSupported()) {
+    deleteItemFromIndexedDB('orders', orderId).catch(() => {});
+    saveItemsToIndexedDB('orders', orders).catch(() => {});
+  }
 }
 
 export function getNextMemoNumber(): string {
@@ -1256,12 +1331,10 @@ export function markOrdersAsSynced(orderIds: string[]) {
 
 // Due collection records
 export function getDueCollections(): DueCollectionRecord[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.COLLECTIONS);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
+  if (memoryDueCollectionsCache) {
+    return memoryDueCollectionsCache;
   }
+  return [];
 }
 
 export function recordDuePayment(shopId: string, amount: number, paymentMethod: any, notes?: string): DueCollectionRecord {
@@ -1281,7 +1354,7 @@ export function recordDuePayment(shopId: string, amount: number, paymentMethod: 
 
   const collections = getDueCollections();
   collections.unshift(record);
-  safeSetLocalStorage(STORAGE_KEYS.COLLECTIONS, JSON.stringify(collections));
+  saveDueCollections(collections);
 
   updateShopDue(shopId, -amount);
 
@@ -1322,6 +1395,15 @@ export function initializeDefaultData() {
 }
 
 export function saveOrder(order: Order): Order {
+  // Ensure order ID is not blocked in deleted set
+  try {
+    const rawDel = localStorage.getItem(STORAGE_KEYS.DELETED_ORDERS);
+    if (rawDel) {
+      const list: string[] = JSON.parse(rawDel).filter((id: string) => id !== order.id);
+      localStorage.setItem(STORAGE_KEYS.DELETED_ORDERS, JSON.stringify(list));
+    }
+  } catch {}
+
   const orders = getOrders();
   const idx = orders.findIndex((o) => o.id === order.id);
   if (idx >= 0) {
@@ -1330,6 +1412,9 @@ export function saveOrder(order: Order): Order {
     orders.unshift(order);
   }
   saveOrders(orders);
+  if (isIndexedDBSupported()) {
+    saveSingleItemToIndexedDB('orders', order).catch(() => {});
+  }
   return order;
 }
 
@@ -1434,26 +1519,24 @@ export function deleteCustomerDeliveryAddress(): void {
 }
 
 export function saveDueCollections(collections: DueCollectionRecord[]): void {
+  memoryDueCollectionsCache = collections;
   if (isIndexedDBSupported()) {
     saveItemsToIndexedDB('dueCollections', collections).catch(() => {});
   }
-  safeSetLocalStorage(STORAGE_KEYS.COLLECTIONS, JSON.stringify(collections));
 }
 
 export function getDailyExpenses(): DailyExpenseRecord[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.DAILY_EXPENSES);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
+  if (memoryDailyExpensesCache) {
+    return memoryDailyExpensesCache;
   }
+  return [];
 }
 
 export function saveDailyExpenses(expenses: DailyExpenseRecord[]): void {
+  memoryDailyExpensesCache = expenses;
   if (isIndexedDBSupported()) {
     saveItemsToIndexedDB('dailyExpenses', expenses).catch(() => {});
   }
-  safeSetLocalStorage(STORAGE_KEYS.DAILY_EXPENSES, JSON.stringify(expenses));
 }
 
 export function saveDailyExpense(expense: DailyExpenseRecord): DailyExpenseRecord {

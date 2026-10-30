@@ -17,6 +17,7 @@ import {
   markOrdersAsSynced,
   getUserProfile,
   saveUserProfile,
+  initializeStorageFromIndexedDB,
   getCategories,
   addOrUpdateCategory,
   deleteCategory,
@@ -360,46 +361,23 @@ export default function App() {
 
   // Initial load
   useEffect(() => {
-    initializeDefaultData();
+    // 1. Initial RAM load
     reloadData();
 
-    // Seamless IndexedDB hydration to ensure complete order history and product images without filling LocalStorage
-    if (isIndexedDBSupported()) {
-      const localProds = getProducts();
-      const localOrders = getOrders();
-      const localShops = getShops();
-      Promise.all([
-        getItemsFromIndexedDB<Product>('products'),
-        getItemsFromIndexedDB<Shop>('shops'),
-        getItemsFromIndexedDB<Order>('orders'),
-        getAllProductImagesFromIndexedDB(),
-      ]).then(([idbProds, idbShops, idbOrders, idbImages]) => {
-        let prodsToSet = localProds.length === 0 ? idbProds : localProds;
-        if (idbImages && Object.keys(idbImages).length > 0) {
-          prodsToSet = prodsToSet.map((p) => (!p.imageUrl && idbImages[p.id] ? { ...p, imageUrl: idbImages[p.id] } : p));
-        }
-        if (localProds.length === 0 && idbProds.length > 0) {
-          saveProducts(prodsToSet);
-          setProducts(prodsToSet);
-        } else if (idbImages && Object.keys(idbImages).length > 0) {
-          setProducts(prodsToSet);
-        }
-
-        if (localShops.length === 0 && idbShops.length > 0) {
-          saveShops(idbShops);
-          setShops(idbShops);
-        }
-
-        // If IndexedDB contains more orders than LocalStorage (because LocalStorage was pruned to prevent 5MB overflow)
-        if (idbOrders.length > localOrders.length) {
-          setOrders(idbOrders);
-          setMemoryOrdersCache(idbOrders);
-        } else if (localOrders.length === 0 && idbOrders.length > 0) {
-          saveOrders(idbOrders);
-          setOrders(idbOrders);
-        }
-      }).catch(() => {});
-    }
+    // 2. Primary IndexedDB hydration: loads all products, shops, orders, and assets directly from IndexedDB
+    initializeStorageFromIndexedDB().then((hydrated) => {
+      setProducts([...hydrated.products]);
+      setShops([...hydrated.shops]);
+      setOrders([...hydrated.orders]);
+      setCategories([...hydrated.categories]);
+      setRoutes([...hydrated.routes]);
+      setSuppliers([...hydrated.suppliers]);
+      setDueCollections([...hydrated.dueCollections]);
+      setDailyExpenses([...hydrated.dailyExpenses]);
+      reloadData();
+    }).catch((err) => {
+      console.warn('Initial IndexedDB hydration error:', err);
+    });
 
     const handleOnline = async () => {
       setIsOnline(true);

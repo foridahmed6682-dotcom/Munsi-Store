@@ -49,10 +49,17 @@ import {
   getDeletedRouteIds,
   getAuthorizedEmails,
   getProducts,
+  saveProducts,
   getShops,
+  saveShops,
   getOrders,
+  saveOrders,
   getCategories,
+  saveCategories,
   getRoutes,
+  saveRoutes,
+  saveDueCollections,
+  saveDailyExpenses,
   recordDiagnosticEvent,
 } from './storage';
 import {
@@ -1219,24 +1226,25 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
   let unsub = () => {};
   if (!isFirestoreQuotaExhausted()) {
     unsub = onSnapshot(
-      collection(db, path),
+      doc(db, 'settings', 'cloud_catalog_shops'),
       (snapshot) => {
-        if (isRestoreCooldownActive()) return;
-        const isServerAuthoritative = !snapshot.metadata.hasPendingWrites;
-        const shops: Shop[] = [];
-        const deletedIds = getDeletedShopIds();
-        snapshot.forEach((d) => {
-          const s = d.data() as Shop;
-          if (!deletedIds.has(s.id)) {
-            shops.push(s);
+        if (isRestoreCooldownActive() || !snapshot.exists()) return;
+        try {
+          const data = snapshot.data();
+          if (data && typeof data.itemsJson === 'string') {
+            const rawShops: Shop[] = JSON.parse(data.itemsJson);
+            const deletedIds = getDeletedShopIds();
+            const clean = rawShops.filter((s) => !deletedIds.has(s.id));
+            const merged = mergeLocalAndCloud(getShops(), clean, deletedIds, 'id', true);
+            saveShops(merged);
+            onData(merged);
           }
-        });
-        // Real-time Firestore snapshot received: Firebase has top priority!
-        const merged = mergeLocalAndCloud(getShops(), shops, deletedIds, 'id', isServerAuthoritative);
-        onData(merged);
+        } catch {
+          syncFromLocalMirror();
+        }
       },
       (error) => {
-        handleFirestoreError(error, OperationType.GET, path);
+        handleFirestoreError(error, OperationType.GET, 'settings/cloud_catalog_shops');
         syncFromLocalMirror();
       }
     );
@@ -1247,7 +1255,7 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
     if (typeof document === 'undefined' || document.visibilityState === 'visible') {
       syncFromLocalMirror();
     }
-  }, 25000);
+  }, 30000);
 
   return () => {
     clearInterval(timer);
@@ -1256,7 +1264,6 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
 }
 
 export function subscribeToCloudProducts(onData: (products: Product[]) => void) {
-  const path = 'products';
   const syncFromLocalMirror = async (extraProducts: Product[] = []) => {
     if (isRestoreCooldownActive()) return;
     const mirror = await fetchServerDatabaseMirror();
@@ -1279,24 +1286,25 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
   let unsub = () => {};
   if (!isFirestoreQuotaExhausted()) {
     unsub = onSnapshot(
-      collection(db, path),
+      doc(db, 'settings', 'cloud_catalog_products'),
       (snapshot) => {
-        if (isRestoreCooldownActive()) return;
-        const isServerAuthoritative = !snapshot.metadata.hasPendingWrites;
-        const products: Product[] = [];
-        const deletedIds = getDeletedProductIds();
-        snapshot.forEach((d) => {
-          const p = d.data() as Product;
-          if (!deletedIds.has(p.id)) {
-            products.push(p);
+        if (isRestoreCooldownActive() || !snapshot.exists()) return;
+        try {
+          const data = snapshot.data();
+          if (data && typeof data.itemsJson === 'string') {
+            const rawProducts: Product[] = JSON.parse(data.itemsJson);
+            const deletedIds = getDeletedProductIds();
+            const clean = rawProducts.filter((p) => !deletedIds.has(p.id));
+            const merged = mergeLocalAndCloud(getProducts(), clean, deletedIds, 'id', true);
+            saveProducts(merged);
+            onData(merged);
           }
-        });
-        // Real-time Firestore snapshot received: Firebase has top priority!
-        const merged = mergeLocalAndCloud(getProducts(), products, deletedIds, 'id', isServerAuthoritative);
-        onData(merged);
+        } catch {
+          syncFromLocalMirror();
+        }
       },
       (error) => {
-        handleFirestoreError(error, OperationType.GET, path);
+        handleFirestoreError(error, OperationType.GET, 'settings/cloud_catalog_products');
         syncFromLocalMirror();
       }
     );
@@ -1307,7 +1315,7 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
     if (typeof document === 'undefined' || document.visibilityState === 'visible') {
       syncFromLocalMirror();
     }
-  }, 25000);
+  }, 30000);
 
   return () => {
     clearInterval(timer);
@@ -1316,8 +1324,6 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
 }
 
 export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
-  const path = 'orders';
-  const q = query(collection(db, path), orderBy('orderDate', 'desc'));
   const syncFromLocalMirror = async (extraOrders: Order[] = []) => {
     if (isRestoreCooldownActive()) return;
     const mirror = await fetchServerDatabaseMirror();
@@ -1342,26 +1348,27 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
   let unsub = () => {};
   if (!isFirestoreQuotaExhausted()) {
     unsub = onSnapshot(
-      q,
+      doc(db, 'settings', 'cloud_catalog_orders'),
       (snapshot) => {
-        if (isRestoreCooldownActive()) return;
-        const isServerAuthoritative = !snapshot.metadata.hasPendingWrites;
-        const orders: Order[] = [];
-        const deletedIds = getDeletedOrderIds();
-        snapshot.forEach((d) => {
-          const o = d.data() as Order;
-          if (!deletedIds.has(o.id)) {
-            orders.push(o);
+        if (isRestoreCooldownActive() || !snapshot.exists()) return;
+        try {
+          const data = snapshot.data();
+          if (data && typeof data.itemsJson === 'string') {
+            const rawOrders: Order[] = JSON.parse(data.itemsJson);
+            const deletedIds = getDeletedOrderIds();
+            const clean = rawOrders.filter((o) => !deletedIds.has(o.id));
+            const merged = mergeLocalAndCloud(getOrders(), clean, deletedIds, 'id', true).sort(
+              (a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime()
+            );
+            saveOrders(merged);
+            onData(merged);
           }
-        });
-        // Real-time Firestore snapshot received: Firebase has top priority!
-        const merged = mergeLocalAndCloud(getOrders(), orders, deletedIds, 'id', isServerAuthoritative).sort(
-          (a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime()
-        );
-        onData(merged);
+        } catch {
+          syncFromLocalMirror();
+        }
       },
       (error) => {
-        handleFirestoreError(error, OperationType.GET, path);
+        handleFirestoreError(error, OperationType.GET, 'settings/cloud_catalog_orders');
         syncFromLocalMirror();
       }
     );
@@ -1372,7 +1379,7 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
     if (typeof document === 'undefined' || document.visibilityState === 'visible') {
       syncFromLocalMirror();
     }
-  }, 25000);
+  }, 30000);
 
   return () => {
     clearInterval(timer);
@@ -1563,23 +1570,25 @@ export function subscribeToCloudCategories(onData: (categories: Category[]) => v
   }
 
   const unsub = onSnapshot(
-    collection(db, path),
+    doc(db, 'settings', 'cloud_catalog_categories'),
     (snapshot) => {
-      if (isRestoreCooldownActive()) return;
-      const isServerAuthoritative = !snapshot.metadata.hasPendingWrites;
-      const list: Category[] = [];
-      const deletedIds = getDeletedCategoryIds();
-      snapshot.forEach((d) => {
-        const c = d.data() as Category;
-        if (!deletedIds.has(c.id)) {
-          list.push(c);
+      if (isRestoreCooldownActive() || !snapshot.exists()) return;
+      try {
+        const data = snapshot.data();
+        if (data && typeof data.itemsJson === 'string') {
+          const list: Category[] = JSON.parse(data.itemsJson);
+          const deletedIds = getDeletedCategoryIds();
+          const clean = list.filter((c) => !deletedIds.has(c.id));
+          const merged = mergeLocalAndCloud(getCategories(), clean, deletedIds, 'id', true);
+          saveCategories(merged);
+          onData(merged);
         }
-      });
-      const merged = mergeLocalAndCloud(getCategories(), list, deletedIds, 'id', isServerAuthoritative);
-      onData(merged);
+      } catch {
+        pollFirebaseDirect();
+      }
     },
     (error) => {
-      handleFirestoreError(error, OperationType.GET, path);
+      handleFirestoreError(error, OperationType.GET, 'settings/cloud_catalog_categories');
       pollFirebaseDirect();
     }
   );
@@ -1634,7 +1643,6 @@ export async function deleteCategoryFromCloud(categoryId: string) {
 
 // Route Cloud Methods
 export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
-  const path = 'routes';
   const pollFirebaseDirect = async () => {
     const mirror = await fetchServerDatabaseMirror();
     const mirrorRoutes: Route[] = Array.isArray(mirror?.routes) ? mirror.routes : [];
@@ -1654,23 +1662,25 @@ export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
   }
 
   const unsub = onSnapshot(
-    collection(db, path),
+    doc(db, 'settings', 'cloud_catalog_routes'),
     (snapshot) => {
-      if (isRestoreCooldownActive()) return;
-      const isServerAuthoritative = !snapshot.metadata.hasPendingWrites;
-      const list: Route[] = [];
-      const deletedIds = getDeletedRouteIds();
-      snapshot.forEach((d) => {
-        const r = d.data() as Route;
-        if (!deletedIds.has(r.id)) {
-          list.push(r);
+      if (isRestoreCooldownActive() || !snapshot.exists()) return;
+      try {
+        const data = snapshot.data();
+        if (data && typeof data.itemsJson === 'string') {
+          const list: Route[] = JSON.parse(data.itemsJson);
+          const deletedIds = getDeletedRouteIds();
+          const clean = list.filter((r) => !deletedIds.has(r.id));
+          const merged = mergeLocalAndCloud(getRoutes(), clean, deletedIds, 'id', true);
+          saveRoutes(merged);
+          onData(merged);
         }
-      });
-      const merged = mergeLocalAndCloud(getRoutes(), list, deletedIds, 'id', isServerAuthoritative);
-      onData(merged);
+      } catch {
+        pollFirebaseDirect();
+      }
     },
     (error) => {
-      handleFirestoreError(error, OperationType.GET, path);
+      handleFirestoreError(error, OperationType.GET, 'settings/cloud_catalog_routes');
       pollFirebaseDirect();
     }
   );
@@ -1961,22 +1971,23 @@ export function subscribeToCloudDueCollections(onData: (collections: DueCollecti
   }
 
   const unsub = onSnapshot(
-    collection(db, path),
+    doc(db, 'settings', 'cloud_catalog_dueCollections'),
     (snapshot) => {
-      if (isRestoreCooldownActive()) return;
-      if (snapshot.empty) {
-        onData([]);
-        return;
+      if (isRestoreCooldownActive() || !snapshot.exists()) return;
+      try {
+        const data = snapshot.data();
+        if (data && typeof data.itemsJson === 'string') {
+          const list: DueCollectionRecord[] = JSON.parse(data.itemsJson);
+          list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          saveDueCollections(list);
+          onData(list);
+        }
+      } catch {
+        pollFirebaseDirect();
       }
-      const list: DueCollectionRecord[] = [];
-      snapshot.forEach((d) => {
-        list.push(d.data() as DueCollectionRecord);
-      });
-      list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-      onData(list);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.GET, path);
+      handleFirestoreError(error, OperationType.GET, 'settings/cloud_catalog_dueCollections');
       pollFirebaseDirect();
     }
   );
@@ -1988,7 +1999,6 @@ export function subscribeToCloudDueCollections(onData: (collections: DueCollecti
 
 // Daily Expenses Cloud Sync (Tool #3)
 export function subscribeToCloudDailyExpenses(onData: (expenses: DailyExpenseRecord[]) => void) {
-  const path = 'dailyExpenses';
   const pollFirebaseDirect = async () => {
     if (isRestoreCooldownActive()) return;
     const mirror = await fetchServerDatabaseMirror();
@@ -2007,22 +2017,23 @@ export function subscribeToCloudDailyExpenses(onData: (expenses: DailyExpenseRec
   }
 
   const unsub = onSnapshot(
-    collection(db, path),
+    doc(db, 'settings', 'cloud_catalog_dailyExpenses'),
     (snapshot) => {
-      if (isRestoreCooldownActive()) return;
-      if (snapshot.empty) {
-        onData([]);
-        return;
+      if (isRestoreCooldownActive() || !snapshot.exists()) return;
+      try {
+        const data = snapshot.data();
+        if (data && typeof data.itemsJson === 'string') {
+          const list: DailyExpenseRecord[] = JSON.parse(data.itemsJson);
+          list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          saveDailyExpenses(list);
+          onData(list);
+        }
+      } catch {
+        pollFirebaseDirect();
       }
-      const list: DailyExpenseRecord[] = [];
-      snapshot.forEach((d) => {
-        list.push(d.data() as DailyExpenseRecord);
-      });
-      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      onData(list);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.GET, path);
+      handleFirestoreError(error, OperationType.GET, 'settings/cloud_catalog_dailyExpenses');
       pollFirebaseDirect();
     }
   );
