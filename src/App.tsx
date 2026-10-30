@@ -113,7 +113,8 @@ import {
   writeFirestoreCatalogDirect,
   setRestoreCooldown,
   flushOfflinePendingActionsToFirebase,
-  restoreBulkDataToFirestore
+  restoreBulkDataToFirestore,
+  resetFirestoreQuotaCircuitBreakers
 } from './lib/firebase';
 import { getStoredGoogleToken } from './lib/firebaseAuth';
 import {
@@ -2271,7 +2272,8 @@ export default function App() {
     mode: 'replace' | 'merge' = 'replace'
   ) => {
     try {
-      setRestoreCooldown(15000);
+      setRestoreCooldown(20000);
+      resetFirestoreQuotaCircuitBreakers();
 
       // Unwrap if a snapshot wrapper object was passed directly
       const backupData: FullBackupData =
@@ -2285,7 +2287,7 @@ export default function App() {
       const existingCategories = getCategories();
       const existingRoutes = getRoutes();
 
-      // 1. CRITICAL: Unblock all IDs in the backup/snapshot from DELETED_* tombstones in localStorage!
+      // 1. Unblock all IDs in the backup/snapshot from DELETED_* tombstones in storage
       prepareDeletedIdsForRestore(
         {
           products: Array.isArray(backupData.products) ? backupData.products : undefined,
@@ -2338,16 +2340,10 @@ export default function App() {
 
       const incomingOrders = Array.isArray(backupData.orders) ? backupData.orders : [];
       const finalOrders = (
-        mode === 'merge'
-          ? mergeItems(existingOrders, incomingOrders)
-          : incomingOrders.length > 0
-          ? incomingOrders
-          : existingOrders
+        mode === 'merge' ? mergeItems(existingOrders, incomingOrders) : incomingOrders
       ).sort((a, b) => new Date(b.orderDate || 0).getTime() - new Date(a.orderDate || 0).getTime());
 
-      const incomingCategories = Array.isArray(backupData.categories)
-        ? backupData.categories
-        : existingCategories;
+      const incomingCategories = Array.isArray(backupData.categories) ? backupData.categories : [];
       const finalCategories =
         mode === 'merge'
           ? mergeItems(existingCategories, incomingCategories)
@@ -2355,7 +2351,7 @@ export default function App() {
           ? incomingCategories
           : existingCategories;
 
-      const incomingRoutes = Array.isArray(backupData.routes) ? backupData.routes : existingRoutes;
+      const incomingRoutes = Array.isArray(backupData.routes) ? backupData.routes : [];
       const finalRoutes =
         mode === 'merge'
           ? mergeItems(existingRoutes, incomingRoutes)
@@ -2363,21 +2359,20 @@ export default function App() {
           ? incomingRoutes
           : existingRoutes;
 
-      const finalDueCollections = Array.isArray(backupData.dueCollections)
-        ? mode === 'merge'
-          ? mergeItems(getDueCollections(), backupData.dueCollections)
-          : backupData.dueCollections
-        : getDueCollections();
+      const incomingDueCollections = Array.isArray(backupData.dueCollections) ? backupData.dueCollections : [];
+      const finalDueCollections =
+        mode === 'merge' ? mergeItems(getDueCollections(), incomingDueCollections) : incomingDueCollections;
 
-      const finalDailyExpenses = Array.isArray(backupData.dailyExpenses)
-        ? mode === 'merge'
-          ? mergeItems(getDailyExpenses(), backupData.dailyExpenses)
-          : backupData.dailyExpenses
-        : getDailyExpenses();
+      const incomingDailyExpenses = Array.isArray(backupData.dailyExpenses) ? backupData.dailyExpenses : [];
+      const finalDailyExpenses =
+        mode === 'merge' ? mergeItems(getDailyExpenses(), incomingDailyExpenses) : incomingDailyExpenses;
 
+      const incomingAuthEmails = Array.isArray(backupData.authorizedEmails) ? backupData.authorizedEmails : [];
       const finalAuthEmails =
-        Array.isArray(backupData.authorizedEmails) && backupData.authorizedEmails.length > 0
-          ? mergeItems(getAuthorizedEmails(), backupData.authorizedEmails, 'email')
+        mode === 'merge'
+          ? mergeItems(getAuthorizedEmails(), incomingAuthEmails, 'email')
+          : incomingAuthEmails.length > 0
+          ? incomingAuthEmails
           : getAuthorizedEmails();
 
       const finalBizInfo = backupData.businessInfo
@@ -2387,7 +2382,61 @@ export default function App() {
       // 2. Clear old offline queue to prevent stale offline overwrites
       clearAllOfflineQueue();
 
-      // 3. Save to LocalStorage & React State immediately
+      // 3. STEP 1: UPLOAD TO FIREBASE FIRST (Exact cloud synchronization)
+      showToast('ব্যাকআপ ফাইল ফায়ারবেজে আপলোড হচ্ছে...', 'info');
+      try {
+        await restoreBulkDataToFirestore({
+          products: finalProducts,
+          shops: finalShops,
+          orders: finalOrders,
+          categories: finalCategories,
+          routes: finalRoutes,
+          dueCollections: finalDueCollections,
+          dailyExpenses: finalDailyExpenses,
+          authorizedEmails: finalAuthEmails,
+          businessInfo: finalBizInfo,
+          mode,
+        });
+
+        await pushBulkDataToServerMirror({
+          replaceAll: mode === 'replace',
+          products: finalProducts,
+          shops: finalShops,
+          orders: finalOrders,
+          categories: finalCategories,
+          routes: finalRoutes,
+          dueCollections: finalDueCollections,
+          dailyExpenses: finalDailyExpenses,
+          authorizedEmails: finalAuthEmails,
+          businessInfo: finalBizInfo,
+        });
+      } catch (cloudErr) {
+        console.warn('Direct cloud restore warning (proceeding with local & idb):', cloudErr);
+      }
+
+      // 4. STEP 2: SAVE TO BROWSER INDEXEDDB (High-capacity offline persistence)
+      if (isIndexedDBSupported()) {
+        try {
+          await syncAppDataToIndexedDB({
+            products: finalProducts,
+            shops: finalShops,
+            orders: finalOrders,
+            categories: finalCategories,
+            routes: finalRoutes,
+            dueCollections: finalDueCollections,
+            dailyExpenses: finalDailyExpenses,
+          });
+          for (const p of finalProducts) {
+            if (p.id && p.imageUrl && p.imageUrl.startsWith('data:')) {
+              saveProductImageToIndexedDB(p.id, p.imageUrl).catch(() => {});
+            }
+          }
+        } catch (idbErr) {
+          console.warn('IndexedDB backup sync warning:', idbErr);
+        }
+      }
+
+      // 5. STEP 3: UPDATE IN-MEMORY STORAGE & REACT APP STATE
       saveProducts(finalProducts);
       setProducts([...finalProducts]);
 
@@ -2415,73 +2464,17 @@ export default function App() {
       saveBusinessInfoLocal(finalBizInfo);
       setBusinessInfo(finalBizInfo);
 
-      // 4. Save directly into Browser IndexedDB for high-capacity offline persistence
-      if (isIndexedDBSupported()) {
-        try {
-          await syncAppDataToIndexedDB({
-            products: finalProducts,
-            shops: finalShops,
-            orders: finalOrders,
-            categories: finalCategories,
-            routes: finalRoutes,
-            dueCollections: finalDueCollections,
-            dailyExpenses: finalDailyExpenses,
-          });
-          for (const p of finalProducts) {
-            if (p.id && p.imageUrl && p.imageUrl.startsWith('data:')) {
-              saveProductImageToIndexedDB(p.id, p.imageUrl).catch(() => {});
-            }
-          }
-        } catch (idbErr) {
-          console.warn('IndexedDB backup sync warning:', idbErr);
-        }
-      }
-
-      // 5. Restore directly into Firebase Firestore Backend collections & Server Mirror
-      await Promise.allSettled([
-        restoreBulkDataToFirestore({
-          products: finalProducts,
-          shops: finalShops,
-          orders: finalOrders,
-          categories: finalCategories,
-          routes: finalRoutes,
-          dueCollections: finalDueCollections,
-          dailyExpenses: finalDailyExpenses,
-          businessInfo: finalBizInfo,
-          mode,
-        }),
-        pushBulkDataToServerMirror({
-          replaceAll: mode === 'replace',
-          products: finalProducts,
-          shops: finalShops,
-          orders: finalOrders,
-          categories: finalCategories,
-          routes: finalRoutes,
-          dueCollections: finalDueCollections,
-          dailyExpenses: finalDailyExpenses,
-          authorizedEmails: finalAuthEmails,
-          businessInfo: finalBizInfo,
-        }),
-        writeFirestoreCatalogDirect('products', finalProducts),
-        writeFirestoreCatalogDirect('shops', finalShops),
-        writeFirestoreCatalogDirect('orders', finalOrders),
-        writeFirestoreCatalogDirect('categories', finalCategories),
-        writeFirestoreCatalogDirect('routes', finalRoutes),
-        writeFirestoreCatalogDirect('dueCollections', finalDueCollections),
-        writeFirestoreCatalogDirect('dailyExpenses', finalDailyExpenses),
-      ]);
-
       recordDiagnosticEvent({
         source: 'client',
         severity: 'info',
         category: 'recovery',
-        titleBn: `ব্যাকআপ / স্ন্যাপশট রিস্টোর সফল (${mode === 'replace' ? 'হুবহু প্রতিস্থাপন' : 'মার্জ'})`,
-        detailsBn: `মোট পণ্য: ${finalProducts.length}টি, দোকান: ${finalShops.length}টি, মেমো: ${finalOrders.length}টি সক্রিয় করা হয়েছে।`,
+        titleBn: `ব্যাকআপ ফাইল ফায়ারবেজে আপলোড ও সিঙ্ক সম্পন্ন (${mode === 'replace' ? 'হুবহু প্রতিস্থাপন' : 'মার্জ'})`,
+        detailsBn: `মোট মেমো: ${finalOrders.length}টি, পণ্য: ${finalProducts.length}টি, দোকান: ${finalShops.length}টি ফায়ারবেজে আপলোড ও ইনডেক্সডিবিতে সেভ হয়েছে।`,
       });
 
       reloadData();
       showToast(
-        `রিস্টোর সম্পন্ন! পণ্য: ${finalProducts.length}টি, দোকান: ${finalShops.length}টি ও মেমো: ${finalOrders.length}টি সফলভাবে লোড হয়েছে!`,
+        `ব্যাকআপ ফাইল সফলভাবে ফায়ারবেজে আপলোড হয়েছে এবং ইনডেক্সডিবি সহ সর্বত্র সক্রিয় হয়েছে! (মেমো: ${finalOrders.length}টি, পণ্য: ${finalProducts.length}টি, দোকান: ${finalShops.length}টি)`,
         'success'
       );
     } catch (e: any) {

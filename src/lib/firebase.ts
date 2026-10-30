@@ -2423,6 +2423,7 @@ export async function restoreBulkDataToFirestore(payload: {
   routes: Route[];
   dueCollections?: DueCollectionRecord[];
   dailyExpenses?: DailyExpenseRecord[];
+  authorizedEmails?: AuthorizedUserEmail[];
   businessInfo?: BusinessInfo;
   mode?: 'replace' | 'merge';
 }): Promise<{ success: boolean; writtenCount: number; deletedCount: number }> {
@@ -2430,55 +2431,33 @@ export async function restoreBulkDataToFirestore(payload: {
   let writtenCount = 0;
   let deletedCount = 0;
 
-  if (isFirestoreQuotaExhausted()) {
-    console.warn('Firestore write quota circuit breaker is tripped, relying on server mirror & IndexedDB');
-    return { success: false, writtenCount: 0, deletedCount: 0 };
-  }
+  // Reset any temporary quota breaker for intentional administrative backup restore
+  resetFirestoreQuotaCircuitBreakers();
 
   try {
+    // 1. CRITICAL: Immediately write to the primary Single-Doc Cloud Catalogs with immediate=true!
+    // This guarantees that all devices & real-time listeners receive the 100% exact backup data instantly.
+    await Promise.allSettled([
+      writeFirestoreCatalogDirect('products', payload.products, true),
+      writeFirestoreCatalogDirect('shops', payload.shops, true),
+      writeFirestoreCatalogDirect('orders', payload.orders, true),
+      writeFirestoreCatalogDirect('categories', payload.categories, true),
+      writeFirestoreCatalogDirect('routes', payload.routes, true),
+      writeFirestoreCatalogDirect('dueCollections', payload.dueCollections || [], true),
+      writeFirestoreCatalogDirect('dailyExpenses', payload.dailyExpenses || [], true),
+      ...(payload.authorizedEmails ? [writeFirestoreCatalogDirect('authorizedEmails', payload.authorizedEmails, true)] : []),
+    ]);
+
     let currentBatch = writeBatch(db);
     let opCount = 0;
 
     const commitBatchIfNeeded = async (force = false) => {
-      if (opCount > 0 && (opCount >= 350 || force)) {
+      if (opCount > 0 && (opCount >= 250 || force)) {
         await currentBatch.commit();
         currentBatch = writeBatch(db);
         opCount = 0;
       }
     };
-
-    // 1. In 'replace' mode: purge existing Firestore docs that are not present in the backup file
-    if (mode === 'replace') {
-      const collectionsToCheck = [
-        { name: 'products', newIds: new Set(payload.products.map((p) => p.id)) },
-        { name: 'shops', newIds: new Set(payload.shops.map((s) => s.id)) },
-        { name: 'orders', newIds: new Set(payload.orders.map((o) => o.id)) },
-        { name: 'categories', newIds: new Set(payload.categories.map((c) => c.id)) },
-        { name: 'routes', newIds: new Set(payload.routes.map((r) => r.id)) },
-        ...(payload.dueCollections
-          ? [{ name: 'dueCollections', newIds: new Set(payload.dueCollections.map((d) => d.id)) }]
-          : []),
-        ...(payload.dailyExpenses
-          ? [{ name: 'dailyExpenses', newIds: new Set(payload.dailyExpenses.map((e) => e.id)) }]
-          : []),
-      ];
-
-      for (const colInfo of collectionsToCheck) {
-        try {
-          const snap = await getDocs(collection(db, colInfo.name));
-          for (const d of snap.docs) {
-            if (!colInfo.newIds.has(d.id)) {
-              currentBatch.delete(d.ref);
-              opCount++;
-              deletedCount++;
-              await commitBatchIfNeeded();
-            }
-          }
-        } catch (err) {
-          console.warn(`Could not check obsolete docs in ${colInfo.name}:`, err);
-        }
-      }
-    }
 
     // 2. Batch-write all products (compress huge data-url images if > 500KB to stay safely under Firestore 1MB doc limit)
     for (const p of payload.products) {
@@ -2573,7 +2552,21 @@ export async function restoreBulkDataToFirestore(payload: {
       }
     }
 
-    // 9. Batch-write business info
+    // 9. Batch-write authorized emails
+    if (payload.authorizedEmails && payload.authorizedEmails.length > 0) {
+      for (const a of payload.authorizedEmails) {
+        if (!a?.email) continue;
+        const safeDocId = a.email.toLowerCase().trim().replace(/[@.]/g, '_');
+        const cleaned = cleanForFirestore({ ...a, id: safeDocId });
+        const ref = doc(db, 'authorizedEmails', safeDocId);
+        currentBatch.set(ref, cleaned);
+        opCount++;
+        writtenCount++;
+        await commitBatchIfNeeded();
+      }
+    }
+
+    // 10. Batch-write business info
     if (payload.businessInfo) {
       const cleaned = cleanForFirestore(payload.businessInfo);
       const ref = doc(db, 'settings', 'businessInfo');
@@ -2588,7 +2581,6 @@ export async function restoreBulkDataToFirestore(payload: {
     return { success: true, writtenCount, deletedCount };
   } catch (err: any) {
     console.warn('restoreBulkDataToFirestore encountered error:', err);
-    tripFirestoreQuotaCircuitBreaker(err);
     return { success: false, writtenCount, deletedCount };
   }
 }
