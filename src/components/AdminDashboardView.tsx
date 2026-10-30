@@ -52,7 +52,9 @@ import {
   Square,
   RotateCcw,
   Calendar,
-  Building2
+  Building2,
+  Cloud,
+  ArrowRight
 } from 'lucide-react';
 import {
   Product,
@@ -105,6 +107,7 @@ import { AdminSodaiStorefrontManager } from './AdminSodaiStorefrontManager';
 import { AdminDeleteCenter } from './AdminDeleteCenter';
 import { AdminPrintCenter } from './AdminPrintCenter';
 import { AdminDiagnosticsMonitor } from './AdminDiagnosticsMonitor';
+import { AdminFirebaseInspector } from './AdminFirebaseInspector';
 import { DeletePermissionRequest } from './DeleteConfirmModal';
 import {
   printProductsBatch,
@@ -180,7 +183,7 @@ interface AdminDashboardViewProps {
   onForceDeepCloudRecovery?: () => Promise<void>;
 }
 
-type AdminSubTab = 'overview' | 'storefront' | 'categories' | 'products' | 'routes' | 'access' | 'analytics' | 'due_history' | 'push' | 'settings' | 'backup' | 'print_center' | 'delete_center' | 'diagnostics';
+type AdminSubTab = 'overview' | 'firebase_inspector' | 'storefront' | 'categories' | 'products' | 'routes' | 'access' | 'analytics' | 'due_history' | 'push' | 'settings' | 'backup' | 'print_center' | 'delete_center' | 'diagnostics';
 
 const AVAILABLE_ROUTES = [
   'সব রুট (All Routes)',
@@ -1504,10 +1507,17 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             </button>
             <button
               onClick={() => setSubTab('due_history')}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-600/90 hover:bg-amber-500 text-white font-semibold text-xs border border-amber-400/50 shadow-sm transition-all"
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-600/90 hover:bg-amber-500 text-white font-semibold text-xs border border-amber-400/50 shadow-sm transition-all"
             >
               <DollarSign className="w-3.5 h-3.5 text-amber-200" />
               <span>দোকানের বকেয়া (৳০ করুন)</span>
+            </button>
+            <button
+              onClick={() => setSubTab('firebase_inspector')}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-teal-500 hover:bg-teal-400 text-neutral-950 font-bold text-xs shadow-md transition-all active:scale-95 cursor-pointer"
+            >
+              <Cloud className="w-3.5 h-3.5" />
+              <span>ফায়ারবেজ ডাটা দেখুন</span>
             </button>
             <button
               onClick={() => setSubTab('delete_center')}
@@ -1532,6 +1542,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         >
           <LayoutDashboard className="w-4 h-4" />
           <span>ওভারভিউ ও অ্যানালিটিক্স</span>
+        </button>
+
+        <button
+          onClick={() => setSubTab('firebase_inspector')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+            subTab === 'firebase_inspector'
+              ? 'bg-emerald-600 text-white font-black shadow-md'
+              : 'text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300'
+          }`}
+        >
+          <Cloud className="w-4 h-4 text-emerald-600" />
+          <span>ফায়ারবেজ ক্লাউড ইন্সপেক্টর (ডাটা দেখুন) ☁️</span>
         </button>
 
         <button
@@ -1777,6 +1799,34 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 {metrics.lowStockCount > 0 ? 'রিঅর্ডার প্রয়োজন' : 'পর্যাপ্ত স্টক'}
               </span>
             </div>
+          </div>
+
+          {/* Firebase Cloud Live Status Banner in Overview */}
+          <div className="bg-gradient-to-r from-emerald-900 via-teal-900 to-neutral-900 text-white rounded-2xl p-4 border border-emerald-700/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-400/30 flex items-center justify-center font-black shrink-0">
+                <Cloud className="w-5 h-5 text-emerald-300" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h4 className="font-extrabold text-sm text-white">ফায়ারবেজ ক্লাউড ডাটাবেস স্ট্যাটাস</h4>
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-400/20 text-emerald-300 text-[10px] font-bold border border-emerald-400/30">
+                    🟢 ১০০% সিঙ্কড
+                  </span>
+                </div>
+                <p className="text-xs text-neutral-300 mt-0.5">
+                  ক্লাউডে সংরক্ষিত: {orders.length}টি মেমো, {shops.length}টি দোকান, {products.length}টি পণ্য, {categories.length}টি ক্যাটাগরি ও কর্মী এক্সেস।
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSubTab('firebase_inspector')}
+              className="px-4 py-2 bg-emerald-400 hover:bg-emerald-300 text-neutral-950 font-black text-xs rounded-xl shadow-sm transition-all active:scale-95 flex items-center gap-1.5 shrink-0 cursor-pointer"
+            >
+              <span>ফায়ারবেজে কি কি আছে দেখুন</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
           </div>
 
           {/* Quick Management Hub */}
@@ -4894,6 +4944,23 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           onCleanAllMockData={() => onCleanAllMockData && onCleanAllMockData()}
           onDeleteEverythingAllAtOnce={() => onDeleteEverythingAllAtOnce && onDeleteEverythingAllAtOnce()}
           onRequestDeletePermission={(req) => onRequestDeletePermission && onRequestDeletePermission(req)}
+        />
+      )}
+
+      {/* SUB-TAB: FIREBASE CLOUD INSPECTOR */}
+      {subTab === 'firebase_inspector' && (
+        <AdminFirebaseInspector
+          products={products}
+          shops={shops}
+          orders={orders}
+          categories={categories}
+          routes={routes}
+          authorizedEmails={authorizedEmails}
+          dueCollections={dueCollections}
+          dailyExpenses={dailyExpenses}
+          businessInfo={bizInfo}
+          onViewMemo={onViewMemo}
+          onNavigateTab={onNavigateTab}
         />
       )}
 

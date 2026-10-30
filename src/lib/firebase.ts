@@ -2593,3 +2593,154 @@ export async function restoreBulkDataToFirestore(payload: {
   }
 }
 
+export interface FirebaseCloudInspectResult {
+  projectId: string;
+  databaseId: string;
+  status: 'connected' | 'quota_restricted' | 'offline';
+  source: 'direct_firestore' | 'server_mirror' | 'indexeddb_cache';
+  lastCheckedTime: string;
+  catalogCounts: {
+    orders: number;
+    shops: number;
+    products: number;
+    categories: number;
+    routes: number;
+    authorizedEmails: number;
+    dueCollections: number;
+    dailyExpenses: number;
+  };
+  remoteData: {
+    orders: Order[];
+    shops: Shop[];
+    products: Product[];
+    categories: Category[];
+    routes: Route[];
+    authorizedEmails: AuthorizedUserEmail[];
+    dueCollections: DueCollectionRecord[];
+    dailyExpenses: DailyExpenseRecord[];
+    businessInfo: BusinessInfo | null;
+  };
+}
+
+export async function fetchFirebaseCloudInspection(): Promise<FirebaseCloudInspectResult> {
+  const cfg = firebaseConfig as any;
+  const projectId = cfg.projectId || 'munsi-store';
+  const databaseId = cfg.firestoreDatabaseId || 'ai-studio-shoporderbookeri-a050f7ec-14f6-48a4-a13f-2a1a58a6df8b';
+  const nowIso = new Date().toISOString();
+
+  // Try direct firestore catalogs first if quota is not exhausted
+  if (!isFirestoreQuotaExhausted()) {
+    try {
+      const [orders, shops, products, categories, routes, dueCollections, dailyExpenses, authorizedEmails, bizDoc] = await Promise.all([
+        readFirestoreCatalogDirect<Order>('orders'),
+        readFirestoreCatalogDirect<Shop>('shops'),
+        readFirestoreCatalogDirect<Product>('products'),
+        readFirestoreCatalogDirect<Category>('categories'),
+        readFirestoreCatalogDirect<Route>('routes'),
+        readFirestoreCatalogDirect<DueCollectionRecord>('dueCollections'),
+        readFirestoreCatalogDirect<DailyExpenseRecord>('dailyExpenses'),
+        readFirestoreCatalogDirect<AuthorizedUserEmail>('authorizedEmails'),
+        readFirestoreDocDirect('settings/businessInfo'),
+      ]);
+
+      return {
+        projectId,
+        databaseId,
+        status: 'connected',
+        source: 'direct_firestore',
+        lastCheckedTime: nowIso,
+        catalogCounts: {
+          orders: orders.length,
+          shops: shops.length,
+          products: products.length,
+          categories: categories.length,
+          routes: routes.length,
+          authorizedEmails: authorizedEmails.length,
+          dueCollections: dueCollections.length,
+          dailyExpenses: dailyExpenses.length,
+        },
+        remoteData: {
+          orders,
+          shops,
+          products,
+          categories,
+          routes,
+          authorizedEmails,
+          dueCollections,
+          dailyExpenses,
+          businessInfo: (bizDoc as BusinessInfo) || null,
+        },
+      };
+    } catch (err) {
+      console.warn('Direct Firestore inspection read failed, checking server mirror:', err);
+    }
+  }
+
+  // Fallback to server database mirror
+  try {
+    const mirror = await fetchServerDatabaseMirror();
+    if (mirror) {
+      return {
+        projectId,
+        databaseId,
+        status: isFirestoreQuotaExhausted() ? 'quota_restricted' : 'connected',
+        source: 'server_mirror',
+        lastCheckedTime: nowIso,
+        catalogCounts: {
+          orders: Array.isArray(mirror.orders) ? mirror.orders.length : 0,
+          shops: Array.isArray(mirror.shops) ? mirror.shops.length : 0,
+          products: Array.isArray(mirror.products) ? mirror.products.length : 0,
+          categories: Array.isArray(mirror.categories) ? mirror.categories.length : 0,
+          routes: Array.isArray(mirror.routes) ? mirror.routes.length : 0,
+          authorizedEmails: Array.isArray(mirror.authorizedEmails) ? mirror.authorizedEmails.length : 0,
+          dueCollections: Array.isArray(mirror.dueCollections) ? mirror.dueCollections.length : 0,
+          dailyExpenses: Array.isArray(mirror.dailyExpenses) ? mirror.dailyExpenses.length : 0,
+        },
+        remoteData: {
+          orders: mirror.orders || [],
+          shops: mirror.shops || [],
+          products: mirror.products || [],
+          categories: mirror.categories || [],
+          routes: mirror.routes || [],
+          authorizedEmails: mirror.authorizedEmails || [],
+          dueCollections: mirror.dueCollections || [],
+          dailyExpenses: mirror.dailyExpenses || [],
+          businessInfo: mirror.businessInfo || null,
+        },
+      };
+    }
+  } catch {
+    // mirror fallback
+  }
+
+  // Fallback to local memory/IndexedDB
+  return {
+    projectId,
+    databaseId,
+    status: typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'connected',
+    source: 'indexeddb_cache',
+    lastCheckedTime: nowIso,
+    catalogCounts: {
+      orders: getOrders().length,
+      shops: getShops().length,
+      products: getProducts().length,
+      categories: getCategories().length,
+      routes: getRoutes().length,
+      authorizedEmails: getAuthorizedEmails().length,
+      dueCollections: 0,
+      dailyExpenses: 0,
+    },
+    remoteData: {
+      orders: getOrders(),
+      shops: getShops(),
+      products: getProducts(),
+      categories: getCategories(),
+      routes: getRoutes(),
+      authorizedEmails: getAuthorizedEmails(),
+      dueCollections: [],
+      dailyExpenses: [],
+      businessInfo: null,
+    },
+  };
+}
+
