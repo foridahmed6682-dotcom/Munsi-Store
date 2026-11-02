@@ -174,6 +174,12 @@ import {
 } from './lib/indexedDb';
 import { clearAllOfflineQueue } from './lib/offlineSyncQueue';
 import { setMemoryOrdersCache } from './lib/storage';
+import {
+  smartLoadData,
+  smartSaveOrder,
+  smartDeleteOrder,
+  setupNetworkSyncListeners,
+} from './lib/twoWaySyncEngine';
 
 export default function App() {
   // PWA Install Hook
@@ -378,6 +384,21 @@ export default function App() {
       reloadData();
     }).catch((err) => {
       console.warn('Initial IndexedDB hydration error:', err);
+    });
+
+    // 2b. Two-Way Sync Engine: Cache-first load + Zero-Read cost metadata check
+    smartLoadData((freshOrders) => {
+      if (freshOrders && freshOrders.length > 0) {
+        setOrders(freshOrders);
+      }
+    }).catch((err) => {
+      console.warn('smartLoadData initial check notice:', err);
+    });
+
+    const cleanupNetworkSync = setupNetworkSyncListeners((freshOrders) => {
+      if (freshOrders && freshOrders.length > 0) {
+        setOrders(freshOrders);
+      }
     });
 
     const handleOnline = async () => {
@@ -645,6 +666,7 @@ export default function App() {
       if (unsubscribeAuthEmails) unsubscribeAuthEmails();
       if (unsubscribeDueCollections) unsubscribeDueCollections();
       if (unsubscribeDailyExpenses) unsubscribeDailyExpenses();
+      cleanupNetworkSync();
     };
   }, [reloadData]);
 
@@ -818,6 +840,7 @@ export default function App() {
 
       // 1. Save to local storage (instant offline persistence)
       saveOrder(newOrder);
+      smartSaveOrder(newOrder).catch((err) => console.log('smartSaveOrder deferred:', err));
 
       // 2. Automatically deduct inventory stock for each ordered item
       for (const item of newOrder.items) {
@@ -1694,6 +1717,7 @@ export default function App() {
 
     saveOrder(updatedOrder);
     saveOrderToCloud(updatedOrder).catch(() => {});
+    smartSaveOrder(updatedOrder).catch(() => {});
     setOrders((prev) => prev.map((o) => (o.id === updatedOrder.id ? updatedOrder : o)));
     setEditingOrder(null);
     setSelectedMemoOrder(updatedOrder);
@@ -1724,6 +1748,7 @@ export default function App() {
     }
     deleteOrder(orderId);
     deleteOrderFromCloud(orderId).catch(() => {});
+    smartDeleteOrder(orderId).catch(() => {});
     setOrders((prev) => prev.filter((o) => o.id !== orderId));
     if (selectedMemoOrder?.id === orderId) {
       setIsMemoOpen(false);
