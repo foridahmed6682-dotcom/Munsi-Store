@@ -179,6 +179,7 @@ import {
   smartSaveOrder,
   smartDeleteOrder,
   setupNetworkSyncListeners,
+  syncBulkOrdersToEngine,
 } from './lib/twoWaySyncEngine';
 
 export default function App() {
@@ -2460,6 +2461,9 @@ export default function App() {
           console.warn('IndexedDB backup sync warning:', idbErr);
         }
       }
+
+      // Sync into Two-Way Sync Engine IndexedDB store
+      syncBulkOrdersToEngine(finalOrders).catch(() => {});
 
       // 5. STEP 3: UPDATE IN-MEMORY STORAGE & REACT APP STATE
       saveProducts(finalProducts);

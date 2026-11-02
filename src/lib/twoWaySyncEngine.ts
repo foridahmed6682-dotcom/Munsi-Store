@@ -499,3 +499,25 @@ export function setupNetworkSyncListeners(renderUI?: (orders: Order[]) => void):
     window.removeEventListener('offline', handleOffline);
   };
 }
+
+// ----------------------------------------------------------------------------
+// 8. Bulk Sync Helper (for Backup Restore & Full Hydration)
+// ----------------------------------------------------------------------------
+export async function syncBulkOrdersToEngine(orders: Order[]): Promise<void> {
+  if (!Array.isArray(orders) || orders.length === 0) return;
+  try {
+    const idb = await initLocalDB();
+    const tx = idb.transaction(STORE_ORDERS, 'readwrite');
+    for (const ord of orders) {
+      if (ord.id) {
+        await tx.store.put(ord);
+      }
+    }
+    await tx.done;
+    await setLocalLastSync(Date.now(), 'global');
+    console.log(`[Two-Way Sync Engine] Bulk restored ${orders.length} orders into local IndexedDB.`);
+  } catch (err) {
+    console.warn('syncBulkOrdersToEngine notice:', err);
+  }
+}
+
