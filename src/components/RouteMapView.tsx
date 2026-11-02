@@ -49,6 +49,34 @@ import {
   ESRI_LABELS_URL,
 } from '../utils/mapTileCache';
 
+// ----------------------------------------------------------------------------
+// Leaflet Safety Patch: Prevent 'Cannot read properties of undefined (reading _leaflet_pos)'
+// Occurs when Leaflet updates positions/animations while a container or element is detaching
+// ----------------------------------------------------------------------------
+if (typeof window !== 'undefined' && L && L.DomUtil) {
+  const originalGetPosition = L.DomUtil.getPosition;
+  L.DomUtil.getPosition = function (el: any) {
+    if (!el || typeof el !== 'object') {
+      return new L.Point(0, 0);
+    }
+    try {
+      return originalGetPosition.call(L.DomUtil, el);
+    } catch {
+      return new L.Point(0, 0);
+    }
+  };
+
+  const originalSetPosition = L.DomUtil.setPosition;
+  L.DomUtil.setPosition = function (el: any, point: any) {
+    if (!el || typeof el !== 'object') return;
+    try {
+      originalSetPosition.call(L.DomUtil, el, point);
+    } catch {
+      // safe fallback
+    }
+  };
+}
+
 export interface NavigationTurnStep {
   id: string;
   instruction: string;
@@ -321,9 +349,26 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
     }
 
     return () => {
-      // Map cleanup on unmount
-      if (mapInstanceRef.current) {
-        mapInstanceRef.current.remove();
+      // Map cleanup on unmount: stop animations and safely purge layer refs
+      const map = mapInstanceRef.current;
+      if (map) {
+        try {
+          map.stop();
+        } catch {}
+        try {
+          if (markersLayerRef.current) {
+            markersLayerRef.current.clearLayers();
+          }
+          if (userMarkerRef.current) {
+            userMarkerRef.current.remove();
+            userMarkerRef.current = null;
+          }
+          if (routePolylineRef.current) {
+            routePolylineRef.current.remove();
+            routePolylineRef.current = null;
+          }
+          map.remove();
+        } catch {}
         mapInstanceRef.current = null;
       }
     };
@@ -481,62 +526,66 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
     setLiveHeartbeat((p) => !p);
 
     const map = mapInstanceRef.current;
-    if (map) {
-      const headingRotation = typeof liveHeadingDeg === 'number' ? liveHeadingDeg : 0;
-      const userIcon = L.divIcon({
-        className: 'user-live-pin',
-        html: `
-          <div style="
-            position: relative;
-            width: 38px;
-            height: 38px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transform: translate(-50%, -50%);
-          ">
+    if (map && mapContainerRef.current) {
+      try {
+        const headingRotation = typeof liveHeadingDeg === 'number' ? liveHeadingDeg : 0;
+        const userIcon = L.divIcon({
+          className: 'user-live-pin',
+          html: `
             <div style="
-              position: absolute;
-              inset: -4px;
-              border-radius: 50%;
-              border: 2px solid #10b981;
-              animation: ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
-            "></div>
-            <div style="
-              width: 32px;
-              height: 32px;
-              background: #059669;
-              border: 2.5px solid white;
-              border-radius: 50%;
-              box-shadow: 0 4px 14px rgba(5, 150, 105, 0.7);
+              position: relative;
+              width: 38px;
+              height: 38px;
               display: flex;
               align-items: center;
               justify-content: center;
-              transform: rotate(${headingRotation}deg);
-              transition: transform 0.4s ease;
+              transform: translate(-50%, -50%);
             ">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="white" stroke="white" stroke-width="1.5">
-                <path d="M12 2L19 21L12 17L5 21L12 2Z" />
-              </svg>
+              <div style="
+                position: absolute;
+                inset: -4px;
+                border-radius: 50%;
+                border: 2px solid #10b981;
+                animation: ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+              "></div>
+              <div style="
+                width: 32px;
+                height: 32px;
+                background: #059669;
+                border: 2.5px solid white;
+                border-radius: 50%;
+                box-shadow: 0 4px 14px rgba(5, 150, 105, 0.7);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                transform: rotate(${headingRotation}deg);
+                transition: transform 0.4s ease;
+              ">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="white" stroke="white" stroke-width="1.5">
+                  <path d="M12 2L19 21L12 17L5 21L12 2Z" />
+                </svg>
+              </div>
+              ${speedKm > 2 ? `<div style="position: absolute; bottom: -12px; background: #111827; color: #34d399; font-size: 9px; font-weight: 800; padding: 1px 4px; border-radius: 4px; white-space: nowrap; border: 1px solid #059669;">${speedKm} km/h</div>` : ''}
             </div>
-            ${speedKm > 2 ? `<div style="position: absolute; bottom: -12px; background: #111827; color: #34d399; font-size: 9px; font-weight: 800; padding: 1px 4px; border-radius: 4px; white-space: nowrap; border: 1px solid #059669;">${speedKm} km/h</div>` : ''}
-          </div>
-        `,
-        iconSize: [38, 38],
-        iconAnchor: [19, 19],
-      });
+          `,
+          iconSize: [38, 38],
+          iconAnchor: [19, 19],
+        });
 
-      if (userMarkerRef.current) {
-        userMarkerRef.current.setLatLng([latitude, longitude]);
-        userMarkerRef.current.setIcon(userIcon);
-      } else {
-        const marker = L.marker([latitude, longitude], { icon: userIcon }).addTo(map);
-        marker.bindPopup('<b>আপনার বর্তমান অবস্থান (Live GPS)</b>');
-        userMarkerRef.current = marker;
-      }
+        if (userMarkerRef.current) {
+          userMarkerRef.current.setLatLng([latitude, longitude]);
+          userMarkerRef.current.setIcon(userIcon);
+        } else {
+          const marker = L.marker([latitude, longitude], { icon: userIcon }).addTo(map);
+          marker.bindPopup('<b>আপনার বর্তমান অবস্থান (Live GPS)</b>');
+          userMarkerRef.current = marker;
+        }
 
-      if (shouldCenter || (autoFollow && selectedShop)) {
-        map.panTo([latitude, longitude], { animate: true });
+        if (shouldCenter || (autoFollow && selectedShop)) {
+          map.panTo([latitude, longitude], { animate: true });
+        }
+      } catch (err) {
+        // Silently skip if map is currently detaching
       }
     }
 
@@ -584,16 +633,18 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
       }
 
       // Smoothly update live polyline from device's live location to destination
-      if (routePolylineRef.current) {
-        if (routeCoordinatesRef.current && routeCoordinatesRef.current.length > 1) {
-          const upcoming = routeCoordinatesRef.current.slice(Math.max(0, currentStepIndex));
-          routePolylineRef.current.setLatLngs([[latitude, longitude], ...upcoming]);
-        } else {
-          routePolylineRef.current.setLatLngs([
-            [latitude, longitude],
-            [sLat, sLng],
-          ]);
-        }
+      if (routePolylineRef.current && mapInstanceRef.current) {
+        try {
+          if (routeCoordinatesRef.current && routeCoordinatesRef.current.length > 1) {
+            const upcoming = routeCoordinatesRef.current.slice(Math.max(0, currentStepIndex));
+            routePolylineRef.current.setLatLngs([[latitude, longitude], ...upcoming]);
+          } else {
+            routePolylineRef.current.setLatLngs([
+              [latitude, longitude],
+              [sLat, sLng],
+            ]);
+          }
+        } catch {}
       }
     }
   };
@@ -945,18 +996,23 @@ export const RouteMapView: React.FC<RouteMapViewProps> = ({
 
     routeCoordinatesRef.current = coordinates;
 
-    const polyline = L.polyline(coordinates, {
-      color: '#059669', // Emerald/green turn-by-turn road route
-      weight: 6,
-      opacity: 0.9,
-      lineCap: 'round',
-      lineJoin: 'round',
-    });
+    if (!mapInstanceRef.current || !mapContainerRef.current) return;
+    const currentMap = mapInstanceRef.current;
 
-    polyline.addTo(map);
-    routePolylineRef.current = polyline;
+    try {
+      const polyline = L.polyline(coordinates, {
+        color: '#059669', // Emerald/green turn-by-turn road route
+        weight: 6,
+        opacity: 0.9,
+        lineCap: 'round',
+        lineJoin: 'round',
+      });
 
-    map.fitBounds(polyline.getBounds(), { padding: [70, 70], maxZoom: 17 });
+      polyline.addTo(currentMap);
+      routePolylineRef.current = polyline;
+
+      currentMap.fitBounds(polyline.getBounds(), { padding: [70, 70], maxZoom: 17 });
+    } catch {}
 
     setTurnSteps(steps);
     setCurrentStepIndex(0);

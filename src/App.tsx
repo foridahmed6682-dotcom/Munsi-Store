@@ -422,7 +422,13 @@ export default function App() {
 
     const handleGlobalRuntimeError = (event: ErrorEvent) => {
       const msg = event?.message || String(event?.error || 'অজানা রানটাইম এরর');
-      if (msg.includes('ResizeObserver') || msg.includes('WebSocket')) return;
+      if (
+        msg.includes('ResizeObserver') ||
+        msg.includes('WebSocket') ||
+        msg.includes('_leaflet_pos') ||
+        msg.includes('_leaflet_id') ||
+        msg.includes('leaflet')
+      ) return;
       recordDiagnosticEvent({
         source: 'client',
         severity: 'error',
@@ -436,7 +442,13 @@ export default function App() {
     const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
       const reason = event?.reason;
       const msg = reason?.message || String(reason || '');
-      if (!msg || msg.includes('WebSocket') || msg.includes('AbortError')) return;
+      if (
+        !msg ||
+        msg.includes('WebSocket') ||
+        msg.includes('AbortError') ||
+        msg.includes('_leaflet_pos') ||
+        msg.includes('_leaflet_id')
+      ) return;
       const isQuota = msg.includes('429') || msg.includes('resource-exhausted') || msg.includes('Quota');
       recordDiagnosticEvent({
         source: 'client',
