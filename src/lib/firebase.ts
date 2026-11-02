@@ -455,10 +455,12 @@ export async function writeFirestoreCatalogDirect(catalogKey: string, items: any
 
   const performWrite = async (itemsToWrite: any[]) => {
     let serialized = JSON.stringify(itemsToWrite);
-    // Protect against Firestore 1MB single-document limit when many products have base64 images
-    if (serialized.length > 650000 && catalogKey === 'products') {
+    // Protect against Firestore 1MB single-document limit (1,048,576 bytes)
+    // If serialized JSON is over 550 KB, strip large raw Base64 data URLs from the catalog summary
+    // (Remote Cloud Storage HTTPS URLs are preserved, and original images remain safely in IndexedDB)
+    if (serialized.length > 550000 && catalogKey === 'products') {
       const compacted = itemsToWrite.map((item) => {
-        if (item && typeof item.imageUrl === 'string' && item.imageUrl.startsWith('data:') && item.imageUrl.length > 35000) {
+        if (item && typeof item.imageUrl === 'string' && item.imageUrl.startsWith('data:')) {
           return { ...item, imageUrl: '' };
         }
         return item;
@@ -488,7 +490,7 @@ export async function writeFirestoreCatalogDirect(catalogKey: string, items: any
           severity: 'warning',
           category: 'payload_1mb',
           titleBn: `ফায়ারবেজ ক্যাটালগ (${catalogKey}) ১ মেগাবাইট লিমিট সতর্কতা`,
-          detailsBn: 'ফায়ারবেজের ডকুমেন্ট সাইজ লিমিট অতিক্রম করায় বড় ছবিগুলো কম্প্যাক্ট করা হচ্ছে।',
+          detailsBn: 'ফায়ারবেজের ডকুমেন্ট সাইজ লিমিট অতিক্রম করায় বড় ছবিগুলো কম্প্যাক্ট করা হচ্ছে। Firebase Cloud Storage মাইগ্রেশন সম্পন্ন করুন।',
           technicalDetails: `PATCH settings/cloud_catalog_${catalogKey} returned HTTP 400`,
         });
       }

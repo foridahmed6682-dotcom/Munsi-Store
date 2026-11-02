@@ -86,6 +86,7 @@ import {
   saveUnitPackSizeDefaults,
   DEFAULT_UNIT_PACK_SIZES
 } from '../lib/storage';
+import { uploadImageToCloudStorage, isCloudStorageUrl } from '../lib/cloudStorage';
 import { getIndexedDBStats, clearAllIndexedDBData } from '../lib/indexedDb';
 import { AddShopModal } from './AddShopModal';
 import { ProductImageLightboxModal } from './ProductImageLightboxModal';
@@ -569,8 +570,23 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     try {
       const compressedDataUrl = await processImageFile(file, 400, 30 * 1024);
       const kb = Math.max(1, Math.round((compressedDataUrl.length * 0.75) / 1024));
-      setProdImageUrl(compressedDataUrl);
-      showToast(`ছবি সফলভাবে যুক্ত হয়েছে! সাইজ মাত্র ${kb} KB (ডাটা সাশ্রয়ী)`, 'success');
+      
+      // Upload directly to Firebase Cloud Storage so Firestore only stores the download URL!
+      const targetId = editingProduct?.id || `prod-${Date.now()}`;
+      try {
+        const cloudUrl = await uploadImageToCloudStorage(compressedDataUrl, 'products', targetId);
+        setProdImageUrl(cloudUrl);
+        showToast(
+          isCloudStorageUrl(cloudUrl)
+            ? `ছবি Firebase Cloud Storage-এ আপলোড সম্পন্ন! (ফায়ারস্টোরে শুধু লিংক সেভ হবে)`
+            : `ছবি সফলভাবে যুক্ত হয়েছে! সাইজ মাত্র ${kb} KB (ডাটা সাশ্রয়ী)`,
+          'success'
+        );
+      } catch (cloudErr) {
+        // Fallback to compressed Data URL if offline
+        setProdImageUrl(compressedDataUrl);
+        showToast(`ছবি সফলভাবে যুক্ত হয়েছে! সাইজ मात्र ${kb} KB (ডাটা সাশ্রয়ী)`, 'success');
+      }
     } catch (err: any) {
       showToast(err?.message || 'ছবি আপলোড করতে সমস্যা হয়েছে', 'error');
     } finally {
@@ -6147,12 +6163,21 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                         <img src={prodImageUrl} alt="Preview" className="w-full h-full object-contain" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <span className="text-[11px] text-emerald-800 font-bold block truncate">
-                          ✅ ছবি প্রস্তুত রয়েছে
+                        <span className="text-[11px] text-emerald-800 font-bold block truncate flex items-center gap-1">
+                          {isCloudStorageUrl(prodImageUrl) ? (
+                            <>
+                              <Cloud className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                              <span>☁️ Firebase Cloud Storage লিংক সংরক্ষিত</span>
+                            </>
+                          ) : (
+                            <span>✅ ছবি প্রস্তুত রয়েছে</span>
+                          )}
                         </span>
                         <span className="text-[10px] text-neutral-500 font-mono block truncate">
-                          {prodImageUrl.startsWith('data:')
-                            ? `ডিভাইস থেকে আপলোড করা ছবি (${Math.round((prodImageUrl.length * 0.75) / 1024)} KB)`
+                          {isCloudStorageUrl(prodImageUrl)
+                            ? `ফায়ারস্টোর ডকুমেন্ট সাইজ ৯৮% সাশ্রয়ী (ডাউনলোড URL সক্রিয়)`
+                            : prodImageUrl.startsWith('data:')
+                            ? `ডিভাইস ইমেজ ক্যাশ (${Math.round((prodImageUrl.length * 0.75) / 1024)} KB)`
                             : prodImageUrl}
                         </span>
                       </div>

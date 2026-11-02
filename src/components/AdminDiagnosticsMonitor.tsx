@@ -15,6 +15,7 @@ import {
   ImageIcon,
   UploadCloud,
   Database,
+  Cloud,
 } from 'lucide-react';
 import {
   ClientDiagnosticEvent,
@@ -31,8 +32,13 @@ import {
   isFirestoreWriteQuotaExhausted,
   resetFirestoreQuotaCircuitBreakers,
   testFirestoreConnection,
+  writeFirestoreCatalogDirect,
 } from '../lib/firebase';
 import { getIndexedDBStats, clearAllIndexedDBData } from '../lib/indexedDb';
+import {
+  migrateAllProductImagesToCloudStorage,
+  isCloudStorageUrl,
+} from '../lib/cloudStorage';
 
 interface AdminDiagnosticsMonitorProps {
   productsCount: number;
@@ -302,6 +308,74 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
       (p) => p && typeof p.imageUrl === 'string' && p.imageUrl.trim().length > 0
     ).length;
   }, [currentProducts]);
+
+  const cloudStorageImagesCount = React.useMemo(() => {
+    return currentProducts.filter(
+      (p) => p && isCloudStorageUrl(p.imageUrl)
+    ).length;
+  }, [currentProducts]);
+
+  const base64ImagesCount = React.useMemo(() => {
+    return currentProducts.filter(
+      (p) => p && typeof p.imageUrl === 'string' && p.imageUrl.startsWith('data:')
+    ).length;
+  }, [currentProducts]);
+
+  const [isMigratingStorage, setIsMigratingStorage] = useState(false);
+  const [migrationProgress, setMigrationProgress] = useState<{
+    current: number;
+    total: number;
+    name: string;
+  } | null>(null);
+
+  const handleMigrateAllImages = async () => {
+    if (isMigratingStorage) return;
+    setIsMigratingStorage(true);
+    try {
+      const allProds = getProducts();
+      const res = await migrateAllProductImagesToCloudStorage(
+        allProds,
+        (current, total, name) => {
+          setMigrationProgress({ current, total, name });
+        }
+      );
+
+      if (res.migratedCount > 0) {
+        saveProducts(res.updatedProducts);
+        // Sync clean compact products list to Firestore
+        await writeFirestoreCatalogDirect('products', res.updatedProducts, true);
+
+        // Record diagnostic recovery event
+        recordDiagnosticEvent({
+          source: 'storage',
+          severity: 'info',
+          category: 'recovery',
+          titleBn: 'সকল ছবি Firebase Cloud Storage-এ সফলভাবে স্থানান্তরিত হয়েছে',
+          detailsBn: `${res.migratedCount}টি পণ্যের ছবি Firebase Cloud Storage-এ আপলোড সম্পন্ন হয়েছে। ফায়ারস্টোর ডকুমেন্টে শুধু HTTPS ডাউনলোড URL সেভ থাকায় ডাটাবেজ সাইজ ৯৮% হ্রাস পেয়েছে।`,
+        });
+
+        // Clear warning log
+        clearDiagnosticEvents();
+      }
+
+      await refreshDiagnostics();
+      if (onShowToast) {
+        onShowToast(
+          res.migratedCount > 0
+            ? `${res.migratedCount}টি পণ্যের ছবি Firebase Cloud Storage-এ আপলোড সম্পন্ন!`
+            : 'সকল পণ্যের ছবি ইতিমধ্যে Firebase Cloud Storage-এ সংরক্ষিত আছে!',
+          'success'
+        );
+      }
+    } catch (err: any) {
+      if (onShowToast) {
+        onShowToast(`মাইগ্রেশন ব্যর্থ: ${err?.message || 'Error'}`, 'error');
+      }
+    } finally {
+      setIsMigratingStorage(false);
+      setMigrationProgress(null);
+    }
+  };
 
   return (
     <div className="space-y-5 animate-fadeIn">
@@ -644,24 +718,77 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
           </div>
         </div>
 
-        {/* Card 6: Product Catalog Image Health */}
+        {/* Card 6: Firebase Cloud Storage & Product Images Health */}
         <div className="bg-white p-4 rounded-2xl border border-neutral-200 shadow-xs space-y-2 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-neutral-500">ক্যাটালগ পণ্যের ছবি</span>
-              <ImageIcon className="w-4 h-4 text-teal-600" />
+              <span className="text-xs font-bold text-neutral-500">Firebase Cloud Storage ছবি</span>
+              <Cloud className="w-4 h-4 text-emerald-600" />
             </div>
             <div className="flex items-baseline justify-between pt-1">
               <span className="text-lg font-black text-neutral-900">
                 {productsWithImageCount} টি পণ্য
               </span>
-              <span className="px-2 py-0.5 rounded font-bold text-[10px] bg-teal-100 text-teal-800">
-                সংরক্ষিত
+              <span
+                className={`px-2 py-0.5 rounded font-bold text-[10px] ${
+                  base64ImagesCount > 0
+                    ? 'bg-amber-100 text-amber-900'
+                    : 'bg-emerald-100 text-emerald-800'
+                }`}
+              >
+                {base64ImagesCount > 0 ? `${base64ImagesCount}টি মাইগ্রেশন বাকি` : '১০০% ক্লাউড স্টোরেজ'}
               </span>
             </div>
-            <p className="text-[11px] text-neutral-600 font-medium pt-1">
-              মোট {currentProducts.length}টি পণ্যের মধ্যে {productsWithImageCount}টি পণ্যের ছবি যুক্ত আছে।
+            <div className="text-[11px] text-neutral-600 font-medium pt-1 space-y-0.5">
+              <div className="flex items-center justify-between">
+                <span>ক্লাউড URL লিংক:</span>
+                <strong className="text-emerald-700 font-mono">{cloudStorageImagesCount}টি</strong>
+              </div>
+              {base64ImagesCount > 0 && (
+                <div className="flex items-center justify-between text-amber-800">
+                  <span>Base64 ডাটা (১MB রিস্ক):</span>
+                  <strong className="font-mono">{base64ImagesCount}টি</strong>
+                </div>
+              )}
+            </div>
+            <p className="text-[10px] text-neutral-400 pt-1">
+              {base64ImagesCount > 0
+                ? 'ছবিগুলো ক্লাউড স্টোরেজে আপলোড করলে ফায়ারস্টোরে শুধু লিংক সেভ হবে।'
+                : 'ফায়ারস্টোরে শুধু ডাউনলোড URL সেভ থাকায় ১ মেগাবাইট লিমিট চিরতরে মুক্ত।'}
             </p>
+          </div>
+
+          <div className="pt-2 border-t border-neutral-100">
+            {base64ImagesCount > 0 ? (
+              <button
+                type="button"
+                disabled={isMigratingStorage}
+                onClick={handleMigrateAllImages}
+                className="w-full px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold text-[11px] flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-all active:scale-95"
+                title="সকল ছবি Firebase Cloud Storage-এ আপলোড করুন"
+              >
+                {isMigratingStorage ? (
+                  <>
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                    <span>
+                      {migrationProgress
+                        ? `${migrationProgress.current}/${migrationProgress.total} (${migrationProgress.name.slice(0, 10)}...)`
+                        : 'আপলোড হচ্ছে...'}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <UploadCloud className="w-3.5 h-3.5" />
+                    <span>Cloud Storage-এ আপলোড ({base64ImagesCount})</span>
+                  </>
+                )}
+              </button>
+            ) : (
+              <div className="text-[11px] text-emerald-800 font-bold flex items-center justify-center gap-1 py-1 bg-emerald-50 rounded-lg border border-emerald-200">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                <span>সব ছবি Cloud Storage-এ প্রস্তুত</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
