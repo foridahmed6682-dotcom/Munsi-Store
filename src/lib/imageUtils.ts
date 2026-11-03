@@ -31,6 +31,69 @@ export function getApproxKbFromDataUrl(dataUrl: string): number {
   return Math.round((dataUrl.length * 0.75) / 1024);
 }
 
+// Helper to decode image file safely using createImageBitmap or Image with timeout
+async function decodeImageSource(file: File): Promise<{ width: number; height: number; draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void }> {
+  // Strategy 1: Modern createImageBitmap (off-main-thread, auto EXIF orientation, fast on mobile)
+  if (typeof createImageBitmap === 'function') {
+    try {
+      const bitmapPromise = createImageBitmap(file);
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Bitmap decode timeout')), 3500)
+      );
+      const bitmap = await Promise.race([bitmapPromise, timeoutPromise]);
+      return {
+        width: bitmap.width,
+        height: bitmap.height,
+        draw: (ctx, w, h) => {
+          ctx.drawImage(bitmap, 0, 0, w, h);
+          try {
+            bitmap.close();
+          } catch {
+            // ignore
+          }
+        },
+      };
+    } catch {
+      // Fallback to Image element
+    }
+  }
+
+  // Strategy 2: HTMLImageElement with strict timeout
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        reject(new Error('ছবি লোড হতে অতিরিক্ত সময় লেগেছে।'));
+      }, 4000);
+
+      image.onload = () => {
+        if (!timedOut) {
+          clearTimeout(timer);
+          resolve(image);
+        }
+      };
+      image.onerror = () => {
+        if (!timedOut) {
+          clearTimeout(timer);
+          reject(new Error('ছবিটি লোড করা যায়নি। ফরম্যাটটি সমর্থিত নাও হতে পারে।'));
+        }
+      };
+      image.src = objectUrl;
+    });
+
+    return {
+      width: img.naturalWidth || img.width || 400,
+      height: img.naturalHeight || img.height || 400,
+      draw: (ctx, w, h) => ctx.drawImage(img, 0, 0, w, h),
+    };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 export async function processImageFile(
   file: File,
   maxDimension: number = 400,
@@ -46,19 +109,11 @@ export async function processImageFile(
     throw new Error('ছবির সাইজ ৩০ মেগাবাইটের (30MB) নিচে হতে হবে');
   }
 
-  // Load image via Object URL for fast, low-memory decoding
-  const objectUrl = URL.createObjectURL(file);
-
   try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const image = new Image();
-      image.onload = () => resolve(image);
-      image.onerror = () => reject(new Error('ছবিটি লোড করা যায়নি। ফাইলটি ক্ষতিগ্রস্থ হতে পারে।'));
-      image.src = objectUrl;
-    });
+    const decoded = await decodeImageSource(file);
 
-    let width = img.naturalWidth || img.width || 400;
-    let height = img.naturalHeight || img.height || 400;
+    let width = decoded.width || 400;
+    let height = decoded.height || 400;
 
     // Constrain aspect ratio to fit inside maxDimension
     if (width > maxDimension || height > maxDimension) {
@@ -77,7 +132,7 @@ export async function processImageFile(
     const ctx = canvas.getContext('2d');
 
     if (!ctx) {
-      throw new Error('ক্যানভাস ইনিশিয়ালাইজ করা যায়নি');
+      throw new Error('ক্যানভাস তৈরি করা যায়নি');
     }
 
     // High quality rendering
@@ -87,7 +142,7 @@ export async function processImageFile(
     // Fill clean white background (prevents dark backgrounds on transparent PNGs)
     ctx.fillStyle = '#FFFFFF';
     ctx.fillRect(0, 0, width, height);
-    ctx.drawImage(img, 0, 0, width, height);
+    decoded.draw(ctx, width, height);
 
     const isWebP = checkWebPSupport();
     const mimeType = isWebP ? 'image/webp' : 'image/jpeg';
@@ -96,8 +151,10 @@ export async function processImageFile(
     let quality = isWebP ? 0.70 : 0.68;
     let dataUrl = canvas.toDataURL(mimeType, quality);
 
-    // Step down quality if exceeding the target low-KB size
-    while (dataUrl.length > maxBase64Length && quality > 0.35) {
+    // Step down quality if exceeding the target low-KB size (with max 5 loop protection)
+    let loopCount = 0;
+    while (dataUrl.length > maxBase64Length && quality > 0.35 && loopCount < 5) {
+      loopCount++;
       quality -= 0.08;
       dataUrl = canvas.toDataURL(mimeType, Math.max(0.32, quality));
     }
@@ -106,44 +163,46 @@ export async function processImageFile(
     if (dataUrl.length > maxBase64Length) {
       const scaleFactor = 0.75;
       const smallerCanvas = document.createElement('canvas');
-      smallerCanvas.width = Math.max(180, Math.round(width * scaleFactor));
-      smallerCanvas.height = Math.max(180, Math.round(height * scaleFactor));
+      smallerCanvas.width = Math.max(160, Math.round(width * scaleFactor));
+      smallerCanvas.height = Math.max(160, Math.round(height * scaleFactor));
       const sCtx = smallerCanvas.getContext('2d');
       if (sCtx) {
         sCtx.imageSmoothingEnabled = true;
-        sCtx.imageSmoothingQuality = 'high';
+        sCtx.imageSmoothingQuality = 'medium';
         sCtx.fillStyle = '#FFFFFF';
         sCtx.fillRect(0, 0, smallerCanvas.width, smallerCanvas.height);
         sCtx.drawImage(canvas, 0, 0, smallerCanvas.width, smallerCanvas.height);
-        dataUrl = smallerCanvas.toDataURL(mimeType, 0.58);
+        dataUrl = smallerCanvas.toDataURL(mimeType, 0.55);
 
         if (dataUrl.length > maxBase64Length) {
-          dataUrl = smallerCanvas.toDataURL(mimeType, 0.42);
+          dataUrl = smallerCanvas.toDataURL(mimeType, 0.40);
         }
       }
     }
 
     return dataUrl;
   } catch (err: any) {
-    // Fallback only if file is small enough (< 100KB)
-    if (file.size <= 100 * 1024) {
-      const directDataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          if (typeof reader.result === 'string') {
-            resolve(reader.result);
-          } else {
-            reject(new Error('ছবি পড়তে সমস্যা হয়েছে'));
-          }
-        };
-        reader.onerror = () => reject(new Error('ছবি রিড করতে সমস্যা হয়েছে'));
-        reader.readAsDataURL(file);
-      });
-      return directDataUrl;
+    // Fallback: Read as Data URL directly if file is reasonably small (< 250KB)
+    if (file.size <= 250 * 1024) {
+      try {
+        const directDataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            if (typeof reader.result === 'string') {
+              resolve(reader.result);
+            } else {
+              reject(new Error('ছবি পড়তে সমস্যা হয়েছে'));
+            }
+          };
+          reader.onerror = () => reject(new Error('ছবি রিড করতে সমস্যা হয়েছে'));
+          reader.readAsDataURL(file);
+        });
+        return directDataUrl;
+      } catch {
+        // Continue to throw error
+      }
     }
     throw new Error(err?.message || 'এই ফরম্যাটের ছবি প্রসেস করা যায়নি। অনুগ্রহ করে JPG বা PNG ছবি দিন।');
-  } finally {
-    URL.revokeObjectURL(objectUrl);
   }
 }
 

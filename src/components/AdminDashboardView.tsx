@@ -568,28 +568,28 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
     setIsUploadingImage(true);
     try {
-      const compressedDataUrl = await processImageFile(file, 400, 30 * 1024);
+      const compressedDataUrl = await processImageFile(file, 400, 28 * 1024);
       const kb = Math.max(1, Math.round((compressedDataUrl.length * 0.75) / 1024));
       
-      // Upload directly to Firebase Cloud Storage so Firestore only stores the download URL!
+      // Set image preview IMMEDIATELY so the user is never stuck on "প্রসেসিং হচ্ছে..."
+      setProdImageUrl(compressedDataUrl);
+      setIsUploadingImage(false);
+      showToast(`ছবি সফলভাবে প্রস্তুত! সাইজ মাত্র ${kb} KB (ডাটা সাশ্রয়ী)`, 'success');
+
+      // Attempt background cloud upload without blocking user UI
       const targetId = editingProduct?.id || `prod-${Date.now()}`;
-      try {
-        const cloudUrl = await uploadImageToCloudStorage(compressedDataUrl, 'products', targetId);
-        setProdImageUrl(cloudUrl);
-        showToast(
-          isCloudStorageUrl(cloudUrl)
-            ? `ছবি Firebase Cloud Storage-এ আপলোড সম্পন্ন! (ফায়ারস্টোরে শুধু লিংক সেভ হবে)`
-            : `ছবি সফলভাবে যুক্ত হয়েছে! সাইজ মাত্র ${kb} KB (ডাটা সাশ্রয়ী)`,
-          'success'
-        );
-      } catch (cloudErr) {
-        // Fallback to compressed Data URL if offline
-        setProdImageUrl(compressedDataUrl);
-        showToast(`ছবি সফলভাবে যুক্ত হয়েছে! সাইজ मात्र ${kb} KB (ডাটা সাশ্রয়ী)`, 'success');
-      }
+      uploadImageToCloudStorage(compressedDataUrl, 'products', targetId)
+        .then((cloudUrl) => {
+          if (isCloudStorageUrl(cloudUrl)) {
+            setProdImageUrl(cloudUrl);
+            showToast('ছবি Firebase Cloud Storage-এ আপলোড সম্পন্ন! (লিংক সংরক্ষিত)', 'success');
+          }
+        })
+        .catch(() => {
+          // Compressed Data URL is already saved, lightweight (<28 KB), and safe for Firestore
+        });
     } catch (err: any) {
-      showToast(err?.message || 'ছবি আপলোড করতে সমস্যা হয়েছে', 'error');
-    } finally {
+      showToast(err?.message || 'ছবি প্রসেস করতে সমস্যা হয়েছে', 'error');
       setIsUploadingImage(false);
     }
   };

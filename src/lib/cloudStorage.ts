@@ -24,9 +24,25 @@ export function isCloudStorageUrl(url: string | null | undefined): boolean {
   return url.startsWith('http://') || url.startsWith('https://') || url.startsWith('/uploads/');
 }
 
+// Helper function to enforce strict timeout so uploads NEVER hang indefinitely
+function withTimeout<T>(promise: Promise<T>, ms: number, errorMsg: string): Promise<T> {
+  let timer: any;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(errorMsg)), ms);
+  });
+  return Promise.race([
+    promise.then((res) => {
+      clearTimeout(timer);
+      return res;
+    }),
+    timeoutPromise,
+  ]);
+}
+
 /**
  * Uploads a Data URL (base64) or File object to Firebase Cloud Storage.
  * Falls back to local server image storage if Firebase Cloud Storage bucket is not yet active.
+ * Has strict 3.5s timeout so it NEVER hangs the UI.
  */
 export async function uploadImageToCloudStorage(
   imageSource: string | File | Blob,
@@ -50,7 +66,7 @@ export async function uploadImageToCloudStorage(
 
   let firebaseStorageError: any = null;
 
-  // ATTEMPT 1: Direct Firebase Cloud Storage Upload
+  // ATTEMPT 1: Direct Firebase Cloud Storage Upload (with 3.5s strict timeout)
   if (storage) {
     try {
       const storageRef = ref(storage, storagePath);
@@ -59,30 +75,42 @@ export async function uploadImageToCloudStorage(
         const match = imageSource.match(/^data:([^;]+);base64,/);
         const contentType = match ? match[1] : 'image/webp';
 
-        await uploadString(storageRef, imageSource, 'data_url', {
-          contentType,
-          cacheControl: 'public, max-age=31536000',
-        });
+        await withTimeout(
+          uploadString(storageRef, imageSource, 'data_url', {
+            contentType,
+            cacheControl: 'public, max-age=31536000',
+          }),
+          3500,
+          'Firebase Cloud Storage upload timed out'
+        );
       } else if (imageSource instanceof File || imageSource instanceof Blob) {
-        await uploadBytes(storageRef, imageSource, {
-          contentType: imageSource.type || 'image/webp',
-          cacheControl: 'public, max-age=31536000',
-        });
+        await withTimeout(
+          uploadBytes(storageRef, imageSource, {
+            contentType: imageSource.type || 'image/webp',
+            cacheControl: 'public, max-age=31536000',
+          }),
+          3500,
+          'Firebase Cloud Storage upload timed out'
+        );
       }
 
-      const downloadUrl = await getDownloadURL(storageRef);
+      const downloadUrl = await withTimeout(
+        getDownloadURL(storageRef),
+        2500,
+        'Firebase Storage getDownloadURL timed out'
+      );
       console.log(`[Cloud Storage] Successfully uploaded to Firebase Storage -> ${downloadUrl.slice(0, 60)}...`);
       return downloadUrl;
     } catch (err: any) {
       firebaseStorageError = err;
-      console.warn(`[Cloud Storage] Firebase direct upload failed:`, err?.message || err);
+      console.warn(`[Cloud Storage] Firebase direct upload bypassed/failed:`, err?.message || err);
     }
   }
 
-  // ATTEMPT 2: Server Storage Bridge Fallback (/api/images/upload)
+  // ATTEMPT 2: Server Storage Bridge Fallback (/api/images/upload) (with 3s strict timeout)
   if (typeof imageSource === 'string' && imageSource.startsWith('data:')) {
     try {
-      const res = await fetch('/api/images/upload', {
+      const fetchPromise = fetch('/api/images/upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -90,6 +118,8 @@ export async function uploadImageToCloudStorage(
           customId: safeId,
         }),
       });
+
+      const res = await withTimeout(fetchPromise, 3000, 'Server image upload timed out');
 
       if (res.ok) {
         const data = await res.json();
@@ -103,7 +133,7 @@ export async function uploadImageToCloudStorage(
     }
   }
 
-  // If both failed, throw error with clear details
+  // If both failed, throw error with clear details so caller can gracefully use compressed Data URL
   const errMsg = firebaseStorageError?.message || 'Firebase Storage বাকেট এখনও সক্রিয় করা হয়নি।';
   throw new Error(errMsg);
 }
@@ -129,12 +159,42 @@ export async function migrateAllProductImagesToCloudStorage(
     return { updatedProducts: products, migratedCount: 0, failedCount: 0, bucketNeedsActivation: false };
   }
 
-  let migratedCount = 0;
+  // Pre-flight check on the first item to avoid looping through 75 items if storage is disabled
+  let preflightWorks = false;
+  try {
+    const testProd = needsMigration[0];
+    const testUrl = await uploadImageToCloudStorage(testProd.imageUrl!, 'products', testProd.id);
+    if (isCloudStorageUrl(testUrl)) {
+      preflightWorks = true;
+    }
+  } catch (err: any) {
+    console.warn('[Cloud Storage Migration] Preflight check failed:', err?.message || err);
+    return {
+      updatedProducts: products,
+      migratedCount: 0,
+      failedCount: needsMigration.length,
+      bucketNeedsActivation: true,
+    };
+  }
+
+  let migratedCount = preflightWorks ? 1 : 0;
   let failedCount = 0;
   let bucketNeedsActivation = false;
   const updatedProducts = [...products];
 
-  for (let i = 0; i < needsMigration.length; i++) {
+  // If preflight succeeded for product 0, update it in updatedProducts
+  if (preflightWorks && needsMigration[0]) {
+    const firstIdx = updatedProducts.findIndex((p) => p.id === needsMigration[0].id);
+    if (firstIdx >= 0) {
+      const cleanUrl = await uploadImageToCloudStorage(needsMigration[0].imageUrl!, 'products', needsMigration[0].id).catch(() => null);
+      if (cleanUrl && isCloudStorageUrl(cleanUrl)) {
+        updatedProducts[firstIdx] = { ...updatedProducts[firstIdx], imageUrl: cleanUrl };
+      }
+    }
+  }
+
+  const startIndex = preflightWorks ? 1 : 0;
+  for (let i = startIndex; i < needsMigration.length; i++) {
     const prod = needsMigration[i];
     if (onProgress) {
       onProgress(i + 1, needsMigration.length, prod.banglaName || prod.name);
@@ -146,7 +206,6 @@ export async function migrateAllProductImagesToCloudStorage(
 
       // Verify that the returned URL is an actual clean link and NOT the original Base64
       if (isCloudStorageUrl(cleanUrl)) {
-        // Also ensure original image stays in local IndexedDB for zero-latency offline display
         if (prod.imageUrl && prod.imageUrl.startsWith('data:')) {
           await saveProductImageToIndexedDB(prod.id, prod.imageUrl).catch(() => {});
         }
@@ -166,12 +225,14 @@ export async function migrateAllProductImagesToCloudStorage(
     } catch (err: any) {
       console.warn(`Failed to migrate product image ${prod.banglaName}:`, err);
       failedCount++;
-      if (err?.message?.includes('404') || err?.message?.includes('unknown') || err?.message?.includes('not found')) {
+      if (err?.message?.includes('404') || err?.message?.includes('unknown') || err?.message?.includes('timed out')) {
         bucketNeedsActivation = true;
+        // Don't keep hammering if storage is unreachable
+        break;
       }
     }
 
-    // Small delay between uploads to avoid overloading network
+    // Small delay between uploads
     await new Promise((r) => setTimeout(r, 60));
   }
 
