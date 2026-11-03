@@ -454,25 +454,27 @@ export async function writeFirestoreCatalogDirect(catalogKey: string, items: any
   if (!items || !Array.isArray(items)) return;
 
   const performWrite = async (itemsToWrite: any[]) => {
-    let serialized = JSON.stringify(itemsToWrite);
     // Protect against Firestore 1MB single-document limit (1,048,576 bytes)
-    // If serialized JSON is over 550 KB, strip large raw Base64 data URLs from the catalog summary
-    // (Remote Cloud Storage HTTPS URLs are preserved, and original images remain safely in IndexedDB)
-    if (serialized.length > 550000 && catalogKey === 'products') {
-      const compacted = itemsToWrite.map((item) => {
+    // In the single catalog summary document, NEVER dump large Base64 strings.
+    // Remote Cloud Storage HTTPS URLs (https://firebasestorage.googleapis.com/...) are preserved.
+    // Local IndexedDB preserves full high-resolution images offline for zero-latency UI rendering.
+    let sanitized = itemsToWrite;
+    if (catalogKey === 'products') {
+      sanitized = itemsToWrite.map((item) => {
         if (item && typeof item.imageUrl === 'string' && item.imageUrl.startsWith('data:')) {
           return { ...item, imageUrl: '' };
         }
         return item;
       });
-      serialized = JSON.stringify(compacted);
     }
 
+    const serialized = JSON.stringify(sanitized);
     const nowIso = new Date().toISOString();
 
-    // Single REST PATCH (no duplicate SDK setDoc that queues infinite retries when quota is reached)
+    // Single REST PATCH with explicit updateMask (avoids schema conflicts & payload overflow)
     try {
-      const res = await fetch(`${FIRESTORE_BASE_URL}/settings/cloud_catalog_${catalogKey}?key=${FIRESTORE_API_KEY}`, {
+      const patchUrl = `${FIRESTORE_BASE_URL}/settings/cloud_catalog_${catalogKey}?updateMask.fieldPaths=itemsJson&updateMask.fieldPaths=updatedAt&key=${FIRESTORE_API_KEY}`;
+      const res = await fetch(patchUrl, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -485,13 +487,15 @@ export async function writeFirestoreCatalogDirect(catalogKey: string, items: any
       if (res.status === 429) {
         tripFirestoreQuotaCircuitBreaker({ status: 429, message: `PATCH settings/cloud_catalog_${catalogKey} -> 429 Write rate limit` }, 'write');
       } else if (res.status === 400) {
+        const errDetails = await res.text().catch(() => '');
+        console.warn(`[Firestore Catalog] 400 error for ${catalogKey}:`, errDetails);
         recordDiagnosticEvent({
           source: 'firestore',
           severity: 'warning',
           category: 'payload_1mb',
           titleBn: `ফায়ারবেজ ক্যাটালগ (${catalogKey}) ১ মেগাবাইট লিমিট সতর্কতা`,
-          detailsBn: 'ফায়ারবেজের ডকুমেন্ট সাইজ লিমিট অতিক্রম করায় বড় ছবিগুলো কম্প্যাক্ট করা হচ্ছে। Firebase Cloud Storage মাইগ্রেশন সম্পন্ন করুন।',
-          technicalDetails: `PATCH settings/cloud_catalog_${catalogKey} returned HTTP 400`,
+          detailsBn: 'ফায়ারবেজের ডকুমেন্ট সাইজ ১MB অতিক্রম করায় ছবিগুলো অটো-কম্প্যাক্ট করা হয়েছে।',
+          technicalDetails: `PATCH settings/cloud_catalog_${catalogKey} returned HTTP 400: ${errDetails.slice(0, 100)}`,
         });
       }
     } catch {

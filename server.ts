@@ -181,10 +181,10 @@ async function writeFirestoreCatalogViaPatch(catalogKey: string, items: any[]): 
   try {
     let serialized = JSON.stringify(items);
     // Protect against Firestore 1MB (1,048,576 bytes) single-document limit
-    if (serialized.length > 650000) {
+    if (serialized.length > 550000) {
       if (catalogKey === 'products') {
         const compacted = items.map((item) => {
-          if (item && typeof item.imageUrl === 'string' && item.imageUrl.startsWith('data:') && item.imageUrl.length > 35000) {
+          if (item && typeof item.imageUrl === 'string' && item.imageUrl.startsWith('data:')) {
             return { ...item, imageUrl: '' };
           }
           return item;
@@ -521,6 +521,35 @@ async function startServer() {
   // Health check endpoint
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  // Direct Image Storage Upload API (Converts Base64 to clean permanent static image file)
+  app.post('/api/images/upload', (req, res) => {
+    try {
+      const { dataUrl, filename, customId } = req.body || {};
+      if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) {
+        return res.status(400).json({ error: 'সঠিক image dataUrl আবশ্যক' });
+      }
+
+      const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+      if (!match) {
+        return res.status(400).json({ error: 'অবৈধ Base64 ফরম্যাট' });
+      }
+
+      const mimeType = match[1];
+      const base64Data = match[2];
+      const ext = mimeType.includes('png') ? 'png' : mimeType.includes('jpeg') || mimeType.includes('jpg') ? 'jpg' : 'webp';
+      const safeId = (customId || filename || `img-${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, '_');
+      const finalFileName = `${safeId}.${ext}`;
+      const targetPath = path.join(UPLOADS_DIR, finalFileName);
+
+      fs.writeFileSync(targetPath, Buffer.from(base64Data, 'base64'));
+      const publicUrl = `/uploads/${finalFileName}`;
+      return res.json({ success: true, url: publicUrl });
+    } catch (err: any) {
+      console.warn('⚠️ Server image save failed:', err);
+      return res.status(500).json({ error: err.message || 'Image save failed' });
+    }
   });
 
   // Persistent Server Database Mirror API (ensures data is always available across devices even during Firebase quota limits)

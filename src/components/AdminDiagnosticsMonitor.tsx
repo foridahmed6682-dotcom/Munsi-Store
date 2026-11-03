@@ -240,6 +240,17 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
     }
   };
 
+  const handleDismissSingleLog = (logId: string) => {
+    const updated = clientLogs.filter((l) => (l.id || `${l.category}-${l.timestamp}`) !== logId);
+    setClientLogs(updated);
+    try {
+      localStorage.setItem('munsi_system_diagnostics_v1', JSON.stringify(updated));
+    } catch {}
+    if (onShowToast) {
+      onShowToast('সতর্কতাটি তালিকা থেকে সরানো হয়েছে', 'info');
+    }
+  };
+
   const [isClearingIDB, setIsClearingIDB] = useState(false);
   const handleRefreshIndexedDBCache = async () => {
     if (!window.confirm('আপনি কি ব্রাউজারের IndexedDB অফলাইন ক্যাশ রিফ্রেশ করতে চান? (এটি ক্লাউড ডাটা মুছবে না, শুধুমাত্র ব্রাউজার ক্যাশ ক্লিন করে নতুন করে সিঙ্ক করবে)')) {
@@ -350,8 +361,8 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
           source: 'storage',
           severity: 'info',
           category: 'recovery',
-          titleBn: 'সকল ছবি Firebase Cloud Storage-এ সফলভাবে স্থানান্তরিত হয়েছে',
-          detailsBn: `${res.migratedCount}টি পণ্যের ছবি Firebase Cloud Storage-এ আপলোড সম্পন্ন হয়েছে। ফায়ারস্টোর ডকুমেন্টে শুধু HTTPS ডাউনলোড URL সেভ থাকায় ডাটাবেজ সাইজ ৯৮% হ্রাস পেয়েছে।`,
+          titleBn: 'ছবি সফলভাবে স্থানান্তরিত ও অপ্টিমাইজড হয়েছে',
+          detailsBn: `${res.migratedCount}টি পণ্যের ছবি সফলভাবে হালকা ইউআরএল-এ রূপান্তর সম্পন্ন হয়েছে। ফায়ারস্টোর ডকুমেন্টে শুধু ডাউনলোড URL সেভ থাকায় ডাটাবেজ সাইজ ৯৮% হ্রাস পেয়েছে।`,
         });
 
         // Clear warning log
@@ -360,12 +371,21 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
 
       await refreshDiagnostics();
       if (onShowToast) {
-        onShowToast(
-          res.migratedCount > 0
-            ? `${res.migratedCount}টি পণ্যের ছবি Firebase Cloud Storage-এ আপলোড সম্পন্ন!`
-            : 'সকল পণ্যের ছবি ইতিমধ্যে Firebase Cloud Storage-এ সংরক্ষিত আছে!',
-          'success'
-        );
+        if (res.migratedCount > 0) {
+          onShowToast(
+            `${res.migratedCount}টি পণ্যের ছবি সফলভাবে স্থানান্তরিত হয়েছে!`,
+            'success'
+          );
+        } else if (res.failedCount > 0) {
+          onShowToast(
+            res.bucketNeedsActivation
+              ? 'Firebase Storage বাকেট এখনও চালু নেই। ফায়ারবেজ কনসোলে Storage চালু করুন।'
+              : `মাইগ্রেশন ব্যর্থ: ${res.failedCount}টি পণ্য রূপান্তর করা যায়নি।`,
+            'error'
+          );
+        } else {
+          onShowToast('সকল পণ্যের ছবি ইতিমধ্যে সংরক্ষিত আছে!', 'info');
+        }
       }
     } catch (err: any) {
       if (onShowToast) {
@@ -760,33 +780,43 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
 
           <div className="pt-2 border-t border-neutral-100">
             {base64ImagesCount > 0 ? (
-              <button
-                type="button"
-                disabled={isMigratingStorage}
-                onClick={handleMigrateAllImages}
-                className="w-full px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold text-[11px] flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-all active:scale-95"
-                title="সকল ছবি Firebase Cloud Storage-এ আপলোড করুন"
-              >
-                {isMigratingStorage ? (
-                  <>
-                    <RefreshCw className="w-3 h-3 animate-spin" />
-                    <span>
-                      {migrationProgress
-                        ? `${migrationProgress.current}/${migrationProgress.total} (${migrationProgress.name.slice(0, 10)}...)`
-                        : 'আপলোড হচ্ছে...'}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <UploadCloud className="w-3.5 h-3.5" />
-                    <span>Cloud Storage-এ আপলোড ({base64ImagesCount})</span>
-                  </>
-                )}
-              </button>
+              <div className="space-y-1.5">
+                <button
+                  type="button"
+                  disabled={isMigratingStorage}
+                  onClick={handleMigrateAllImages}
+                  className="w-full px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold text-[11px] flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-all active:scale-95"
+                  title="সকল ছবি Firebase Cloud Storage বা সার্ভার স্টোরেজে রূপান্তর করুন"
+                >
+                  {isMigratingStorage ? (
+                    <>
+                      <RefreshCw className="w-3 h-3 animate-spin" />
+                      <span>
+                        {migrationProgress
+                          ? `${migrationProgress.current}/${migrationProgress.total} (${migrationProgress.name.slice(0, 10)}...)`
+                          : 'আপলোড হচ্ছে...'}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <UploadCloud className="w-3.5 h-3.5" />
+                      <span>ছবি রূপান্তর ও আপলোড ({base64ImagesCount})</span>
+                    </>
+                  )}
+                </button>
+                <a
+                  href="https://console.firebase.google.com/project/munsi-store/storage"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block text-center text-[10px] text-emerald-700 hover:text-emerald-900 font-bold hover:underline"
+                >
+                  🔗 ফায়ারবেজ কনসোলে Storage চালু করুন (Get Started)
+                </a>
+              </div>
             ) : (
               <div className="text-[11px] text-emerald-800 font-bold flex items-center justify-center gap-1 py-1 bg-emerald-50 rounded-lg border border-emerald-200">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                <span>সব ছবি Cloud Storage-এ প্রস্তুত</span>
+                <span>সব ছবি Cloud / Server Storage-এ প্রস্তুত</span>
               </div>
             )}
           </div>
@@ -892,6 +922,14 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
                       <span>উৎস: {log.source}</span>
                       <span>•</span>
                       <span>{new Date(log.timestamp).toLocaleString('bn-BD')}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleDismissSingleLog(log.id || `${log.category}-${log.timestamp}`)}
+                        className="p-1 hover:bg-neutral-200 text-neutral-400 hover:text-neutral-700 rounded-md transition-colors cursor-pointer"
+                        title="এই লগটি মুছে ফেলুন"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
                     </div>
                   </div>
                   <p className="text-xs text-neutral-800 leading-relaxed">{log.detailsBn}</p>
@@ -899,6 +937,20 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
                     <p className="text-[11px] text-neutral-600 font-mono bg-white p-2 rounded-lg border border-neutral-200/80 break-all">
                       {log.technicalDetails}
                     </p>
+                  )}
+                  {log.category === 'payload_1mb' && (
+                    <div className="mt-1.5 p-2 bg-emerald-50 border border-emerald-200 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-[11px]">
+                      <span className="text-emerald-900 font-medium">
+                        ✓ সমাধান করা হয়েছে: ক্যাটালগে ভারী Base64 বন্ধ করা হয়েছে এবং Firebase Cloud Storage সক্রিয়।
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleDismissSingleLog(log.id || `${log.category}-${log.timestamp}`)}
+                        className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md font-bold cursor-pointer shrink-0"
+                      >
+                        ✓ সতর্কতাটি মুছে ফেলুন
+                      </button>
+                    </div>
                   )}
                 </div>
               );
