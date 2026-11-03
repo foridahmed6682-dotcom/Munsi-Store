@@ -58,7 +58,9 @@ import {
   saveCategories,
   getRoutes,
   saveRoutes,
+  getDueCollections,
   saveDueCollections,
+  getDailyExpenses,
   saveDailyExpenses,
   recordDiagnosticEvent,
 } from './storage';
@@ -551,34 +553,31 @@ export async function removeItemFromFirebaseCatalog(catalogKey: string, idValue:
   await writeFirestoreCatalogDirect(catalogKey, filtered, false);
 }
 
-// Server Mirror Helpers (Protects data across devices even when Firebase Free Daily Read Quota is reached)
-let isServerBackendAvailable: boolean | null = null;
+// Server Mirror Helpers (Protects data across devices and guarantees 3-way synchronization)
+let serverBackendRetryAfter = 0;
 
 export async function syncItemToServerMirror(upsertCollection: string, item: any) {
-  if (isServerBackendAvailable === false) return;
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+  if (Date.now() < serverBackendRetryAfter) return;
   try {
     const res = await fetch('/api/db/mirror', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ upsertCollection, item }),
     });
-    if (res.ok) {
-      const cType = res.headers.get('content-type') || '';
-      if (!cType.includes('application/json')) {
-        isServerBackendAvailable = false;
-      } else {
-        isServerBackendAvailable = true;
-      }
+    if (!res.ok) {
+      serverBackendRetryAfter = Date.now() + 10000;
     } else {
-      isServerBackendAvailable = false;
+      serverBackendRetryAfter = 0;
     }
   } catch {
-    isServerBackendAvailable = false;
+    serverBackendRetryAfter = Date.now() + 10000;
   }
 }
 
 export async function deleteItemFromServerMirror(deleteCollection: string, deleteId: string) {
-  if (isServerBackendAvailable === false) return;
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+  if (Date.now() < serverBackendRetryAfter) return;
   try {
     const res = await fetch('/api/db/mirror', {
       method: 'POST',
@@ -586,10 +585,12 @@ export async function deleteItemFromServerMirror(deleteCollection: string, delet
       body: JSON.stringify({ deleteCollection, deleteId }),
     });
     if (!res.ok) {
-      isServerBackendAvailable = false;
+      serverBackendRetryAfter = Date.now() + 10000;
+    } else {
+      serverBackendRetryAfter = 0;
     }
   } catch {
-    isServerBackendAvailable = false;
+    serverBackendRetryAfter = Date.now() + 10000;
   }
 }
 
@@ -613,34 +614,28 @@ export async function pushBulkDataToServerMirror(payload: {
       body: JSON.stringify(payload),
     });
     if (res.ok) {
-      const cType = res.headers.get('content-type') || '';
-      if (!cType.includes('application/json')) {
-        isServerBackendAvailable = false;
-      } else {
-        isServerBackendAvailable = true;
-      }
+      serverBackendRetryAfter = 0;
     } else {
-      isServerBackendAvailable = false;
+      serverBackendRetryAfter = Date.now() + 10000;
     }
   } catch {
-    isServerBackendAvailable = false;
+    serverBackendRetryAfter = Date.now() + 10000;
   }
 }
 
 export async function fetchServerDatabaseMirror(): Promise<any | null> {
-  if (isServerBackendAvailable !== false) {
+  if (Date.now() >= serverBackendRetryAfter) {
     try {
       const res = await fetch('/api/db/mirror');
       if (res.ok) {
         const cType = res.headers.get('content-type') || '';
         if (cType.includes('application/json')) {
-          isServerBackendAvailable = true;
+          serverBackendRetryAfter = 0;
           return await res.json();
         }
       }
-      isServerBackendAvailable = false;
     } catch {
-      isServerBackendAvailable = false;
+      serverBackendRetryAfter = Date.now() + 10000;
     }
   }
 
@@ -1209,7 +1204,6 @@ export async function updateUserRoleAndRoute(uid: string, role: UserRole, assign
 
 // Real-time Cloud Sync Listeners (Server Mirror + Direct Firebase Read + Local Merge Protection, zero redundant writes)
 export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
-  const path = 'shops';
   const syncFromLocalMirror = async (extraShops: Shop[] = []) => {
     if (isRestoreCooldownActive()) return;
     const mirror = await fetchServerDatabaseMirror();
@@ -1229,9 +1223,11 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
   // Immediate local/mirror sync on mount
   syncFromLocalMirror();
 
-  let unsub = () => {};
+  const unsubs: (() => void)[] = [];
+
   if (!isFirestoreQuotaExhausted()) {
-    unsub = onSnapshot(
+    // 1. Live catalog listener (compact single document)
+    const unsubCatalog = onSnapshot(
       doc(db, 'settings', 'cloud_catalog_shops'),
       (snapshot) => {
         if (isRestoreCooldownActive() || !snapshot.exists()) return;
@@ -1242,8 +1238,9 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
             const deletedIds = getDeletedShopIds();
             const clean = rawShops.filter((s) => !deletedIds.has(s.id));
             const merged = mergeLocalAndCloud(getShops(), clean, deletedIds, 'id', true);
-            saveShops(merged);
-            onData(merged);
+            saveShops(merged); // Saves to IndexedDB
+            onData(merged);    // Updates UI
+            pushBulkDataToServerMirror({ shops: merged }).catch(() => {}); // Saves to Server Disk Mirror
           }
         } catch {
           syncFromLocalMirror();
@@ -1254,6 +1251,36 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
         syncFromLocalMirror();
       }
     );
+    unsubs.push(unsubCatalog);
+
+    // 2. Real-time collection listener (catches any direct shop doc updates, dues change, etc.)
+    try {
+      const unsubCol = onSnapshot(
+        collection(db, 'shops'),
+        (colSnap) => {
+          if (isRestoreCooldownActive() || colSnap.empty) return;
+          const directShops: Shop[] = [];
+          colSnap.forEach((d) => {
+            const s = d.data() as Shop;
+            if (s && s.id) directShops.push(s);
+          });
+          if (directShops.length > 0) {
+            const deletedIds = getDeletedShopIds();
+            const clean = directShops.filter((s) => !deletedIds.has(s.id));
+            const merged = mergeLocalAndCloud(getShops(), clean, deletedIds, 'id', true);
+            saveShops(merged);
+            onData(merged);
+            pushBulkDataToServerMirror({ shops: merged }).catch(() => {});
+          }
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.GET, 'shops');
+        }
+      );
+      unsubs.push(unsubCol);
+    } catch {
+      // ignore
+    }
   }
 
   // Periodic fallback sync ONLY hits our local Express server mirror (0 Firestore cost!)
@@ -1265,7 +1292,9 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
 
   return () => {
     clearInterval(timer);
-    unsub();
+    unsubs.forEach((fn) => {
+      try { fn(); } catch {}
+    });
   };
 }
 
@@ -1289,9 +1318,11 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
   // Immediate local/mirror sync on mount
   syncFromLocalMirror();
 
-  let unsub = () => {};
+  const unsubs: (() => void)[] = [];
+
   if (!isFirestoreQuotaExhausted()) {
-    unsub = onSnapshot(
+    // 1. Live catalog listener
+    const unsubCatalog = onSnapshot(
       doc(db, 'settings', 'cloud_catalog_products'),
       (snapshot) => {
         if (isRestoreCooldownActive() || !snapshot.exists()) return;
@@ -1302,8 +1333,9 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
             const deletedIds = getDeletedProductIds();
             const clean = rawProducts.filter((p) => !deletedIds.has(p.id));
             const merged = mergeLocalAndCloud(getProducts(), clean, deletedIds, 'id', true);
-            saveProducts(merged);
-            onData(merged);
+            saveProducts(merged); // Saves to IndexedDB
+            onData(merged);       // Updates UI
+            pushBulkDataToServerMirror({ products: merged }).catch(() => {}); // Saves to Server Disk Mirror
           }
         } catch {
           syncFromLocalMirror();
@@ -1314,6 +1346,36 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
         syncFromLocalMirror();
       }
     );
+    unsubs.push(unsubCatalog);
+
+    // 2. Real-time collection listener
+    try {
+      const unsubCol = onSnapshot(
+        collection(db, 'products'),
+        (colSnap) => {
+          if (isRestoreCooldownActive() || colSnap.empty) return;
+          const directProds: Product[] = [];
+          colSnap.forEach((d) => {
+            const p = d.data() as Product;
+            if (p && p.id) directProds.push(p);
+          });
+          if (directProds.length > 0) {
+            const deletedIds = getDeletedProductIds();
+            const clean = directProds.filter((p) => !deletedIds.has(p.id));
+            const merged = mergeLocalAndCloud(getProducts(), clean, deletedIds, 'id', true);
+            saveProducts(merged);
+            onData(merged);
+            pushBulkDataToServerMirror({ products: merged }).catch(() => {});
+          }
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.GET, 'products');
+        }
+      );
+      unsubs.push(unsubCol);
+    } catch {
+      // ignore
+    }
   }
 
   // Periodic fallback sync ONLY hits our local Express server mirror (0 Firestore cost!)
@@ -1325,7 +1387,9 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
 
   return () => {
     clearInterval(timer);
-    unsub();
+    unsubs.forEach((fn) => {
+      try { fn(); } catch {}
+    });
   };
 }
 
@@ -1351,9 +1415,11 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
   // Immediate local/mirror sync on mount
   syncFromLocalMirror();
 
-  let unsub = () => {};
+  const unsubs: (() => void)[] = [];
+
   if (!isFirestoreQuotaExhausted()) {
-    unsub = onSnapshot(
+    // 1. Live catalog listener
+    const unsubCatalog = onSnapshot(
       doc(db, 'settings', 'cloud_catalog_orders'),
       (snapshot) => {
         if (isRestoreCooldownActive() || !snapshot.exists()) return;
@@ -1366,8 +1432,9 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
             const merged = mergeLocalAndCloud(getOrders(), clean, deletedIds, 'id', true).sort(
               (a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime()
             );
-            saveOrders(merged);
-            onData(merged);
+            saveOrders(merged); // Saves to IndexedDB
+            onData(merged);     // Updates UI
+            pushBulkDataToServerMirror({ orders: merged }).catch(() => {}); // Saves to Server Disk Mirror
           }
         } catch {
           syncFromLocalMirror();
@@ -1378,6 +1445,38 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
         syncFromLocalMirror();
       }
     );
+    unsubs.push(unsubCatalog);
+
+    // 2. Real-time collection listener (catches newly booked orders or status edits instantly across devices)
+    try {
+      const unsubCol = onSnapshot(
+        collection(db, 'orders'),
+        (colSnap) => {
+          if (isRestoreCooldownActive() || colSnap.empty) return;
+          const directOrders: Order[] = [];
+          colSnap.forEach((d) => {
+            const ord = d.data() as Order;
+            if (ord && ord.id) directOrders.push(ord);
+          });
+          if (directOrders.length > 0) {
+            const deletedIds = getDeletedOrderIds();
+            const clean = directOrders.filter((o) => !deletedIds.has(o.id));
+            const merged = mergeLocalAndCloud(getOrders(), clean, deletedIds, 'id', true).sort(
+              (a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime()
+            );
+            saveOrders(merged);
+            onData(merged);
+            pushBulkDataToServerMirror({ orders: merged }).catch(() => {});
+          }
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.GET, 'orders');
+        }
+      );
+      unsubs.push(unsubCol);
+    } catch {
+      // ignore
+    }
   }
 
   // Periodic fallback sync ONLY hits our local Express server mirror (0 Firestore cost!)
@@ -1389,7 +1488,9 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
 
   return () => {
     clearInterval(timer);
-    unsub();
+    unsubs.forEach((fn) => {
+      try { fn(); } catch {}
+    });
   };
 }
 
@@ -1588,6 +1689,7 @@ export function subscribeToCloudCategories(onData: (categories: Category[]) => v
           const merged = mergeLocalAndCloud(getCategories(), clean, deletedIds, 'id', true);
           saveCategories(merged);
           onData(merged);
+          pushBulkDataToServerMirror({ categories: merged }).catch(() => {});
         }
       } catch {
         pollFirebaseDirect();
@@ -1680,6 +1782,7 @@ export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
           const merged = mergeLocalAndCloud(getRoutes(), clean, deletedIds, 'id', true);
           saveRoutes(merged);
           onData(merged);
+          pushBulkDataToServerMirror({ routes: merged }).catch(() => {});
         }
       } catch {
         pollFirebaseDirect();
@@ -1956,96 +2059,165 @@ export async function saveBusinessInfoToCloud(info: BusinessInfo) {
   }
 }
 
-// Due Collections Cloud Subscription
+// Due Collections Cloud Subscription (3-Way Real-Time Sync)
 export function subscribeToCloudDueCollections(onData: (collections: DueCollectionRecord[]) => void) {
-  const path = 'dueCollections';
-  const pollFirebaseDirect = async () => {
+  const syncFromLocalMirror = async (extraCols: DueCollectionRecord[] = []) => {
     if (isRestoreCooldownActive()) return;
     const mirror = await fetchServerDatabaseMirror();
     const mirrorCols: DueCollectionRecord[] = Array.isArray(mirror?.dueCollections) ? mirror.dueCollections : [];
-    const directCols = isFirestoreQuotaExhausted()
+    const directCols = isFirestoreWriteQuotaExhausted()
       ? []
       : await readFirestoreCatalogDirect<DueCollectionRecord>('dueCollections');
-    const combined = mergeLocalAndCloud(mirrorCols, directCols, new Set());
+    const combined = mergeLocalAndCloud(mirrorCols, [...directCols, ...extraCols], new Set());
     const sorted = [...combined].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     onData(sorted);
   };
 
-  if (isFirestoreQuotaExhausted()) {
-    pollFirebaseDirect();
-    return () => {};
+  syncFromLocalMirror();
+
+  const unsubs: (() => void)[] = [];
+
+  if (!isFirestoreQuotaExhausted()) {
+    // 1. Live catalog listener
+    const unsubCatalog = onSnapshot(
+      doc(db, 'settings', 'cloud_catalog_dueCollections'),
+      (snapshot) => {
+        if (isRestoreCooldownActive() || !snapshot.exists()) return;
+        try {
+          const data = snapshot.data();
+          if (data && typeof data.itemsJson === 'string') {
+            const list: DueCollectionRecord[] = JSON.parse(data.itemsJson);
+            list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+            saveDueCollections(list); // Saves to IndexedDB
+            onData(list);            // Updates UI
+            pushBulkDataToServerMirror({ dueCollections: list }).catch(() => {}); // Saves to Server Disk Mirror
+          }
+        } catch {
+          syncFromLocalMirror();
+        }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, 'settings/cloud_catalog_dueCollections');
+        syncFromLocalMirror();
+      }
+    );
+    unsubs.push(unsubCatalog);
+
+    // 2. Real-time collection listener (instant payment recording sync across devices)
+    try {
+      const unsubCol = onSnapshot(
+        collection(db, 'dueCollections'),
+        (colSnap) => {
+          if (isRestoreCooldownActive() || colSnap.empty) return;
+          const directCols: DueCollectionRecord[] = [];
+          colSnap.forEach((d) => {
+            const rec = d.data() as DueCollectionRecord;
+            if (rec && rec.id) directCols.push(rec);
+          });
+          if (directCols.length > 0) {
+            const merged = mergeLocalAndCloud(getDueCollections(), directCols, new Set(), 'id', true).sort(
+              (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+            );
+            saveDueCollections(merged);
+            onData(merged);
+            pushBulkDataToServerMirror({ dueCollections: merged }).catch(() => {});
+          }
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.GET, 'dueCollections');
+        }
+      );
+      unsubs.push(unsubCol);
+    } catch {
+      // ignore
+    }
   }
 
-  const unsub = onSnapshot(
-    doc(db, 'settings', 'cloud_catalog_dueCollections'),
-    (snapshot) => {
-      if (isRestoreCooldownActive() || !snapshot.exists()) return;
-      try {
-        const data = snapshot.data();
-        if (data && typeof data.itemsJson === 'string') {
-          const list: DueCollectionRecord[] = JSON.parse(data.itemsJson);
-          list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-          saveDueCollections(list);
-          onData(list);
-        }
-      } catch {
-        pollFirebaseDirect();
-      }
-    },
-    (error) => {
-      handleFirestoreError(error, OperationType.GET, 'settings/cloud_catalog_dueCollections');
-      pollFirebaseDirect();
-    }
-  );
-
   return () => {
-    unsub();
+    unsubs.forEach((fn) => {
+      try { fn(); } catch {}
+    });
   };
 }
 
 // Daily Expenses Cloud Sync (Tool #3)
 export function subscribeToCloudDailyExpenses(onData: (expenses: DailyExpenseRecord[]) => void) {
-  const pollFirebaseDirect = async () => {
+  const syncFromLocalMirror = async (extraExps: DailyExpenseRecord[] = []) => {
     if (isRestoreCooldownActive()) return;
     const mirror = await fetchServerDatabaseMirror();
     const mirrorExps: DailyExpenseRecord[] = Array.isArray(mirror?.dailyExpenses) ? mirror.dailyExpenses : [];
     const directExps = isFirestoreQuotaExhausted()
       ? []
       : await readFirestoreCatalogDirect<DailyExpenseRecord>('dailyExpenses');
-    const combined = mergeLocalAndCloud(mirrorExps, directExps, new Set());
+    const combined = mergeLocalAndCloud(mirrorExps, [...directExps, ...extraExps], new Set());
     const sorted = [...combined].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     onData(sorted);
   };
 
-  if (isFirestoreQuotaExhausted()) {
-    pollFirebaseDirect();
-    return () => {};
+  syncFromLocalMirror();
+
+  const unsubs: (() => void)[] = [];
+
+  if (!isFirestoreQuotaExhausted()) {
+    // 1. Live catalog listener
+    const unsubCatalog = onSnapshot(
+      doc(db, 'settings', 'cloud_catalog_dailyExpenses'),
+      (snapshot) => {
+        if (isRestoreCooldownActive() || !snapshot.exists()) return;
+        try {
+          const data = snapshot.data();
+          if (data && typeof data.itemsJson === 'string') {
+            const list: DailyExpenseRecord[] = JSON.parse(data.itemsJson);
+            list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            saveDailyExpenses(list); // Saves to IndexedDB
+            onData(list);           // Updates UI
+            pushBulkDataToServerMirror({ dailyExpenses: list }).catch(() => {}); // Saves to Server Disk Mirror
+          }
+        } catch {
+          syncFromLocalMirror();
+        }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, 'settings/cloud_catalog_dailyExpenses');
+        syncFromLocalMirror();
+      }
+    );
+    unsubs.push(unsubCatalog);
+
+    // 2. Real-time collection listener
+    try {
+      const unsubCol = onSnapshot(
+        collection(db, 'dailyExpenses'),
+        (colSnap) => {
+          if (isRestoreCooldownActive() || colSnap.empty) return;
+          const directExps: DailyExpenseRecord[] = [];
+          colSnap.forEach((d) => {
+            const exp = d.data() as DailyExpenseRecord;
+            if (exp && exp.id) directExps.push(exp);
+          });
+          if (directExps.length > 0) {
+            const merged = mergeLocalAndCloud(getDailyExpenses(), directExps, new Set(), 'id', true).sort(
+              (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+            );
+            saveDailyExpenses(merged);
+            onData(merged);
+            pushBulkDataToServerMirror({ dailyExpenses: merged }).catch(() => {});
+          }
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.GET, 'dailyExpenses');
+        }
+      );
+      unsubs.push(unsubCol);
+    } catch {
+      // ignore
+    }
   }
 
-  const unsub = onSnapshot(
-    doc(db, 'settings', 'cloud_catalog_dailyExpenses'),
-    (snapshot) => {
-      if (isRestoreCooldownActive() || !snapshot.exists()) return;
-      try {
-        const data = snapshot.data();
-        if (data && typeof data.itemsJson === 'string') {
-          const list: DailyExpenseRecord[] = JSON.parse(data.itemsJson);
-          list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-          saveDailyExpenses(list);
-          onData(list);
-        }
-      } catch {
-        pollFirebaseDirect();
-      }
-    },
-    (error) => {
-      handleFirestoreError(error, OperationType.GET, 'settings/cloud_catalog_dailyExpenses');
-      pollFirebaseDirect();
-    }
-  );
-
   return () => {
-    unsub();
+    unsubs.forEach((fn) => {
+      try { fn(); } catch {}
+    });
   };
 }
 
