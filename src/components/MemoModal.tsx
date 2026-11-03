@@ -513,41 +513,41 @@ export const MemoModal: React.FC<MemoModalProps> = ({
                   <tbody className="divide-y divide-neutral-200 bg-white">
                     {editItems.map((it, idx) => (
                       <tr key={idx}>
-                        <td className="p-1.5">
+                        <td className="p-2">
                           <input
                             type="text"
                             value={it.productName}
                             onChange={(e) => handleItemChange(idx, 'productName', e.target.value)}
-                            className="w-full px-2 py-1 border border-neutral-200 rounded font-medium"
+                            className="w-full px-2.5 py-1.5 border border-neutral-300 rounded-lg text-sm sm:text-base font-bold text-neutral-900"
                           />
                         </td>
-                        <td className="p-1.5">
+                        <td className="p-2">
                           <input
                             type="number"
                             min="1"
                             value={it.quantity}
                             onChange={(e) => handleItemChange(idx, 'quantity', e.target.value)}
-                            className="w-full px-2 py-1 border border-neutral-200 rounded text-center font-bold"
+                            className="w-full px-2 py-1.5 border border-neutral-300 rounded-lg text-center text-sm sm:text-base font-black text-neutral-950"
                           />
                         </td>
-                        <td className="p-1.5">
+                        <td className="p-2">
                           <input
                             type="text"
                             value={it.unit}
                             onChange={(e) => handleItemChange(idx, 'unit', e.target.value)}
-                            className="w-full px-2 py-1 border border-neutral-200 rounded text-center"
+                            className="w-full px-2 py-1.5 border border-neutral-300 rounded-lg text-center text-xs sm:text-sm font-bold text-neutral-700"
                           />
                         </td>
-                        <td className="p-1.5">
+                        <td className="p-2">
                           <input
                             type="number"
                             min="0"
                             value={it.unitPrice}
                             onChange={(e) => handleItemChange(idx, 'unitPrice', e.target.value)}
-                            className="w-full px-2 py-1 border border-neutral-200 rounded text-right font-mono"
+                            className="w-full px-2 py-1.5 border border-neutral-300 rounded-lg text-right font-mono text-sm sm:text-base font-bold text-neutral-900"
                           />
                         </td>
-                        <td className="p-1.5 text-right font-mono font-bold text-neutral-900">
+                        <td className="p-2 text-right font-mono text-sm sm:text-base font-black text-neutral-950">
                           ৳{it.lineTotal.toLocaleString()}
                         </td>
                         <td className="p-1.5 text-center">
@@ -603,56 +603,63 @@ export const MemoModal: React.FC<MemoModalProps> = ({
             </div>
 
             {/* Metadata Grid */}
-            <div className="grid grid-cols-2 gap-2 py-3 text-xs border-b border-neutral-200">
+            <div className="grid grid-cols-2 gap-2 py-3.5 text-xs sm:text-sm border-b border-neutral-300">
               <div>
-                <p className="font-bold text-neutral-900 text-sm">{order.shopName}</p>
-                <p className="text-neutral-600 flex items-center gap-1 mt-0.5">
-                  <Phone className="w-3 h-3 text-neutral-400" /> {order.shopPhone}
+                <p className="font-black text-neutral-950 text-base sm:text-lg leading-snug">{order.shopName}</p>
+                <p className="text-neutral-800 font-semibold flex items-center gap-1 mt-1 text-xs sm:text-sm">
+                  <Phone className="w-3.5 h-3.5 text-neutral-500 shrink-0" /> {order.shopPhone}
                 </p>
-                <p className="text-neutral-600 flex items-center gap-1 mt-0.5">
-                  <MapPin className="w-3 h-3 text-neutral-400" /> {order.shopAddress} ({order.shopRoute})
+                <p className="text-neutral-600 flex items-center gap-1 mt-0.5 text-xs sm:text-sm">
+                  <MapPin className="w-3.5 h-3.5 text-neutral-400 shrink-0" /> {order.shopAddress} {order.shopRoute ? `(${order.shopRoute})` : ''}
                 </p>
               </div>
-              <div className="text-right space-y-0.5">
-                <p className="font-semibold text-neutral-900">মেমো: {order.memoNumber}</p>
-                <p className="text-neutral-500">
+              <div className="text-right space-y-1">
+                <p className="font-black text-neutral-950 text-sm sm:text-base">মেমো: #{order.memoNumber}</p>
+                <p className="text-neutral-600 font-medium text-xs sm:text-sm">
                   {new Date(order.orderDate).toLocaleDateString('en-GB')}{' '}
                   {new Date(order.orderDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </p>
+                <p className={`text-xs sm:text-sm font-bold ${order.deliveryStatus === 'DELIVERED' ? 'text-emerald-700' : 'text-amber-700'}`}>
+                  {order.deliveryStatus === 'DELIVERED' ? '● ডেলিভারি সম্পন্ন' : '○ অপেক্ষমান'}
                 </p>
               </div>
             </div>
 
             {/* Items Table */}
-            <div className="py-2.5">
-              <table className="w-full text-xs text-left">
+            <div className="py-3">
+              <table className="w-full text-left border-collapse border border-neutral-300">
                 <thead>
-                  <tr className="border-b border-neutral-300 text-neutral-500 font-semibold">
-                    <th className="py-1.5 w-6">#</th>
-                    <th className="py-1.5">পণ্যের বিবরণ</th>
-                    <th className="py-1.5 text-center">পরিমাণ</th>
-                    <th className="py-1.5 text-right">দর (৳)</th>
-                    <th className="py-1.5 text-right">মোট (৳)</th>
+                  <tr className="border-b-2 border-neutral-400 bg-neutral-100 text-neutral-900 font-black text-xs sm:text-sm">
+                    <th className="py-2.5 px-2.5 w-8 text-center">#</th>
+                    <th className="py-2.5 px-3">পণ্যের বিবরণ ও অফার</th>
+                    <th className="py-2.5 px-2.5 text-center w-24">পরিমাণ</th>
+                    <th className="py-2.5 px-2.5 text-right w-24">দর (৳)</th>
+                    <th className="py-2.5 px-3 text-right w-28">মোট (৳)</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-neutral-100">
+                <tbody className="divide-y divide-neutral-200">
                   {order.items.map((item, idx) => (
-                    <tr key={idx} className="py-1.5">
-                      <td className="py-1.5 text-neutral-400">{idx + 1}</td>
-                      <td className="py-1.5 font-medium text-neutral-900">
-                        {item.productName}
+                    <tr key={idx} className="hover:bg-neutral-50/50 transition-colors">
+                      <td className="py-2.5 px-2.5 text-center text-xs sm:text-sm font-bold text-neutral-500">{idx + 1}</td>
+                      <td className="py-2.5 px-3">
+                        <div className="text-sm sm:text-base font-extrabold text-neutral-950 leading-snug">
+                          {item.productName}
+                        </div>
                         {item.tradeOfferQty ? (
-                          <span className="block text-[10px] text-emerald-600 font-semibold">
+                          <span className="inline-block mt-1 text-xs text-emerald-800 font-extrabold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-300">
                             + ফ্রি: {item.tradeOfferQty} {item.unit}
                           </span>
                         ) : null}
                       </td>
-                      <td className="py-1.5 text-center">
-                        <span className="font-semibold text-neutral-800">{item.quantity}</span>{' '}
-                        <span className="text-[10px] text-neutral-500">{item.unit}</span>
+                      <td className="py-2.5 px-2.5 text-center whitespace-nowrap">
+                        <span className="text-sm sm:text-base font-black text-neutral-950">{item.quantity}</span>{' '}
+                        <span className="text-xs font-bold text-neutral-600 ml-0.5">{item.unit}</span>
                       </td>
-                      <td className="py-1.5 text-right text-neutral-700">৳{item.unitPrice}</td>
-                      <td className="py-1.5 text-right font-semibold text-neutral-900">
-                        ৳{item.lineTotal.toLocaleString()}
+                      <td className="py-2.5 px-2.5 text-right font-mono text-sm sm:text-base font-bold text-neutral-800 whitespace-nowrap">
+                        ৳{Number(item.unitPrice || 0).toLocaleString()}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono text-sm sm:text-base font-black text-neutral-950 whitespace-nowrap">
+                        ৳{Number(item.lineTotal || 0).toLocaleString()}
                       </td>
                     </tr>
                   ))}
@@ -661,32 +668,32 @@ export const MemoModal: React.FC<MemoModalProps> = ({
             </div>
 
             {/* Financial Breakdown: Only Total calculated, Advance & Due blank */}
-            <div className="border-t border-neutral-200 pt-3 text-xs">
+            <div className="border-t-2 border-neutral-300 pt-3 text-sm">
               <div className="flex justify-end">
-                <table className="w-56 border-collapse border border-neutral-400 text-xs font-bold">
+                <table className="w-64 border-collapse border-2 border-neutral-400 text-sm font-bold">
                   <tbody>
                     <tr className="border-b border-neutral-400">
-                      <td className="border-r border-neutral-400 px-3 py-1.5 bg-neutral-100/80 text-neutral-800 text-left w-24">
-                        মোট
+                      <td className="border-r border-neutral-400 px-3 py-2 bg-neutral-100 text-neutral-900 text-left w-28 font-bold">
+                        মোট বিল
                       </td>
-                      <td className="px-3 py-1.5 text-right font-mono text-neutral-900 text-sm">
-                        ৳{order.netTotal.toLocaleString()}
+                      <td className="px-3 py-2 text-right font-mono text-neutral-950 text-base sm:text-xl font-black">
+                        ৳{Number(order.netTotal || 0).toLocaleString()}
                       </td>
                     </tr>
                     <tr className="border-b border-neutral-400">
-                      <td className="border-r border-neutral-400 px-3 py-1.5 bg-neutral-100/80 text-neutral-800 text-left">
-                        অগ্রিম
+                      <td className="border-r border-neutral-400 px-3 py-2 bg-neutral-50 text-neutral-700 text-left font-bold">
+                        অগ্রিম / জমা
                       </td>
-                      <td className="px-3 py-1.5 text-right font-mono text-sm h-7">
-                        {order.deliveryStatus === 'DELIVERED' ? `৳${order.paidAmount.toLocaleString()}` : ''}
+                      <td className="px-3 py-2 text-right font-mono text-sm sm:text-base font-bold text-emerald-700 h-8">
+                        {order.deliveryStatus === 'DELIVERED' ? `৳${Number(order.paidAmount || 0).toLocaleString()}` : ''}
                       </td>
                     </tr>
                     <tr>
-                      <td className="border-r border-neutral-400 px-3 py-1.5 bg-neutral-100/80 text-neutral-800 text-left">
+                      <td className="border-r border-neutral-400 px-3 py-2 bg-neutral-50 text-neutral-700 text-left font-bold">
                         বাঁকী
                       </td>
-                      <td className="px-3 py-1.5 text-right font-mono text-sm h-7">
-                        {order.deliveryStatus === 'DELIVERED' ? `৳${order.dueAmount.toLocaleString()}` : ''}
+                      <td className="px-3 py-2 text-right font-mono text-sm sm:text-base font-bold text-rose-700 h-8">
+                        {order.deliveryStatus === 'DELIVERED' ? `৳${Number(order.dueAmount || 0).toLocaleString()}` : ''}
                       </td>
                     </tr>
                   </tbody>

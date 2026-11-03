@@ -615,24 +615,24 @@ export const CustomerOfficialMemoModal: React.FC<CustomerOfficialMemoModalProps>
         <div className="mb-6 max-h-56 overflow-y-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="border-b border-[#ECECEC] text-[9px] font-black text-[#6B7280] uppercase tracking-widest">
-                <th className="pb-2">Items / বিবরণ</th>
-                <th className="pb-2 text-center">Qty</th>
-                <th className="pb-2 text-right">Price</th>
-                <th className="pb-2 text-right">Total</th>
+              <tr className="border-b border-[#ECECEC] text-xs font-black text-[#4B5563] uppercase tracking-wider">
+                <th className="pb-2.5">Items / বিবরণ</th>
+                <th className="pb-2.5 text-center">Qty / পরিমাণ</th>
+                <th className="pb-2.5 text-right">Price / দর</th>
+                <th className="pb-2.5 text-right">Total / মোট</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-neutral-100 text-xs">
+            <tbody className="divide-y divide-neutral-100 text-sm">
               {order.items.map((item, idx) => (
                 <tr key={idx}>
-                  <td className="py-2.5 font-bold text-[#0A1F44]">
+                  <td className="py-3 font-extrabold text-sm sm:text-base text-[#0A1F44]">
                     {item.productName}
-                    <span className="text-[10px] text-[#6B7280] font-normal ml-1">({item.unit})</span>
+                    <span className="text-xs text-[#6B7280] font-bold ml-1.5">({item.unit})</span>
                   </td>
-                  <td className="py-2.5 text-center font-black text-[#6B7280]">{item.quantity}</td>
-                  <td className="py-2.5 text-right font-bold text-[#6B7280]">৳{item.unitPrice}</td>
-                  <td className="py-2.5 text-right font-black text-[#0A1F44]">
-                    ৳{item.lineTotal.toLocaleString('en-IN')}
+                  <td className="py-3 text-center font-black text-sm sm:text-base text-[#0A1F44]">{item.quantity}</td>
+                  <td className="py-3 text-right font-bold text-xs sm:text-sm text-[#4B5563]">৳{Number(item.unitPrice || 0).toLocaleString()}</td>
+                  <td className="py-3 text-right font-black text-sm sm:text-base text-[#0A1F44]">
+                    ৳{Number(item.lineTotal || 0).toLocaleString()}
                   </td>
                 </tr>
               ))}

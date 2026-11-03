@@ -1371,79 +1371,97 @@ export const OrdersListView: React.FC<OrdersListViewProps> = ({
               </div>
 
               {/* Metadata Grid */}
-              <div className="grid grid-cols-2 gap-2 py-3 text-xs border-b border-neutral-200">
+              <div className="grid grid-cols-2 gap-2 py-3.5 text-xs sm:text-sm border-b border-neutral-300">
                 <div>
-                  <p className="font-bold text-neutral-900 text-sm">{order.shopName}</p>
-                  <p className="text-neutral-600 flex items-center gap-1 mt-0.5">
-                    মোবাইল: {order.shopPhone}
+                  <p className="font-black text-neutral-950 text-base sm:text-lg leading-snug">{order.shopName}</p>
+                  <p className="text-neutral-800 font-semibold flex items-center gap-1 mt-1 text-xs sm:text-sm">
+                    মোবাইল: <strong className="font-black text-neutral-950">{order.shopPhone}</strong>
                   </p>
-                  <p className="text-neutral-600 flex items-center gap-1 mt-0.5">
-                    ঠিকানা: {order.shopAddress} ({order.shopRoute})
+                  <p className="text-neutral-600 flex items-center gap-1 mt-0.5 text-xs sm:text-sm">
+                    ঠিকানা: {order.shopAddress} {order.shopRoute ? `(${order.shopRoute})` : ''}
                   </p>
                 </div>
-                <div className="text-right space-y-0.5">
-                  <p className="font-semibold text-neutral-900">মেমো: {order.memoNumber}</p>
-                  <p className="text-neutral-500">
+                <div className="text-right space-y-1">
+                  <p className="font-black text-neutral-950 text-sm sm:text-base">মেমো: #{order.memoNumber}</p>
+                  <p className="text-neutral-600 font-medium text-xs sm:text-sm">
                     {new Date(order.orderDate).toLocaleDateString('en-GB')}{' '}
                     {new Date(order.orderDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </p>
-                  <p className="text-[11px]">
+                  <p className="text-xs sm:text-sm">
                     স্ট্যাটাস:{' '}
-                    <span className="font-semibold text-neutral-800">
-                      {order.deliveryStatus === 'DELIVERED' ? 'ডেলিভারি সম্পন্ন' : 'ডেলিভারি অপেক্ষমান'}
+                    <span className={`font-black ${order.deliveryStatus === 'DELIVERED' ? 'text-emerald-700' : 'text-amber-700'}`}>
+                      {order.deliveryStatus === 'DELIVERED' ? '● ডেলিভারি সম্পন্ন' : '○ অপেক্ষমান'}
                     </span>
                   </p>
                 </div>
               </div>
 
               {/* Items Table */}
-              <table className="w-full text-left border-collapse text-[11px] mt-3">
+              <table className="w-full text-left border-collapse border border-neutral-300 mt-3">
                 <thead>
-                  <tr className="border-b border-neutral-300 bg-neutral-50 font-bold text-neutral-700">
-                    <th className="py-1.5 px-2">পণ্য বিবরণ</th>
-                    <th className="py-1.5 px-2 text-center">পরিমাণ</th>
-                    <th className="py-1.5 px-2 text-right">দর</th>
-                    <th className="py-1.5 px-2 text-right">মোট (৳)</th>
+                  <tr className="border-b-2 border-neutral-400 bg-neutral-100 font-black text-xs sm:text-sm text-neutral-900">
+                    <th className="py-2.5 px-3">পণ্য বিবরণ</th>
+                    <th className="py-2.5 px-2.5 text-center w-24">পরিমাণ</th>
+                    <th className="py-2.5 px-2.5 text-right w-24">দর (৳)</th>
+                    <th className="py-2.5 px-3 text-right w-28">মোট (৳)</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-neutral-200">
                   {order.items.map((item, idx) => (
-                    <tr key={idx} className="border-b border-neutral-100 text-neutral-700">
-                      <td className="py-1.5 px-2 font-medium">{item.productName}</td>
-                      <td className="py-1.5 px-2 text-center">
-                        {item.quantity} {item.unit}
+                    <tr key={idx} className="hover:bg-neutral-50/50">
+                      <td className="py-2.5 px-3">
+                        <div className="text-sm sm:text-base font-extrabold text-neutral-950 leading-snug">
+                          {item.productName}
+                        </div>
+                        {item.tradeOfferQty ? (
+                          <span className="inline-block mt-1 text-xs text-emerald-800 font-extrabold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-300">
+                            + ফ্রি: {item.tradeOfferQty} {item.unit}
+                          </span>
+                        ) : null}
                       </td>
-                      <td className="py-1.5 px-2 text-right">৳{item.unitPrice}</td>
-                      <td className="py-1.5 px-2 text-right font-mono">৳{item.lineTotal}</td>
+                      <td className="py-2.5 px-2.5 text-center whitespace-nowrap">
+                        <span className="text-sm sm:text-base font-black text-neutral-950">{item.quantity}</span>{' '}
+                        <span className="text-xs font-bold text-neutral-600 ml-0.5">{item.unit}</span>
+                      </td>
+                      <td className="py-2.5 px-2.5 text-right font-mono text-sm sm:text-base font-bold text-neutral-800 whitespace-nowrap">
+                        ৳{Number(item.unitPrice || 0).toLocaleString()}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono text-sm sm:text-base font-black text-neutral-950 whitespace-nowrap">
+                        ৳{Number(item.lineTotal || 0).toLocaleString()}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
 
               {/* Summary: Only Total calculated, Advance & Due blank */}
-              <div className="border-t border-neutral-200 pt-3 text-xs">
+              <div className="border-t-2 border-neutral-300 pt-3 text-sm">
                 <div className="flex justify-end">
-                  <table className="w-56 border-collapse border border-neutral-400 text-xs font-bold">
+                  <table className="w-64 border-collapse border-2 border-neutral-400 text-sm font-bold">
                     <tbody>
                       <tr className="border-b border-neutral-400">
-                        <td className="border-r border-neutral-400 px-3 py-1.5 bg-neutral-100/80 text-neutral-800 text-left w-24">
-                          মোট
+                        <td className="border-r border-neutral-400 px-3 py-2 bg-neutral-100 text-neutral-900 text-left w-28 font-bold">
+                          মোট বিল
                         </td>
-                        <td className="px-3 py-1.5 text-right font-mono text-neutral-900 text-sm">
-                          ৳{order.netTotal.toLocaleString()}
+                        <td className="px-3 py-2 text-right font-mono text-neutral-950 text-base sm:text-lg font-black">
+                          ৳{Number(order.netTotal || 0).toLocaleString()}
                         </td>
                       </tr>
                       <tr className="border-b border-neutral-400">
-                        <td className="border-r border-neutral-400 px-3 py-1.5 bg-neutral-100/80 text-neutral-800 text-left">
+                        <td className="border-r border-neutral-400 px-3 py-2 bg-neutral-50 text-neutral-700 text-left font-bold">
                           অগ্রিম
                         </td>
-                        <td className="px-3 py-1.5 text-right font-mono text-sm h-7"></td>
+                        <td className="px-3 py-2 text-right font-mono text-sm sm:text-base font-bold text-emerald-700 h-8">
+                          {order.deliveryStatus === 'DELIVERED' ? `৳${Number(order.paidAmount || 0).toLocaleString()}` : ''}
+                        </td>
                       </tr>
                       <tr>
-                        <td className="border-r border-neutral-400 px-3 py-1.5 bg-neutral-100/80 text-neutral-800 text-left">
+                        <td className="border-r border-neutral-400 px-3 py-2 bg-neutral-50 text-neutral-700 text-left font-bold">
                           বাঁকী
                         </td>
-                        <td className="px-3 py-1.5 text-right font-mono text-sm h-7"></td>
+                        <td className="px-3 py-2 text-right font-mono text-sm sm:text-base font-bold text-rose-700 h-8">
+                          {order.deliveryStatus === 'DELIVERED' ? `৳${Number(order.dueAmount || 0).toLocaleString()}` : ''}
+                        </td>
                       </tr>
                     </tbody>
                   </table>

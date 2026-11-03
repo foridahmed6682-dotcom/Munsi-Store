@@ -101,6 +101,7 @@ export function triggerGlobalPrint(
     : 'margin: 4mm;';
 
   styleEl.textContent = `
+    @import url('https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@500;600;700;800;900&display=swap');
     @page {
       ${pageRule}
       ${marginRule}
@@ -111,6 +112,7 @@ export function triggerGlobalPrint(
         margin: 0 !important;
         padding: 0 !important;
         background: #ffffff !important;
+        font-family: 'Hind Siliguri', 'Segoe UI', Tahoma, sans-serif !important;
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
       }
@@ -118,6 +120,7 @@ export function triggerGlobalPrint(
         width: 100% !important;
         margin: 0 !important;
         padding: 0 !important;
+        font-family: 'Hind Siliguri', 'Segoe UI', Tahoma, sans-serif !important;
       }
       .print-sheet-two-memos, .a4-sheet-two-memos {
         box-sizing: border-box !important;
@@ -337,19 +340,19 @@ export function printOrdersBatch(
           const supRows = items
             .map(
               (item) => `
-              <tr style="border-bottom: 1px solid #e2e8f0;">
-                <td style="padding: 5px 6px; text-align: center; color: #64748b;">${globalIdx++}</td>
-                <td style="padding: 5px 6px; font-weight: 800; color: #0f172a;">${escapeHtml(item.productName)}</td>
-                <td style="padding: 5px 6px; text-align: right;">৳${item.unitPrice.toLocaleString()}</td>
-                <td style="padding: 5px 6px; text-align: center;">${item.totalQty} ${escapeHtml(item.unit)}</td>
-                <td style="padding: 5px 6px; text-align: center; color: #047857; font-weight: 700;">${
+              <tr style="border-bottom: 1.5px solid #cbd5e1;">
+                <td style="padding: 6px 8px; text-align: center; color: #475569; font-size: 13px; font-weight: 700;">${globalIdx++}</td>
+                <td style="padding: 6px 8px; font-weight: 800; color: #000000; font-size: 14.5px; line-height: 1.3;">${escapeHtml(item.productName)}</td>
+                <td style="padding: 6px 8px; text-align: right; font-size: 14px; font-weight: 800; color: #0f172a;">৳${item.unitPrice.toLocaleString()}</td>
+                <td style="padding: 6px 8px; text-align: center; font-size: 14px; font-weight: 800;">${item.totalQty} <span style="font-size: 12px; color: #475569;">${escapeHtml(item.unit)}</span></td>
+                <td style="padding: 6px 8px; text-align: center; color: #047857; font-weight: 800; font-size: 13.5px;">${
                   item.totalFreeQty > 0 ? `+${item.totalFreeQty} ${escapeHtml(item.unit)}` : '---'
                 }</td>
-                <td style="padding: 5px 6px; text-align: center; font-weight: 900; background: #f0fdfa; color: #0f766e;">${
+                <td style="padding: 6px 8px; text-align: center; font-weight: 900; background: #f0fdfa; color: #0f766e; font-size: 15px;">${
                   item.totalLoadQty
                 } ${escapeHtml(item.unit)}</td>
-                <td style="padding: 5px 6px; text-align: center;">${item.shopsSet.size} টি দোকান</td>
-                <td style="padding: 5px 6px; text-align: right; font-weight: 800;">৳${item.totalValue.toLocaleString()}</td>
+                <td style="padding: 6px 8px; text-align: center; font-size: 13px; font-weight: 700;">${item.shopsSet.size} টি দোকান</td>
+                <td style="padding: 6px 8px; text-align: right; font-weight: 900; font-size: 14.5px; color: #000000;">৳${item.totalValue.toLocaleString()}</td>
               </tr>
             `
             )
@@ -357,9 +360,9 @@ export function printOrdersBatch(
 
           return `
             <tr style="background: #f1f5f9; border-top: 2px solid #cbd5e1; border-bottom: 1.5px solid #94a3b8;">
-              <td colspan="8" style="padding: 6px 8px; font-weight: 900; color: #1e293b; font-size: 12.5px;">
+              <td colspan="8" style="padding: 8px 10px; font-weight: 900; color: #0f172a; font-size: 14px;">
                 🏢 <strong>সাপ্লায়ার: ${escapeHtml(supName)}</strong>
-                <span style="font-weight: 700; color: #475569; margin-left: 12px; font-size: 11px;">
+                <span style="font-weight: 700; color: #475569; margin-left: 12px; font-size: 12px;">
                   (${items.length}টি পণ্য • মোট লোড: ${supTotalQty} একক • মোট মূল্য: ৳${supTotalVal.toLocaleString()})
                 </span>
               </td>
@@ -372,24 +375,24 @@ export function printOrdersBatch(
       tableBodyHtml = aggregatedItems
         .map(
           (item, idx) => `
-          <tr style="border-bottom: 1px solid #cbd5e1;">
-            <td style="padding: 6px; text-align: center;">${idx + 1}</td>
-            <td style="padding: 6px; font-weight: 800; color: #0f172a;">
+          <tr style="border-bottom: 1.5px solid #cbd5e1;">
+            <td style="padding: 6px 8px; text-align: center; font-size: 13px; font-weight: 700; color: #475569;">${idx + 1}</td>
+            <td style="padding: 6px 8px; font-weight: 800; color: #000000; font-size: 14.5px; line-height: 1.3;">
               ${escapeHtml(item.productName)}
-              ${!supplierFilter ? `<div style="font-size: 10px; color: #4f46e5; font-weight: 700;">🏢 ${escapeHtml(item.supplier)}</div>` : ''}
+              ${!supplierFilter ? `<div style="font-size: 11.5px; color: #4338ca; font-weight: 700; margin-top: 2px;">🏢 ${escapeHtml(item.supplier)}</div>` : ''}
             </td>
-            <td style="padding: 6px; text-align: right;">৳${item.unitPrice.toLocaleString()}</td>
-            <td style="padding: 6px; text-align: center; font-weight: 700;">${
+            <td style="padding: 6px 8px; text-align: right; font-size: 14px; font-weight: 800; color: #0f172a;">৳${item.unitPrice.toLocaleString()}</td>
+            <td style="padding: 6px 8px; text-align: center; font-weight: 800; font-size: 14px;">${
               item.totalQty
-            } ${escapeHtml(item.unit)}</td>
-            <td style="padding: 6px; text-align: center; color: #047857; font-weight: 700;">${
+            } <span style="font-size: 12px; color: #475569;">${escapeHtml(item.unit)}</span></td>
+            <td style="padding: 6px 8px; text-align: center; color: #047857; font-weight: 800; font-size: 13.5px;">${
               item.totalFreeQty > 0 ? `+${item.totalFreeQty} ${escapeHtml(item.unit)}` : '---'
             }</td>
-            <td style="padding: 6px; text-align: center; font-weight: 900; background: #f0fdfa; color: #0f766e; font-size: 13px;">${
+            <td style="padding: 6px 8px; text-align: center; font-weight: 900; background: #f0fdfa; color: #0f766e; font-size: 15px;">${
               item.totalLoadQty
             } ${escapeHtml(item.unit)}</td>
-            <td style="padding: 6px; text-align: center;">${item.shopsSet.size} টি দোকান</td>
-            <td style="padding: 6px; text-align: right; font-weight: 800;">৳${item.totalValue.toLocaleString()}</td>
+            <td style="padding: 6px 8px; text-align: center; font-size: 13px; font-weight: 700;">${item.shopsSet.size} টি দোকান</td>
+            <td style="padding: 6px 8px; text-align: right; font-weight: 900; font-size: 14.5px; color: #000000;">৳${item.totalValue.toLocaleString()}</td>
           </tr>
         `
         )
@@ -403,47 +406,47 @@ export function printOrdersBatch(
           `মোট মেমো: ${orders.length} টি | মোট দোকান: ${uniqueShops.size} টি | মোট পণ্যের আইটেম: ${aggregatedItems.length} টি | সর্বমোট মূল্য: ৳${grandTotalValue.toLocaleString()}`
         )}
 
-        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; font-size: 11.5px;">
-          <div style="border: 1px solid #94a3b8; border-radius: 6px; padding: 6px 8px; background: #f8fafc;">
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; font-size: 12px;">
+          <div style="border: 1.5px solid #94a3b8; border-radius: 6px; padding: 6px 8px; background: #f8fafc;">
             <div style="color: #475569;">মোট মেমো / দোকান</div>
-            <div style="font-size: 14px; font-weight: 900;">${orders.length} মেমো (${uniqueShops.size} দোকান)</div>
+            <div style="font-size: 15px; font-weight: 900; color: #0f172a;">${orders.length} মেমো (${uniqueShops.size} দোকান)</div>
           </div>
-          <div style="border: 1px solid #94a3b8; border-radius: 6px; padding: 6px 8px; background: #f8fafc;">
+          <div style="border: 1.5px solid #94a3b8; border-radius: 6px; padding: 6px 8px; background: #f8fafc;">
             <div style="color: #475569;">মোট পণ্যের আইটেম</div>
-            <div style="font-size: 14px; font-weight: 900;">${aggregatedItems.length} টি পণ্য</div>
+            <div style="font-size: 15px; font-weight: 900; color: #0f172a;">${aggregatedItems.length} টি পণ্য</div>
           </div>
-          <div style="border: 1px solid #94a3b8; border-radius: 6px; padding: 6px 8px; background: #f8fafc;">
+          <div style="border: 1.5px solid #94a3b8; border-radius: 6px; padding: 6px 8px; background: #f8fafc;">
             <div style="color: #475569;">সর্বমোট মালের মূল্য</div>
-            <div style="font-size: 14px; font-weight: 900; color: #047857;">৳${grandTotalValue.toLocaleString()}</div>
+            <div style="font-size: 15px; font-weight: 900; color: #047857;">৳${grandTotalValue.toLocaleString()}</div>
           </div>
-          <div style="border: 1px solid #94a3b8; border-radius: 6px; padding: 6px 8px; background: #f8fafc;">
+          <div style="border: 1.5px solid #94a3b8; border-radius: 6px; padding: 6px 8px; background: #f8fafc;">
             <div style="color: #475569;">সাপ্লায়ার ফিল্টার</div>
-            <div style="font-size: 13px; font-weight: 800; color: #4338ca;">${escapeHtml(supplierFilter || 'সকল সাপ্লায়ার')}</div>
+            <div style="font-size: 14px; font-weight: 800; color: #4338ca;">${escapeHtml(supplierFilter || 'সকল সাপ্লায়ার')}</div>
           </div>
         </div>
 
-        <table style="width: 100%; border-collapse: collapse; font-size: 12px; border: 1px solid #94a3b8;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px; border: 2px solid #334155;">
           <thead>
-            <tr style="background: #f1f5f9; border-bottom: 1.5px solid #64748b; font-weight: 800;">
-              <th style="padding: 7px 6px; width: 34px; text-align: center;">#</th>
-              <th style="padding: 7px 6px; text-align: left;">পণ্যের নাম</th>
-              <th style="padding: 7px 6px; text-align: right;">দর (৳)</th>
-              <th style="padding: 7px 6px; text-align: center;">অর্ডার পরিমাণ</th>
-              <th style="padding: 7px 6px; text-align: center;">ফ্রি / অফার</th>
-              <th style="padding: 7px 6px; text-align: center; background: #ccfbf1; color: #115e59;">মোট লোড পরিমাণ</th>
-              <th style="padding: 7px 6px; text-align: center;">দোকান সংখ্যা</th>
-              <th style="padding: 7px 6px; text-align: right;">মোট মূল্য (৳)</th>
+            <tr style="background: #f1f5f9; border-bottom: 2px solid #334155; font-weight: 900; font-size: 13.5px; color: #0f172a;">
+              <th style="padding: 8px 6px; width: 36px; text-align: center;">#</th>
+              <th style="padding: 8px 8px; text-align: left;">পণ্যের নাম</th>
+              <th style="padding: 8px 6px; text-align: right;">দর (৳)</th>
+              <th style="padding: 8px 6px; text-align: center;">অর্ডার পরিমাণ</th>
+              <th style="padding: 8px 6px; text-align: center;">ফ্রি / অফার</th>
+              <th style="padding: 8px 6px; text-align: center; background: #ccfbf1; color: #115e59;">মোট লোড পরিমাণ</th>
+              <th style="padding: 8px 6px; text-align: center;">দোকান সংখ্যা</th>
+              <th style="padding: 8px 8px; text-align: right;">মোট মূল্য (৳)</th>
             </tr>
           </thead>
           <tbody>
             ${tableBodyHtml || '<tr><td colspan="8" style="padding: 16px; text-align: center; color: #64748b;">কোনো পণ্য পাওয়া যায়নি</td></tr>'}
           </tbody>
           <tfoot>
-            <tr style="background: #f8fafc; border-top: 2px solid #334155; font-weight: 900; font-size: 12.5px;">
-              <td colspan="7" style="padding: 8px; text-align: right;">
+            <tr style="background: #f8fafc; border-top: 2px solid #334155; font-weight: 900; font-size: 14px;">
+              <td colspan="7" style="padding: 10px 8px; text-align: right;">
                 সর্বমোট পণ্যের মূল্য ${supplierFilter ? `(${escapeHtml(supplierFilter)}):` : `(${orders.length} টি মেমো):`}
               </td>
-              <td style="padding: 8px 6px; text-align: right; color: #047857;">৳${grandTotalValue.toLocaleString()}</td>
+              <td style="padding: 10px 8px; text-align: right; color: #047857; font-size: 16px;">৳${grandTotalValue.toLocaleString()}</td>
             </tr>
           </tfoot>
         </table>
@@ -495,39 +498,48 @@ export function printOrdersBatch(
           const isCompact = layout === 'landscape' || isA5;
           const itemsCount = order.items?.length || 0;
 
-          // Adaptive font size & row padding based on item count to prevent page overflow
+          // Adaptive font size & row padding based on item count to ensure legibility and fit
           const rowPadding = isCompact || itemsCount > 8
-            ? (itemsCount > 12 ? '1.5px 3px' : '2px 4px')
-            : (itemsCount > 6 ? '2.5px 5px' : '3.5px 6px');
+            ? (itemsCount > 12 ? '2px 4px' : '2.5px 5px')
+            : (itemsCount > 6 ? '3px 6px' : '4px 7px');
 
           const rowFontSize = isCompact || itemsCount > 8
-            ? (itemsCount > 12 ? '8.5px' : '9px')
-            : (itemsCount > 6 ? '9.5px' : '10.5px');
+            ? (itemsCount > 12 ? '11px' : '11.5px')
+            : (itemsCount > 6 ? '12px' : '13px');
 
-          const titleFontSize = isCompact || isA5 ? '14px' : '16px';
+          const productNameFontSize = isCompact || itemsCount > 8
+            ? (itemsCount > 12 ? '11.5px' : '12px')
+            : (itemsCount > 6 ? '13px' : '14px');
+
+          const qtyPriceFontSize = isCompact || itemsCount > 8
+            ? (itemsCount > 12 ? '11px' : '11.5px')
+            : (itemsCount > 6 ? '12.5px' : '13.5px');
+
+          const titleFontSize = isCompact || isA5 ? '15px' : '17px';
 
           const rowsHtml = order.items
             .map(
               (item, i) => `
-              <tr style="border-bottom: 1px solid #e2e8f0;">
-                <td style="padding: ${rowPadding}; text-align: center; color: #64748b; font-size: ${rowFontSize};">${i + 1}</td>
-                <td style="padding: ${rowPadding}; font-weight: 700; color: #0f172a; font-size: ${rowFontSize};">
+              <tr style="border-bottom: 1px solid #cbd5e1;">
+                <td style="padding: ${rowPadding}; text-align: center; color: #475569; font-size: ${rowFontSize}; font-weight: 700;">${i + 1}</td>
+                <td style="padding: ${rowPadding}; font-weight: 800; color: #000000; font-size: ${productNameFontSize}; line-height: 1.25;">
                   ${escapeHtml(item.productName)}
                   ${
                     item.tradeOfferQty
-                      ? `<span style="font-size: ${rowFontSize}; color: #059669; font-weight: 700; margin-left: 3px;">(+ ফ্রি: ${escapeHtml(
+                      ? `<span style="font-size: ${rowFontSize}; color: #047857; font-weight: 800; margin-left: 4px;">(+ ফ্রি: ${escapeHtml(
                           item.tradeOfferQty
                         )} ${escapeHtml(item.unit)})</span>`
                       : ''
                   }
                 </td>
-                <td style="padding: ${rowPadding}; text-align: center; font-weight: 700; font-size: ${rowFontSize};">
-                  ${escapeHtml(item.quantity)} <span style="font-size: ${rowFontSize}; font-weight: 500; color: #475569;">${escapeHtml(
+                <td style="padding: ${rowPadding}; text-align: center; font-size: ${qtyPriceFontSize}; white-space: nowrap;">
+                  <span style="font-weight: 900; color: #000000;">${escapeHtml(item.quantity)}</span>
+                  <span style="font-size: ${rowFontSize}; font-weight: 700; color: #334155; margin-left: 2px;">${escapeHtml(
                 item.unit
               )}</span>
                 </td>
-                <td style="padding: ${rowPadding}; text-align: right; font-size: ${rowFontSize};">৳${Number(item.unitPrice || 0).toLocaleString()}</td>
-                <td style="padding: ${rowPadding}; text-align: right; font-weight: 800; font-size: ${rowFontSize};">৳${Number(
+                <td style="padding: ${rowPadding}; text-align: right; font-weight: 800; color: #0f172a; font-size: ${qtyPriceFontSize}; white-space: nowrap;">৳${Number(item.unitPrice || 0).toLocaleString()}</td>
+                <td style="padding: ${rowPadding}; text-align: right; font-weight: 900; color: #000000; font-size: ${qtyPriceFontSize}; white-space: nowrap;">৳${Number(
                   item.lineTotal || 0
                 ).toLocaleString()}</td>
               </tr>
@@ -545,40 +557,40 @@ export function printOrdersBatch(
                       <h2 style="font-size: ${titleFontSize}; font-weight: 900; margin: 0; color: #0f172a; line-height: 1.2;">${escapeHtml(
                         biz.banglaName || 'মুন্সী স্টোর'
                       )}</h2>
-                      <span style="background: #0284c7; color: #ffffff; border-radius: 4px; padding: 1px 6px; font-size: ${isCompact ? '8.5px' : '9.5px'}; font-weight: 900; letter-spacing: 0.2px;">
+                      <span style="background: #0284c7; color: #ffffff; border-radius: 4px; padding: 1px 6px; font-size: ${isCompact ? '9px' : '10px'}; font-weight: 900; letter-spacing: 0.2px;">
                         🏪 দোকান কপি (${copyIndex === 1 ? 'মেমো ১' : 'মেমো ২'})
                       </span>
                     </div>
-                    <p style="font-size: ${isCompact ? '8.5px' : '9.5px'}; color: #475569; margin: 1px 0 0 0;">${escapeHtml(biz.tagline || '')}</p>
-                    <p style="font-size: ${isCompact ? '8px' : '9px'}; color: #64748b; margin: 1px 0 0 0;">${escapeHtml(biz.address || '')} | হটলাইন: ${escapeHtml(biz.hotline || '')}</p>
+                    <p style="font-size: ${isCompact ? '9px' : '10px'}; color: #475569; margin: 1px 0 0 0;">${escapeHtml(biz.tagline || '')}</p>
+                    <p style="font-size: ${isCompact ? '8.5px' : '9.5px'}; color: #64748b; margin: 1px 0 0 0;">${escapeHtml(biz.address || '')} | হটলাইন: ${escapeHtml(biz.hotline || '')}</p>
                   </div>
                   <div style="text-align: right;">
-                    <div style="font-weight: 900; font-size: ${isCompact ? '11px' : '12.5px'}; color: #0f172a;">মেমো: ${escapeHtml(order.memoNumber)}</div>
-                    <div style="font-size: ${isCompact ? '8.5px' : '9.5px'}; color: #475569; margin-top: 1px;">তারিখ: ${escapeHtml(dateStr)} ${escapeHtml(timeStr)}</div>
-                    <div style="font-size: ${isCompact ? '8px' : '9px'}; margin-top: 1px; font-weight: 700; color: ${isDelivered ? '#047857' : '#d97706'};">
+                    <div style="font-weight: 900; font-size: ${isCompact ? '12px' : '14px'}; color: #0f172a;">মেমো: #${escapeHtml(order.memoNumber)}</div>
+                    <div style="font-size: ${isCompact ? '9px' : '10px'}; color: #475569; margin-top: 1px;">তারিখ: ${escapeHtml(dateStr)} ${escapeHtml(timeStr)}</div>
+                    <div style="font-size: ${isCompact ? '8.5px' : '9.5px'}; margin-top: 1px; font-weight: 800; color: ${isDelivered ? '#047857' : '#d97706'};">
                       ${isDelivered ? '● ডেলিভারি সম্পন্ন' : '○ অপেক্ষমান'}
                     </div>
                   </div>
                 </div>
 
                 <!-- Customer Details Bar -->
-                <div style="display: flex; justify-content: space-between; align-items: center; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: ${isCompact ? '2px 5px' : '3px 6px'}; margin: ${isCompact ? '3px 0' : '4px 0'}; font-size: ${isCompact ? '9.5px' : '10.5px'};">
-                  <div style="display: flex; align-items: center; gap: ${isCompact ? '6px' : '10px'}; flex-wrap: wrap;">
-                    <div><span style="color: #64748b;">দোকান:</span> <strong style="font-size: ${isCompact ? '10.5px' : '11.5px'}; color: #0f172a;">${escapeHtml(order.shopName || order.customerName || 'কাস্টমার')}</strong></div>
-                    <div><span style="color: #64748b;">মোবাইল:</span> <strong style="color: #1e293b;">${escapeHtml(order.shopPhone || order.customerPhone || '---')}</strong></div>
-                    <div><span style="color: #64748b;">ঠিকানা:</span> <span style="color: #334155;">${escapeHtml(order.shopAddress || order.customerAddress || '---')} ${order.shopRoute ? `(${escapeHtml(order.shopRoute)})` : ''}</span></div>
+                <div style="display: flex; justify-content: space-between; align-items: center; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: ${isCompact ? '2px 5px' : '4px 7px'}; margin: ${isCompact ? '3px 0' : '5px 0'}; font-size: ${isCompact ? '10.5px' : '11.5px'};">
+                  <div style="display: flex; align-items: center; gap: ${isCompact ? '8px' : '12px'}; flex-wrap: wrap;">
+                    <div><span style="color: #64748b;">দোকান:</span> <strong style="font-size: ${isCompact ? '12px' : '13.5px'}; color: #000000; font-weight: 900;">${escapeHtml(order.shopName || order.customerName || 'কাস্টমার')}</strong></div>
+                    <div><span style="color: #64748b;">মোবাইল:</span> <strong style="font-size: ${isCompact ? '11px' : '12.5px'}; color: #0f172a; font-weight: 800;">${escapeHtml(order.shopPhone || order.customerPhone || '---')}</strong></div>
+                    <div><span style="color: #64748b;">ঠিকানা:</span> <span style="color: #334155; font-weight: 600;">${escapeHtml(order.shopAddress || order.customerAddress || '---')} ${order.shopRoute ? `(${escapeHtml(order.shopRoute)})` : ''}</span></div>
                   </div>
                 </div>
 
                 <!-- Items Table -->
-                <table style="width: 100%; border-collapse: collapse; font-size: ${rowFontSize}; margin-top: 2px; border: 1px solid #cbd5e1;">
+                <table style="width: 100%; border-collapse: collapse; font-size: ${rowFontSize}; margin-top: 2px; border: 1.5px solid #64748b;">
                   <thead>
-                    <tr style="border-bottom: 1.5px solid #64748b; background: #f1f5f9; color: #334155; font-weight: 800;">
+                    <tr style="border-bottom: 1.5px solid #334155; background: #f1f5f9; color: #0f172a; font-weight: 900; font-size: ${isCompact ? '10.5px' : '11.5px'};">
                       <th style="padding: ${rowPadding}; width: ${isCompact ? '18px' : '22px'}; text-align: center;">#</th>
                       <th style="padding: ${rowPadding}; text-align: left;">পণ্যের বিবরণ</th>
-                      <th style="padding: ${rowPadding}; text-align: center;">পরিমাণ</th>
-                      <th style="padding: ${rowPadding}; text-align: right;">দর (৳)</th>
-                      <th style="padding: ${rowPadding}; text-align: right;">মোট (৳)</th>
+                      <th style="padding: ${rowPadding}; text-align: center; width: ${isCompact ? '50px' : '65px'};">পরিমাণ</th>
+                      <th style="padding: ${rowPadding}; text-align: right; width: ${isCompact ? '55px' : '70px'};">দর (৳)</th>
+                      <th style="padding: ${rowPadding}; text-align: right; width: ${isCompact ? '65px' : '80px'};">মোট (৳)</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -591,7 +603,7 @@ export function printOrdersBatch(
               <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-top: 3px; padding-top: 2px; border-top: 1px solid #cbd5e1;">
                 <!-- Left Signatures & Notice -->
                 <div style="display: flex; flex-direction: column; justify-content: flex-end;">
-                  <div style="display: flex; gap: ${isCompact ? '8px' : '14px'}; font-size: ${isCompact ? '8.5px' : '9.5px'}; font-weight: 700; color: #334155; text-align: center;">
+                  <div style="display: flex; gap: ${isCompact ? '8px' : '14px'}; font-size: ${isCompact ? '9px' : '10px'}; font-weight: 700; color: #334155; text-align: center;">
                     <div style="width: ${isCompact ? '75px' : '90px'};">
                       <div style="border-bottom: 1px dashed #475569; margin-bottom: 2px; height: ${isCompact ? '12px' : '15px'};"></div>
                       <span>ক্রেতার স্বাক্ষর</span>
@@ -605,23 +617,23 @@ export function printOrdersBatch(
                 </div>
 
                 <!-- Right Total Box -->
-                <table style="width: ${isCompact ? '155px' : '185px'}; border-collapse: collapse; border: 1px solid #64748b; font-size: ${isCompact ? '9px' : '10px'}; font-weight: 700;">
+                <table style="width: ${isCompact ? '170px' : '205px'}; border-collapse: collapse; border: 1.5px solid #334155; font-size: ${isCompact ? '10px' : '11px'}; font-weight: 800;">
                   <tbody>
-                    <tr style="border-bottom: 1px solid #64748b;">
-                      <td style="border-right: 1px solid #64748b; padding: 1.5px 5px; background: #f1f5f9; width: ${isCompact ? '65px' : '75px'};">মোট বিল</td>
-                      <td style="padding: 1.5px 5px; text-align: right; font-size: ${isCompact ? '10px' : '11.5px'}; font-weight: 900; color: #0f172a;">৳${Number(
+                    <tr style="border-bottom: 1.5px solid #334155;">
+                      <td style="border-right: 1.5px solid #334155; padding: 2px 6px; background: #f1f5f9; width: ${isCompact ? '70px' : '82px'};">মোট বিল</td>
+                      <td style="padding: 2px 6px; text-align: right; font-size: ${isCompact ? '12px' : '14px'}; font-weight: 900; color: #000000;">৳${Number(
                         order.netTotal || 0
                       ).toLocaleString()}</td>
                     </tr>
                     <tr style="border-bottom: 1px solid #64748b;">
-                      <td style="border-right: 1px solid #64748b; padding: 1.5px 5px; background: #f1f5f9;">অগ্রিম / জমা</td>
-                      <td style="padding: 1.5px 5px; text-align: right; height: ${isCompact ? '14px' : '16px'}; color: #047857;">${
+                      <td style="border-right: 1px solid #64748b; padding: 2px 6px; background: #f8fafc;">অগ্রিম / জমা</td>
+                      <td style="padding: 2px 6px; text-align: right; height: ${isCompact ? '15px' : '18px'}; font-size: ${isCompact ? '10.5px' : '12px'}; font-weight: 800; color: #047857;">${
                         isDelivered ? `৳${Number(order.paidAmount || 0).toLocaleString()}` : '---'
                       }</td>
                     </tr>
                     <tr>
-                      <td style="border-right: 1px solid #64748b; padding: 1.5px 5px; background: #f1f5f9;">বাঁকী</td>
-                      <td style="padding: 1.5px 5px; text-align: right; height: ${isCompact ? '14px' : '16px'}; color: #be123c;">${
+                      <td style="border-right: 1px solid #64748b; padding: 2px 6px; background: #f8fafc;">বাঁকী</td>
+                      <td style="padding: 2px 6px; text-align: right; height: ${isCompact ? '15px' : '18px'}; font-size: ${isCompact ? '10.5px' : '12px'}; font-weight: 800; color: #be123c;">${
                         isDelivered ? `৳${Number(order.dueAmount || 0).toLocaleString()}` : '---'
                       }</td>
                     </tr>
@@ -704,25 +716,26 @@ export function printOrdersBatch(
         const rowsHtml = order.items
           .map(
             (item, i) => `
-            <tr style="border-bottom: 1px solid #e2e8f0;">
-              <td style="padding: 6px 8px; text-align: center; color: #64748b;">${i + 1}</td>
-              <td style="padding: 6px 8px; font-weight: 600; color: #0f172a;">
-                ${escapeHtml(item.productName)}
+            <tr style="border-bottom: 1.5px solid #cbd5e1;">
+              <td style="padding: 8px 10px; text-align: center; color: #475569; font-size: 14.5px; font-weight: 700;">${i + 1}</td>
+              <td style="padding: 8px 10px; color: #000000;">
+                <div style="font-size: 16px; font-weight: 800; line-height: 1.35; color: #000000;">${escapeHtml(item.productName)}</div>
                 ${
                   item.tradeOfferQty
-                    ? `<div style="font-size: 10px; color: #059669; font-weight: 700;">+ ফ্রি: ${escapeHtml(
+                    ? `<div style="font-size: 13px; color: #047857; font-weight: 800; margin-top: 3px;">+ ফ্রি: ${escapeHtml(
                         item.tradeOfferQty
                       )} ${escapeHtml(item.unit)}</div>`
                     : ''
                 }
               </td>
-              <td style="padding: 6px 8px; text-align: center; font-weight: 700;">
-                ${escapeHtml(item.quantity)} <span style="font-size: 10px; font-weight: 500; color: #475569;">${escapeHtml(
+              <td style="padding: 8px 10px; text-align: center; white-space: nowrap;">
+                <span style="font-size: 16px; font-weight: 900; color: #000000;">${escapeHtml(item.quantity)}</span>
+                <span style="font-size: 13px; font-weight: 700; color: #334155; margin-left: 3px;">${escapeHtml(
               item.unit
             )}</span>
               </td>
-              <td style="padding: 6px 8px; text-align: right;">৳${Number(item.unitPrice || 0).toLocaleString()}</td>
-              <td style="padding: 6px 8px; text-align: right; font-weight: 700;">৳${Number(
+              <td style="padding: 8px 10px; text-align: right; font-size: 15px; font-weight: 800; color: #0f172a; white-space: nowrap;">৳${Number(item.unitPrice || 0).toLocaleString()}</td>
+              <td style="padding: 8px 10px; text-align: right; font-size: 16.5px; font-weight: 900; color: #000000; white-space: nowrap;">৳${Number(
                 item.lineTotal || 0
               ).toLocaleString()}</td>
             </tr>
@@ -732,49 +745,49 @@ export function printOrdersBatch(
 
         return `
           <div class="${!isLast ? 'page-break-after' : ''}" style="padding: 16px 12px; background: #ffffff; color: #0f172a; font-family: 'Hind Siliguri', sans-serif; box-sizing: border-box;">
-            <div style="text-align: center; padding-bottom: 10px; border-bottom: 1.5px dashed #94a3b8;">
-              <h2 style="font-size: 20px; font-weight: 900; margin: 0; color: #0f172a;">${escapeHtml(
+            <div style="text-align: center; padding-bottom: 10px; border-bottom: 2px dashed #64748b;">
+              <h2 style="font-size: 24px; font-weight: 900; margin: 0; color: #0f172a;">${escapeHtml(
                 biz.banglaName || 'মুন্সী স্টোর'
               )}</h2>
-              <p style="font-size: 12px; color: #475569; margin: 2px 0;">${escapeHtml(biz.tagline || '')}</p>
-              <p style="font-size: 11px; color: #64748b; margin: 0;">${escapeHtml(
+              <p style="font-size: 13px; color: #475569; margin: 2px 0; font-weight: 600;">${escapeHtml(biz.tagline || '')}</p>
+              <p style="font-size: 12px; color: #64748b; margin: 0; font-weight: 500;">${escapeHtml(
                 biz.address || ''
-              )} | হটলাইন: ${escapeHtml(biz.hotline || '')}</p>
+              )} | হটলাইন: <strong style="color: #0f172a;">${escapeHtml(biz.hotline || '')}</strong></p>
             </div>
 
-            <div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid #cbd5e1; font-size: 12px;">
+            <div style="display: flex; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1.5px solid #cbd5e1; font-size: 13.5px;">
               <div>
-                <div style="font-size: 14px; font-weight: 800; color: #0f172a;">${escapeHtml(
+                <div style="font-size: 18px; font-weight: 900; color: #000000;">${escapeHtml(
                   order.shopName || order.customerName || 'কাস্টমার'
                 )}</div>
-                <div style="color: #334155; margin-top: 2px;">মোবাইল: ${escapeHtml(
+                <div style="color: #1e293b; margin-top: 3px; font-size: 14px; font-weight: 600;">মোবাইল: <strong style="font-weight: 900; font-size: 14.5px; color: #000000;">${escapeHtml(
                   order.shopPhone || order.customerPhone || '---'
-                )}</div>
-                <div style="color: #334155; margin-top: 2px;">ঠিকানা: ${escapeHtml(
+                )}</strong></div>
+                <div style="color: #334155; margin-top: 2px; font-size: 13.5px;">ঠিকানা: ${escapeHtml(
                   order.shopAddress || order.customerAddress || '---'
-                )} ${order.shopRoute ? `(${escapeHtml(order.shopRoute)})` : ''}</div>
+                )} ${order.shopRoute ? `(রুট: ${escapeHtml(order.shopRoute)})` : ''}</div>
               </div>
               <div style="text-align: right;">
-                <div style="font-weight: 800; font-size: 13px; color: #0f172a;">মেমো: ${escapeHtml(
+                <div style="font-weight: 900; font-size: 16px; color: #000000;">মেমো: #${escapeHtml(
                   order.memoNumber
                 )}</div>
-                <div style="color: #475569; margin-top: 2px;">তারিখ: ${escapeHtml(dateStr)} ${escapeHtml(
+                <div style="color: #334155; margin-top: 3px; font-size: 13px; font-weight: 600;">তারিখ: ${escapeHtml(dateStr)} ${escapeHtml(
           timeStr
         )}</div>
-                <div style="font-size: 11px; margin-top: 2px; font-weight: 700; color: #1e293b;">
-                  স্ট্যাটাস: ${isDelivered ? 'ডেলিভারি সম্পন্ন' : 'ডেলিভারি অপেক্ষমান'}
+                <div style="font-size: 12.5px; margin-top: 3px; font-weight: 800; color: ${isDelivered ? '#047857' : '#d97706'};">
+                  ${isDelivered ? '● ডেলিভারি সম্পন্ন' : '○ অপেক্ষমান'}
                 </div>
               </div>
             </div>
 
-            <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px;">
+            <table style="width: 100%; border-collapse: collapse; margin-top: 12px; border: 2px solid #334155;">
               <thead>
-                <tr style="border-bottom: 1.5px solid #64748b; background: #f8fafc; color: #334155; font-weight: 800;">
-                  <th style="padding: 6px 8px; width: 32px; text-align: center;">#</th>
-                  <th style="padding: 6px 8px; text-align: left;">পণ্যের বিবরণ</th>
-                  <th style="padding: 6px 8px; text-align: center;">পরিমাণ</th>
-                  <th style="padding: 6px 8px; text-align: right;">দর (৳)</th>
-                  <th style="padding: 6px 8px; text-align: right;">মোট (৳)</th>
+                <tr style="border-bottom: 2px solid #334155; background: #f1f5f9; color: #0f172a; font-weight: 900; font-size: 14.5px;">
+                  <th style="padding: 9px 10px; width: 36px; text-align: center;">#</th>
+                  <th style="padding: 9px 10px; text-align: left;">পণ্যের বিবরণ ও অফার</th>
+                  <th style="padding: 9px 10px; text-align: center; width: 85px;">পরিমাণ</th>
+                  <th style="padding: 9px 10px; text-align: right; width: 95px;">দর (৳)</th>
+                  <th style="padding: 9px 10px; text-align: right; width: 110px;">মোট (৳)</th>
                 </tr>
               </thead>
               <tbody>
@@ -782,24 +795,24 @@ export function printOrdersBatch(
               </tbody>
             </table>
 
-            <div style="display: flex; justify-content: flex-end; margin-top: 12px; padding-top: 8px; border-top: 1px solid #cbd5e1;">
-              <table style="width: 230px; border-collapse: collapse; border: 1px solid #64748b; font-size: 12px; font-weight: 700;">
+            <div style="display: flex; justify-content: flex-end; margin-top: 14px; padding-top: 8px; border-top: 1.5px solid #cbd5e1;">
+              <table style="width: 270px; border-collapse: collapse; border: 2px solid #334155; font-size: 14px; font-weight: 800;">
                 <tbody>
-                  <tr style="border-bottom: 1px solid #64748b;">
-                    <td style="border-right: 1px solid #64748b; padding: 6px 10px; background: #f1f5f9; width: 95px;">মোট বিল</td>
-                    <td style="padding: 6px 10px; text-align: right; font-size: 14px; font-weight: 900;">৳${Number(
+                  <tr style="border-bottom: 2px solid #334155;">
+                    <td style="border-right: 2px solid #334155; padding: 8px 12px; background: #f1f5f9; width: 115px;">মোট বিল</td>
+                    <td style="padding: 8px 12px; text-align: right; font-size: 18px; font-weight: 900; color: #000000;">৳${Number(
                       order.netTotal || 0
                     ).toLocaleString()}</td>
                   </tr>
-                  <tr style="border-bottom: 1px solid #64748b;">
-                    <td style="border-right: 1px solid #64748b; padding: 6px 10px; background: #f1f5f9;">অগ্রিম / জমা</td>
-                    <td style="padding: 6px 10px; text-align: right; height: 24px;">${
+                  <tr style="border-bottom: 1.5px solid #64748b;">
+                    <td style="border-right: 1.5px solid #64748b; padding: 7px 12px; background: #f8fafc;">অগ্রিম / জমা</td>
+                    <td style="padding: 7px 12px; text-align: right; font-size: 15px; font-weight: 800; color: #047857; height: 26px;">${
                       isDelivered ? `৳${Number(order.paidAmount || 0).toLocaleString()}` : ''
                     }</td>
                   </tr>
                   <tr>
-                    <td style="border-right: 1px solid #64748b; padding: 6px 10px; background: #f1f5f9;">বাঁকী</td>
-                    <td style="padding: 6px 10px; text-align: right; height: 24px;">${
+                    <td style="border-right: 1.5px solid #64748b; padding: 7px 12px; background: #f8fafc;">বাঁকী</td>
+                    <td style="padding: 7px 12px; text-align: right; font-size: 15px; font-weight: 800; color: #be123c; height: 26px;">${
                       isDelivered ? `৳${Number(order.dueAmount || 0).toLocaleString()}` : ''
                     }</td>
                   </tr>
