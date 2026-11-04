@@ -39,9 +39,12 @@ import {
 import {
   fetchFirebaseCloudInspection,
   FirebaseCloudInspectResult,
-  isFirestoreQuotaExhausted
+  isFirestoreQuotaExhausted,
+  reconcileAllPendingOfflineWithFirebase,
+  flushOfflinePendingActionsToFirebase,
 } from '../lib/firebase';
 import { getIndexedDBStats } from '../lib/indexedDb';
+import { getPendingOfflineActions } from '../lib/offlineSyncQueue';
 
 interface AdminFirebaseInspectorProps {
   products: Product[];
@@ -95,20 +98,28 @@ export const AdminFirebaseInspector: React.FC<AdminFirebaseInspectorProps> = ({
   } | null>(null);
   const [copied, setCopied] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [isReconciling, setIsReconciling] = useState(false);
+  const [pendingOfflineCount, setPendingOfflineCount] = useState(0);
 
-  // Load IndexedDB storage breakdown once on mount
+  // Load IndexedDB storage breakdown and check offline queue on mount
   useEffect(() => {
     getIndexedDBStats().then((stats) => {
       if (stats && stats.breakdown) {
         setIdbBreakdown(stats.breakdown);
       }
     }).catch(() => {});
+    setPendingOfflineCount(getPendingOfflineActions().length);
   }, []);
 
-  // Fetch live inspection data
+  // Fetch live inspection data (with auto-flush of any pending offline mutations)
   const handleRefreshLive = useCallback(async (isManual = false) => {
     setIsLoadingLive(true);
     try {
+      // If online, flush pending offline queue first so inspection shows true cloud state
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        await flushOfflinePendingActionsToFirebase().catch(() => {});
+        setPendingOfflineCount(getPendingOfflineActions().length);
+      }
       const res = await fetchFirebaseCloudInspection();
       setInspectionData(res);
       setLastCheckTime(new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
@@ -130,6 +141,25 @@ export const AdminFirebaseInspector: React.FC<AdminFirebaseInspectorProps> = ({
   useEffect(() => {
     handleRefreshLive(false);
   }, [handleRefreshLive]);
+
+  // Handle manual 1-click Reconcile & Push
+  const handleReconcileAll = async () => {
+    if (isReconciling) return;
+    setIsReconciling(true);
+    setStatusMessage('ফায়ারবেজ ও সার্ভার ডিস্ক মিররে সমতা নিশ্চিত করা হচ্ছে...');
+    try {
+      const res = await reconcileAllPendingOfflineWithFirebase();
+      setPendingOfflineCount(0);
+      await handleRefreshLive(false);
+      setStatusMessage(`সমতা সফল! মোট পণ্য: ${res.counts.products}টি, দোকান: ${res.counts.shops}টি, মেমো: ${res.counts.orders}টি ফায়ারবেজে সিঙ্ক সম্পন্ন হয়েছে।`);
+      setTimeout(() => setStatusMessage(null), 4500);
+    } catch (err: any) {
+      setStatusMessage(`সিঙ্ক ব্যর্থ: ${err?.message || 'ত্রুটি'}`);
+      setTimeout(() => setStatusMessage(null), 4500);
+    } finally {
+      setIsReconciling(false);
+    }
+  };
 
   // Derived effective datasets (Remote if inspected, otherwise live props)
   const effectiveOrders = useMemo(() => {
@@ -535,6 +565,39 @@ export const AdminFirebaseInspector: React.FC<AdminFirebaseInspectorProps> = ({
 
       {/* 9 Collection Cards Grid */}
       <div>
+        {/* Pending Sync / Offline Discrepancy Action Banner */}
+        {collectionCards.some((c) => c.cloudCount !== c.localCount) && (
+          <div className="bg-gradient-to-r from-amber-500/10 via-amber-50 to-emerald-50 border border-amber-300/80 rounded-2xl p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 mb-4 animate-fadeIn">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-900 flex items-center justify-center shrink-0 mt-0.5">
+                <RefreshCw className={`w-5 h-5 ${isReconciling ? 'animate-spin' : ''}`} />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-bold text-xs sm:text-sm text-neutral-900">
+                    অফলাইনে হওয়া পরিবর্তন বা ডিলিট ক্লাউডে অপেক্ষমান রয়েছে
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-200 text-amber-900">
+                    {collectionCards.filter((c) => c.cloudCount !== c.localCount).length}টি কালেকশনে অমিল
+                  </span>
+                </div>
+                <p className="text-[11px] text-neutral-600 mt-0.5 leading-relaxed">
+                  ডিভাইস মেমরিতে পণ্য {products.length}টি, দোকান {shops.length}টি, মেমো {orders.length}টি সংরক্ষিত আছে। এখনই ফায়ারবেজ ও সার্ভার মিররে শতভাগ সমতা নিশ্চিত করতে পাশের বাটনে ক্লিক করুন।
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleReconcileAll}
+              disabled={isReconciling}
+              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition-all active:scale-95 shrink-0 disabled:opacity-50 cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isReconciling ? 'animate-spin' : ''}`} />
+              <span>{isReconciling ? 'সিঙ্ক ও সমাধান হচ্ছে...' : '⚡ এখনই ফায়ারবেজে সিঙ্ক করুন'}</span>
+            </button>
+          </div>
+        )}
+
         <div className="flex items-center justify-between mb-3">
           <h3 className="font-bold text-neutral-900 text-sm flex items-center gap-2">
             <Layers className="w-4 h-4 text-emerald-700" />

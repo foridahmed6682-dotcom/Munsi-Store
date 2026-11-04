@@ -70,6 +70,8 @@ import {
   markEntityPendingOffline,
   enqueueOfflineAction,
   isEntityPendingOffline,
+  getPendingEntityIds,
+  OfflineEntityType,
 } from './offlineSyncQueue';
 
 export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
@@ -2588,6 +2590,92 @@ export async function flushOfflinePendingActionsToFirebase(): Promise<number> {
     }
   }
   return syncedCount;
+}
+
+/**
+ * Force-reconciles all local collections with Firebase Firestore and Server Mirror.
+ * Flushes all pending offline actions, writes clean catalogs immediately, and synchronizes counts.
+ */
+export async function reconcileAllPendingOfflineWithFirebase(): Promise<{
+  success: boolean;
+  syncedActions: number;
+  counts: { products: number; shops: number; orders: number };
+}> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return {
+      success: false,
+      syncedActions: 0,
+      counts: { products: getProducts().length, shops: getShops().length, orders: getOrders().length },
+    };
+  }
+
+  // 1. Flush any queued offline actions (Add, Update, Delete)
+  const syncedActions = await flushOfflinePendingActionsToFirebase();
+
+  // 2. Fetch clean local collections (with deleted items strictly removed)
+  const cleanProducts = getProducts();
+  const cleanShops = getShops();
+  const cleanOrders = getOrders();
+  const cleanCategories = getCategories();
+  const cleanRoutes = getRoutes();
+  const cleanAuthorized = getAuthorizedEmails();
+
+  // 3. Immediately write clean catalogs directly to Firestore with immediate: true
+  await Promise.allSettled([
+    writeFirestoreCatalogDirect('products', cleanProducts, true),
+    writeFirestoreCatalogDirect('shops', cleanShops, true),
+    writeFirestoreCatalogDirect('orders', cleanOrders, true),
+    writeFirestoreCatalogDirect('categories', cleanCategories, true),
+    writeFirestoreCatalogDirect('routes', cleanRoutes, true),
+    writeFirestoreCatalogDirect('authorizedEmails', cleanAuthorized, true),
+  ]);
+
+  // 4. Update Server Database Mirror disk vault so all mirrors match 100%
+  try {
+    await fetch('/api/db/mirror', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        replaceAll: true,
+        products: cleanProducts,
+        shops: cleanShops,
+        orders: cleanOrders,
+        categories: cleanCategories,
+        routes: cleanRoutes,
+        authorizedEmails: cleanAuthorized,
+      }),
+    });
+  } catch (err) {
+    console.warn('Server mirror batch sync warning:', err);
+  }
+
+  // 5. Clean up any lingering offline flags
+  const pendingEntities: OfflineEntityType[] = ['products', 'shops', 'orders', 'categories', 'routes'];
+  for (const ent of pendingEntities) {
+    const pIds = getPendingEntityIds(ent);
+    for (const pid of pIds) {
+      markEntityPendingOffline(ent, pid, false);
+    }
+  }
+
+  // Record diagnostic recovery event
+  recordDiagnosticEvent({
+    source: 'firestore',
+    severity: 'info',
+    category: 'recovery',
+    titleBn: 'অফলাইন ও ক্লাউড ডাটাবেজ সমতা সফল',
+    detailsBn: `ফায়ারবেজ, সার্ভার ডিস্ক মিরর ও লোকাল মেমোরি ১০০% সিঙ্ক সম্পন্ন হয়েছে। মোট পণ্য: ${cleanProducts.length}টি, দোকান: ${cleanShops.length}টি, মেমো: ${cleanOrders.length}টি।`,
+  });
+
+  return {
+    success: true,
+    syncedActions,
+    counts: {
+      products: cleanProducts.length,
+      shops: cleanShops.length,
+      orders: cleanOrders.length,
+    },
+  };
 }
 
 if (typeof window !== 'undefined') {

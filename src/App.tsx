@@ -172,7 +172,7 @@ import {
   getAllProductImagesFromIndexedDB,
   saveProductImageToIndexedDB,
 } from './lib/indexedDb';
-import { clearAllOfflineQueue } from './lib/offlineSyncQueue';
+import { clearAllOfflineQueue, getPendingOfflineActions } from './lib/offlineSyncQueue';
 import { setMemoryOrdersCache } from './lib/storage';
 import {
   smartLoadData,
@@ -396,6 +396,29 @@ export default function App() {
       console.warn('smartLoadData initial check notice:', err);
     });
 
+    // Auto-flush pending offline actions on mount if online
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      flushOfflinePendingActionsToFirebase().then((count) => {
+        if (count > 0) {
+          reloadData();
+        }
+      }).catch(() => {});
+    }
+
+    // Background interval: Reconcile / flush any pending offline actions every 40 seconds
+    const autoSyncInterval = setInterval(() => {
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        const pending = getPendingOfflineActions();
+        if (pending.length > 0) {
+          flushOfflinePendingActionsToFirebase().then((count) => {
+            if (count > 0) {
+              reloadData();
+            }
+          }).catch(() => {});
+        }
+      }
+    }, 40000);
+
     const cleanupNetworkSync = setupNetworkSyncListeners((freshOrders) => {
       if (freshOrders && freshOrders.length > 0) {
         setOrders(freshOrders);
@@ -501,13 +524,19 @@ export default function App() {
 
         const localItem = localMap.get(key);
         if (localItem) {
-          const validImage =
-            (remoteItem.imageUrl && !remoteItem.imageUrl.startsWith('/uploads/') ? remoteItem.imageUrl : null) ||
-            (localItem.imageUrl && localItem.imageUrl.startsWith('data:') ? localItem.imageUrl : null) ||
-            (remoteItem.imageUrl && remoteItem.imageUrl.startsWith('http') ? remoteItem.imageUrl : null) ||
-            (localItem.imageUrl && localItem.imageUrl.startsWith('http') ? localItem.imageUrl : null) ||
-            localItem.imageUrl ||
-            '';
+          const isRemoteClean = remoteItem.imageUrl && (remoteItem.imageUrl.startsWith('http') || remoteItem.imageUrl.startsWith('/uploads/'));
+          const isLocalClean = localItem.imageUrl && (localItem.imageUrl.startsWith('http') || localItem.imageUrl.startsWith('/uploads/'));
+
+          let validImage = '';
+          if (isRemoteClean) {
+            validImage = remoteItem.imageUrl;
+          } else if (isLocalClean) {
+            validImage = localItem.imageUrl;
+          } else if (remoteItem.imageUrl) {
+            validImage = remoteItem.imageUrl;
+          } else {
+            validImage = localItem.imageUrl || '';
+          }
 
           map.set(key, {
             ...localItem,
@@ -687,6 +716,7 @@ export default function App() {
       if (unsubscribeDueCollections) unsubscribeDueCollections();
       if (unsubscribeDailyExpenses) unsubscribeDailyExpenses();
       cleanupNetworkSync();
+      clearInterval(autoSyncInterval);
     };
   }, [reloadData]);
 
