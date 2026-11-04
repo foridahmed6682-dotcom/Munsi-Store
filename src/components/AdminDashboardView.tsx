@@ -182,6 +182,7 @@ interface AdminDashboardViewProps {
   onDeleteEverythingAllAtOnce?: () => void;
   onRequestDeletePermission?: (req: Omit<DeletePermissionRequest, 'isOpen'>) => void;
   onForceDeepCloudRecovery?: () => Promise<void>;
+  onReloadData?: () => void;
 }
 
 type AdminSubTab = 'overview' | 'firebase_inspector' | 'storefront' | 'categories' | 'products' | 'routes' | 'access' | 'analytics' | 'due_history' | 'push' | 'settings' | 'backup' | 'print_center' | 'delete_center' | 'diagnostics';
@@ -274,6 +275,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   onDeleteEverythingAllAtOnce,
   onRequestDeletePermission,
   onForceDeepCloudRecovery,
+  onReloadData,
 }) => {
   const [subTab, setSubTab] = useState<AdminSubTab>('overview');
 
@@ -4977,6 +4979,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           businessInfo={bizInfo}
           onViewMemo={onViewMemo}
           onNavigateTab={onNavigateTab}
+          onReloadData={onReloadData}
         />
       )}
 

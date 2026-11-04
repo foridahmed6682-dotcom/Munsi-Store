@@ -58,6 +58,7 @@ interface AdminFirebaseInspectorProps {
   businessInfo?: BusinessInfo;
   onViewMemo?: (order: Order) => void;
   onNavigateTab?: (tab: any) => void;
+  onReloadData?: () => void;
 }
 
 type CollectionType =
@@ -82,7 +83,8 @@ export const AdminFirebaseInspector: React.FC<AdminFirebaseInspectorProps> = ({
   dailyExpenses = [],
   businessInfo,
   onViewMemo,
-  onNavigateTab
+  onNavigateTab,
+  onReloadData,
 }) => {
   const [activeCollection, setActiveCollection] = useState<CollectionType>('orders');
   const [searchQuery, setSearchQuery] = useState('');
@@ -146,12 +148,13 @@ export const AdminFirebaseInspector: React.FC<AdminFirebaseInspectorProps> = ({
   const handleReconcileAll = async () => {
     if (isReconciling) return;
     setIsReconciling(true);
-    setStatusMessage('ফায়ারবেজ ও সার্ভার ডিস্ক মিররে সমতা নিশ্চিত করা হচ্ছে...');
+    setStatusMessage('ফায়ারবেজ ও সার্ভার ডিস্ক মিররে শতভাগ সমতা নিশ্চিত করা হচ্ছে...');
     try {
       const res = await reconcileAllPendingOfflineWithFirebase();
       setPendingOfflineCount(0);
+      onReloadData?.();
       await handleRefreshLive(false);
-      setStatusMessage(`সমতা সফল! মোট পণ্য: ${res.counts.products}টি, দোকান: ${res.counts.shops}টি, মেমো: ${res.counts.orders}টি ফায়ারবেজে সিঙ্ক সম্পন্ন হয়েছে।`);
+      setStatusMessage(`সমতা সফল! ফায়ারবেজে থাকা সকল পণ্য (${res.counts.products}টি), দোকান (${res.counts.shops}টি) ও মেমো (${res.counts.orders}টি) শতভাগ ডিভাইসে সিঙ্ক হয়েছে।`);
       setTimeout(() => setStatusMessage(null), 4500);
     } catch (err: any) {
       setStatusMessage(`সিঙ্ক ব্যর্থ: ${err?.message || 'ত্রুটি'}`);

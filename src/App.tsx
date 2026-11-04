@@ -520,7 +520,12 @@ export default function App() {
       // 1. Remote (Firebase) items are authoritative: all remote properties overwrite local properties
       remoteArr.forEach((remoteItem) => {
         const key = remoteItem?.[idKey] ? String(remoteItem[idKey]) : '';
-        if (!key || deletedIds.has(key)) return;
+        if (!key) return;
+
+        // Unblock active remote item if previously in deletedIds
+        if (deletedIds.has(key)) {
+          deletedIds.delete(key);
+        }
 
         const localItem = localMap.get(key);
         if (localItem) {
@@ -595,6 +600,21 @@ export default function App() {
             const merged = mergeById(getRoutes(), mirror.routes, getDeletedRouteIds());
             saveRoutes(merged);
             setRoutes(merged);
+            updatedAny = true;
+          }
+          if (Array.isArray(mirror.dueCollections) && mirror.dueCollections.length > 0) {
+            const merged = mergeById(getDueCollections(), mirror.dueCollections, new Set());
+            merged.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+            saveDueCollections(merged);
+            setDueCollections(merged);
+            updatedAny = true;
+          }
+          if (Array.isArray(mirror.dailyExpenses) && mirror.dailyExpenses.length > 0) {
+            const merged = mergeById(getDailyExpenses(), mirror.dailyExpenses, new Set());
+            merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            saveDailyExpenses(merged);
+            setDailyExpenses(merged);
+            updatedAny = true;
           }
           if (mirror.businessInfo && typeof mirror.businessInfo === 'object') {
             const mergedBiz = { ...getBusinessInfo(), ...mirror.businessInfo };
@@ -982,10 +1002,17 @@ export default function App() {
       const collectionRecord: DueCollectionRecord = {
         ...localRecord,
         shopName: targetShop?.name || localRecord.shopName || 'শপ',
-        collectedBy: userProfile?.displayName || 'সেলস এজেন্ট',
+        collectedBy: userProfile?.displayName || (activeSimulatedRole === 'dsr' ? 'ডিএসআর হাবিব' : activeSimulatedRole === 'admin' ? 'এডমিন' : 'সেলস এজেন্ট'),
         collectedByUid: userProfile?.uid,
         collectorRole: activeSimulatedRole,
       };
+
+      // Ensure local memory cache & IndexedDB have the full record with shop name and collector
+      const existingCols = getDueCollections();
+      const updatedCols = existingCols.map((c) => (c.id === localRecord.id ? collectionRecord : c));
+      saveDueCollections(updatedCols);
+      setDueCollections(updatedCols);
+
       saveDueCollectionToCloud(collectionRecord).catch(() => {});
 
       if (targetShop) {
@@ -2952,6 +2979,7 @@ export default function App() {
                 onDeleteEverythingAllAtOnce={handleDeleteEverythingAllAtOnce}
                 onRequestDeletePermission={requestDeletePermission}
                 onForceDeepCloudRecovery={handleForceCloudRecovery}
+                onReloadData={reloadData}
               />
               </ErrorBoundary>
             )}

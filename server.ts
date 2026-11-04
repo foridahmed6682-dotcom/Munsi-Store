@@ -345,6 +345,8 @@ async function bootstrapServerMirrorFromFirestore() {
       shopCatalog,
       orderCatalog,
       authCatalog,
+      dueCatalog,
+      expCatalog,
     ] = await Promise.all([
       readFirestoreDocViaPatch('settings/businessInfo'),
       readFirestoreDocViaPatch('authorizedEmails/foridahmed6682_gmail_com'),
@@ -354,6 +356,8 @@ async function bootstrapServerMirrorFromFirestore() {
       readFirestoreDocViaPatch('settings/cloud_catalog_shops'),
       readFirestoreDocViaPatch('settings/cloud_catalog_orders'),
       readFirestoreDocViaPatch('settings/cloud_catalog_authorizedEmails'),
+      readFirestoreDocViaPatch('settings/cloud_catalog_dueCollections'),
+      readFirestoreDocViaPatch('settings/cloud_catalog_dailyExpenses'),
     ]);
 
     if (bizDoc && Object.keys(bizDoc).length > 0) {
@@ -411,6 +415,16 @@ async function bootstrapServerMirrorFromFirestore() {
         cloudAuths,
         'email'
       );
+      changed = true;
+    }
+    const cloudDues = parseCatalog(dueCatalog);
+    if (cloudDues.length > 0) {
+      serverDbMirror.dueCollections = mergeArrayById(serverDbMirror.dueCollections, cloudDues, 'id');
+      changed = true;
+    }
+    const cloudExps = parseCatalog(expCatalog);
+    if (cloudExps.length > 0) {
+      serverDbMirror.dailyExpenses = mergeArrayById(serverDbMirror.dailyExpenses, cloudExps, 'id');
       changed = true;
     }
 

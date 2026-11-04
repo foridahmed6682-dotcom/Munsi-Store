@@ -63,6 +63,7 @@ import {
   getDailyExpenses,
   saveDailyExpenses,
   recordDiagnosticEvent,
+  unblockActiveRemoteIds,
 } from './storage';
 import {
   getPendingOfflineActions,
@@ -385,41 +386,44 @@ export function mergeLocalAndCloud<T extends Record<string, any>>(
       }
     }
 
-    // 1. Remote (Firebase) items are top priority: all remote fields overwrite local fields!
+    // 1. Remote (Firebase) items are authoritative Single Source of Truth!
     for (const item of remoteItems) {
       const key = item?.[idField] ? String(item[idField]) : '';
-      if (key && !deletedIds.has(key)) {
-        const local = localMap.get(key);
-        if (local) {
-          const isRemoteClean = item.imageUrl && (item.imageUrl.startsWith('http') || item.imageUrl.startsWith('/uploads/'));
-          const isLocalClean = local.imageUrl && (local.imageUrl.startsWith('http') || local.imageUrl.startsWith('/uploads/'));
+      if (!key) continue;
 
-          let bestImage = '';
-          if (isRemoteClean) {
-            bestImage = item.imageUrl;
-          } else if (isLocalClean) {
-            bestImage = local.imageUrl;
-          } else if (item.imageUrl) {
-            bestImage = item.imageUrl;
-          } else {
-            bestImage = local.imageUrl || '';
-          }
+      // If an item actively exists in Firebase, unblock it so it is never dropped by stale local tombstones
+      if (deletedIds.has(key)) {
+        deletedIds.delete(key);
+      }
 
-          map.set(key, {
-            ...local,
-            ...item, // Remote (Firebase) overwrites local!
-            ...('imageUrl' in item || 'imageUrl' in local ? { imageUrl: bestImage } : {}),
-            _isOfflinePending: false,
-          });
+      const local = localMap.get(key);
+      if (local) {
+        const isRemoteClean = item.imageUrl && (item.imageUrl.startsWith('http') || item.imageUrl.startsWith('/uploads/'));
+        const isLocalClean = local.imageUrl && (local.imageUrl.startsWith('http') || local.imageUrl.startsWith('/uploads/'));
+
+        let bestImage = '';
+        if (isRemoteClean) {
+          bestImage = item.imageUrl;
+        } else if (isLocalClean) {
+          bestImage = local.imageUrl;
+        } else if (item.imageUrl) {
+          bestImage = item.imageUrl;
         } else {
-          map.set(key, { ...item, _isOfflinePending: false });
+          bestImage = local.imageUrl || '';
         }
+
+        map.set(key, {
+          ...local,
+          ...item, // Remote (Firebase) overwrites local!
+          ...('imageUrl' in item || 'imageUrl' in local ? { imageUrl: bestImage } : {}),
+          _isOfflinePending: false,
+        });
+      } else {
+        map.set(key, { ...item, _isOfflinePending: false });
       }
     }
 
-    // 2. Preserve local items:
-    // If not server authoritative (e.g. background mirror poll or offline cache), ALWAYS preserve local items!
-    // If server authoritative, preserve items created/edited offline that are pending sync.
+    // 2. Preserve local items created offline that are pending sync
     localMap.forEach((localItem, key) => {
       if (map.has(key) || deletedIds.has(key)) return;
       const isPending = (localItem as any)._isOfflinePending === true;
@@ -455,6 +459,10 @@ function getLocalCatalogFallback(catalogKey: string): any[] {
       return getRoutes();
     case 'authorizedEmails':
       return getAuthorizedEmails();
+    case 'dueCollections':
+      return getDueCollections();
+    case 'dailyExpenses':
+      return getDailyExpenses();
     default:
       return [];
   }
@@ -2609,48 +2617,110 @@ export async function reconcileAllPendingOfflineWithFirebase(): Promise<{
     };
   }
 
-  // 1. Flush any queued offline actions (Add, Update, Delete)
+  // 1. Flush any queued offline actions (Add, Update, Delete) first
   const syncedActions = await flushOfflinePendingActionsToFirebase();
 
-  // 2. Fetch clean local collections (with deleted items strictly removed)
-  const cleanProducts = getProducts();
-  const cleanShops = getShops();
-  const cleanOrders = getOrders();
-  const cleanCategories = getCategories();
-  const cleanRoutes = getRoutes();
-  const cleanAuthorized = getAuthorizedEmails();
+  // 2. Fetch authoritative cloud data directly from Firestore
+  let remoteOrders: Order[] = [];
+  let remoteShops: Shop[] = [];
+  let remoteProds: Product[] = [];
+  let remoteCats: Category[] = [];
+  let remoteRoutes: Route[] = [];
+  let remoteDues: DueCollectionRecord[] = [];
+  let remoteExps: DailyExpenseRecord[] = [];
 
-  // 3. Immediately write clean catalogs directly to Firestore with immediate: true
+  try {
+    const [cOrders, cShops, cProds, cCats, cRoutes, cDues, cExps] = await Promise.all([
+      readFirestoreCatalogDirect<Order>('orders'),
+      readFirestoreCatalogDirect<Shop>('shops'),
+      readFirestoreCatalogDirect<Product>('products'),
+      readFirestoreCatalogDirect<Category>('categories'),
+      readFirestoreCatalogDirect<Route>('routes'),
+      readFirestoreCatalogDirect<DueCollectionRecord>('dueCollections'),
+      readFirestoreCatalogDirect<DailyExpenseRecord>('dailyExpenses'),
+    ]);
+    remoteOrders = cOrders || [];
+    remoteShops = cShops || [];
+    remoteProds = cProds || [];
+    remoteCats = cCats || [];
+    remoteRoutes = cRoutes || [];
+    remoteDues = cDues || [];
+    remoteExps = cExps || [];
+  } catch {
+    // If direct read failed, try server mirror
+    const mirror = await fetchServerDatabaseMirror().catch(() => null);
+    if (mirror) {
+      remoteOrders = mirror.orders || [];
+      remoteShops = mirror.shops || [];
+      remoteProds = mirror.products || [];
+      remoteCats = mirror.categories || [];
+      remoteRoutes = mirror.routes || [];
+      remoteDues = mirror.dueCollections || [];
+      remoteExps = mirror.dailyExpenses || [];
+    }
+  }
+
+  // 3. Unblock all IDs that exist in Firebase so local tombstones never hide them
+  if (remoteOrders.length > 0) unblockActiveRemoteIds('orders', remoteOrders.map((o) => o.id));
+  if (remoteShops.length > 0) unblockActiveRemoteIds('shops', remoteShops.map((s) => s.id));
+  if (remoteProds.length > 0) unblockActiveRemoteIds('products', remoteProds.map((p) => p.id));
+  if (remoteCats.length > 0) unblockActiveRemoteIds('categories', remoteCats.map((c) => c.id));
+  if (remoteRoutes.length > 0) unblockActiveRemoteIds('routes', remoteRoutes.map((r) => r.id));
+
+  // 4. Merge local with authoritative remote
+  const finalOrders = mergeLocalAndCloud(getOrders(), remoteOrders, getDeletedOrderIds(), 'id', true)
+    .sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
+  const finalShops = mergeLocalAndCloud(getShops(), remoteShops, getDeletedShopIds(), 'id', true);
+  const finalProds = mergeLocalAndCloud(getProducts(), remoteProds, getDeletedProductIds(), 'id', true);
+  const finalCats = mergeLocalAndCloud(getCategories(), remoteCats, getDeletedCategoryIds(), 'id', true);
+  const finalRoutes = mergeLocalAndCloud(getRoutes(), remoteRoutes, getDeletedRouteIds(), 'id', true);
+  const finalDues = mergeLocalAndCloud(getDueCollections(), remoteDues, new Set(), 'id', true)
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const finalExps = mergeLocalAndCloud(getDailyExpenses(), remoteExps, new Set(), 'id', true)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  // 5. Save directly to local memory cache and IndexedDB
+  saveOrders(finalOrders);
+  saveShops(finalShops);
+  saveProducts(finalProds);
+  saveCategories(finalCats);
+  saveRoutes(finalRoutes);
+  saveDueCollections(finalDues);
+  saveDailyExpenses(finalExps);
+
+  // 6. Write to Firestore catalogs so cloud catalogs have complete merged set
   await Promise.allSettled([
-    writeFirestoreCatalogDirect('products', cleanProducts, true),
-    writeFirestoreCatalogDirect('shops', cleanShops, true),
-    writeFirestoreCatalogDirect('orders', cleanOrders, true),
-    writeFirestoreCatalogDirect('categories', cleanCategories, true),
-    writeFirestoreCatalogDirect('routes', cleanRoutes, true),
-    writeFirestoreCatalogDirect('authorizedEmails', cleanAuthorized, true),
+    writeFirestoreCatalogDirect('products', finalProds, true),
+    writeFirestoreCatalogDirect('shops', finalShops, true),
+    writeFirestoreCatalogDirect('orders', finalOrders, true),
+    writeFirestoreCatalogDirect('categories', finalCats, true),
+    writeFirestoreCatalogDirect('routes', finalRoutes, true),
+    writeFirestoreCatalogDirect('dueCollections', finalDues, true),
+    writeFirestoreCatalogDirect('dailyExpenses', finalExps, true),
   ]);
 
-  // 4. Update Server Database Mirror disk vault so all mirrors match 100%
+  // 7. Update Server Database Mirror disk vault
   try {
     await fetch('/api/db/mirror', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         replaceAll: true,
-        products: cleanProducts,
-        shops: cleanShops,
-        orders: cleanOrders,
-        categories: cleanCategories,
-        routes: cleanRoutes,
-        authorizedEmails: cleanAuthorized,
+        products: finalProds,
+        shops: finalShops,
+        orders: finalOrders,
+        categories: finalCats,
+        routes: finalRoutes,
+        dueCollections: finalDues,
+        dailyExpenses: finalExps,
       }),
     });
   } catch (err) {
     console.warn('Server mirror batch sync warning:', err);
   }
 
-  // 5. Clean up any lingering offline flags
-  const pendingEntities: OfflineEntityType[] = ['products', 'shops', 'orders', 'categories', 'routes'];
+  // 8. Clean up any lingering offline flags
+  const pendingEntities: OfflineEntityType[] = ['products', 'shops', 'orders', 'categories', 'routes', 'dueCollections', 'dailyExpenses'];
   for (const ent of pendingEntities) {
     const pIds = getPendingEntityIds(ent);
     for (const pid of pIds) {
@@ -2664,16 +2734,16 @@ export async function reconcileAllPendingOfflineWithFirebase(): Promise<{
     severity: 'info',
     category: 'recovery',
     titleBn: 'অফলাইন ও ক্লাউড ডাটাবেজ সমতা সফল',
-    detailsBn: `ফায়ারবেজ, সার্ভার ডিস্ক মিরর ও লোকাল মেমোরি ১০০% সিঙ্ক সম্পন্ন হয়েছে। মোট পণ্য: ${cleanProducts.length}টি, দোকান: ${cleanShops.length}টি, মেমো: ${cleanOrders.length}টি।`,
+    detailsBn: `ফায়ারবেজ, সার্ভার ডিস্ক মিরর ও লোকাল মেমোরি ১০০% সিঙ্ক সম্পন্ন হয়েছে। মোট পণ্য: ${finalProds.length}টি, দোকান: ${finalShops.length}টি, মেমো: ${finalOrders.length}টি।`,
   });
 
   return {
     success: true,
     syncedActions,
     counts: {
-      products: cleanProducts.length,
-      shops: cleanShops.length,
-      orders: cleanOrders.length,
+      products: finalProds.length,
+      shops: finalShops.length,
+      orders: finalOrders.length,
     },
   };
 }

@@ -652,6 +652,58 @@ export function addDeletedRouteId(id: string) {
   safeSetLocalStorage(STORAGE_KEYS.DELETED_ROUTES, JSON.stringify(Array.from(set)));
 }
 
+export function unblockDeletedEntityId(type: 'products' | 'shops' | 'orders' | 'categories' | 'routes', id: string) {
+  if (!id) return;
+  const keyMap: Record<string, string> = {
+    products: STORAGE_KEYS.DELETED_PRODUCTS,
+    shops: STORAGE_KEYS.DELETED_SHOPS,
+    orders: STORAGE_KEYS.DELETED_ORDERS,
+    categories: STORAGE_KEYS.DELETED_CATEGORIES,
+    routes: STORAGE_KEYS.DELETED_ROUTES,
+  };
+  const key = keyMap[type];
+  if (!key) return;
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const list: string[] = JSON.parse(raw);
+      const filtered = list.filter((x) => x !== id);
+      if (filtered.length !== list.length) {
+        safeSetLocalStorage(key, JSON.stringify(filtered));
+      }
+    }
+  } catch {}
+}
+
+export function unblockActiveRemoteIds(type: 'products' | 'shops' | 'orders' | 'categories' | 'routes', ids: string[]) {
+  if (!Array.isArray(ids) || ids.length === 0) return;
+  const keyMap: Record<string, string> = {
+    products: STORAGE_KEYS.DELETED_PRODUCTS,
+    shops: STORAGE_KEYS.DELETED_SHOPS,
+    orders: STORAGE_KEYS.DELETED_ORDERS,
+    categories: STORAGE_KEYS.DELETED_CATEGORIES,
+    routes: STORAGE_KEYS.DELETED_ROUTES,
+  };
+  const key = keyMap[type];
+  if (!key) return;
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const set = new Set<string>(JSON.parse(raw));
+      let changed = false;
+      ids.forEach((id) => {
+        if (set.has(id)) {
+          set.delete(id);
+          changed = true;
+        }
+      });
+      if (changed) {
+        safeSetLocalStorage(key, JSON.stringify(Array.from(set)));
+      }
+    }
+  } catch {}
+}
+
 /**
  * Unblocks all IDs present in a restored backup/snapshot so saveProducts/saveShops/saveOrders
  * never filter them out, and in 'replace' mode marks removed IDs as deleted so cloud listeners
