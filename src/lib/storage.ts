@@ -342,7 +342,11 @@ export function getDiagnosticEvents(): ClientDiagnosticEvent[] {
   try {
     const raw = localStorage.getItem(DIAG_STORAGE_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    // Filter out benign browser cross-origin script error noise so it doesn't alarm user
+    return parsed.filter(
+      (e) => !e.technicalDetails?.includes('Script error.') && !e.detailsBn?.includes('Script error.')
+    );
   } catch {
     return [];
   }

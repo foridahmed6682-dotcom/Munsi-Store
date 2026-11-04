@@ -356,6 +356,13 @@ export const AdminDiagnosticsMonitor: React.FC<AdminDiagnosticsMonitorProps> = (
         // Sync clean compact products list to Firestore
         await writeFirestoreCatalogDirect('products', res.updatedProducts, true);
 
+        // Also update server mirror disk vault immediately so it permanently retains the clean URLs
+        fetch('/api/db/mirror', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ replaceAll: true, products: res.updatedProducts }),
+        }).catch(() => {});
+
         // Record diagnostic recovery event
         recordDiagnosticEvent({
           source: 'storage',

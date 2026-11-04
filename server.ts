@@ -308,13 +308,14 @@ function saveServerDbMirror() {
         if (Array.isArray(existing?.products)) {
           const imgMap = new Map<string, string>();
           for (const ep of existing.products) {
-            if (ep?.id && ep?.imageUrl && (ep.imageUrl.startsWith('data:image') || ep.imageUrl.startsWith('http'))) {
+            if (ep?.id && ep?.imageUrl && (ep.imageUrl.startsWith('data:image') || ep.imageUrl.startsWith('http') || ep.imageUrl.startsWith('/uploads/'))) {
               imgMap.set(ep.id, ep.imageUrl);
             }
           }
           if (imgMap.size > 0 && Array.isArray(serverDbMirror.products)) {
             for (const sp of serverDbMirror.products) {
-              if ((!sp.imageUrl || sp.imageUrl.startsWith('/uploads/')) && imgMap.has(sp.id)) {
+              // Only assign fallback image if product has NO image at all
+              if (!sp.imageUrl && imgMap.has(sp.id)) {
                 sp.imageUrl = imgMap.get(sp.id);
               }
             }

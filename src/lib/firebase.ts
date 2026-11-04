@@ -389,11 +389,19 @@ export function mergeLocalAndCloud<T extends Record<string, any>>(
       if (key && !deletedIds.has(key)) {
         const local = localMap.get(key);
         if (local) {
-          const bestImage =
-            (item.imageUrl && !item.imageUrl.startsWith('/uploads/') ? item.imageUrl : null) ||
-            (local.imageUrl && local.imageUrl.startsWith('data:') ? local.imageUrl : null) ||
-            local.imageUrl ||
-            '';
+          const isRemoteClean = item.imageUrl && (item.imageUrl.startsWith('http') || item.imageUrl.startsWith('/uploads/'));
+          const isLocalClean = local.imageUrl && (local.imageUrl.startsWith('http') || local.imageUrl.startsWith('/uploads/'));
+
+          let bestImage = '';
+          if (isRemoteClean) {
+            bestImage = item.imageUrl;
+          } else if (isLocalClean) {
+            bestImage = local.imageUrl;
+          } else if (item.imageUrl) {
+            bestImage = item.imageUrl;
+          } else {
+            bestImage = local.imageUrl || '';
+          }
 
           map.set(key, {
             ...local,

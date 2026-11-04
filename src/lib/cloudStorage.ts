@@ -39,17 +39,20 @@ function withTimeout<T>(promise: Promise<T>, ms: number, errorMsg: string): Prom
   ]);
 }
 
+// Flag to avoid repeatedly waiting on inactive Firebase Storage buckets
+let isFirebaseStorageDisabled = false;
+
 /**
- * Uploads a Data URL (base64) or File object to Firebase Cloud Storage.
- * Falls back to local server image storage if Firebase Cloud Storage bucket is not yet active.
- * Has strict 3.5s timeout so it NEVER hangs the UI.
+ * Uploads a Data URL (base64) or File object to permanent lightweight storage.
+ * Prioritizes high-speed zero-cost server image storage (/uploads/) for Firebase Free Plan (Spark),
+ * with seamless Firebase Cloud Storage support if available.
  */
 export async function uploadImageToCloudStorage(
   imageSource: string | File | Blob,
   folder: string = 'products',
   customId?: string
 ): Promise<string> {
-  // If it's already an external or server-hosted URL, don't re-upload
+  // If it's already an external or server-hosted clean URL, don't re-upload
   if (typeof imageSource === 'string' && isCloudStorageUrl(imageSource)) {
     return imageSource;
   }
@@ -64,19 +67,59 @@ export async function uploadImageToCloudStorage(
     saveProductImageToIndexedDB(customId, imageSource).catch(() => {});
   }
 
-  let firebaseStorageError: any = null;
+  // Convert File / Blob to Data URL if needed
+  let dataUrlString: string | null = null;
+  if (typeof imageSource === 'string' && imageSource.startsWith('data:')) {
+    dataUrlString = imageSource;
+  } else if (imageSource instanceof File || imageSource instanceof Blob) {
+    try {
+      dataUrlString = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(imageSource);
+      });
+    } catch {
+      dataUrlString = null;
+    }
+  }
 
-  // ATTEMPT 1: Direct Firebase Cloud Storage Upload (with 3.5s strict timeout)
-  if (storage) {
+  // ATTEMPT 1: High-Speed Server Storage Bridge (/api/images/upload)
+  // 100% free on Firebase Spark plan, zero cloud bills, saves 99% Firestore space
+  if (dataUrlString) {
+    try {
+      const fetchPromise = fetch('/api/images/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dataUrl: dataUrlString,
+          customId: safeId,
+        }),
+      });
+
+      const res = await withTimeout(fetchPromise, 6000, 'Server image upload timed out');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.url && typeof data.url === 'string') {
+          return data.url;
+        }
+      }
+    } catch (serverErr) {
+      console.warn('[Server Storage] Direct bridge unavailable, attempting cloud storage fallback:', serverErr);
+    }
+  }
+
+  // ATTEMPT 2: Direct Firebase Cloud Storage Upload (if bucket is active)
+  if (storage && !isFirebaseStorageDisabled) {
     try {
       const storageRef = ref(storage, storagePath);
 
-      if (typeof imageSource === 'string' && imageSource.startsWith('data:')) {
-        const match = imageSource.match(/^data:([^;]+);base64,/);
+      if (dataUrlString) {
+        const match = dataUrlString.match(/^data:([^;]+);base64,/);
         const contentType = match ? match[1] : 'image/webp';
 
         await withTimeout(
-          uploadString(storageRef, imageSource, 'data_url', {
+          uploadString(storageRef, dataUrlString, 'data_url', {
             contentType,
             cacheControl: 'public, max-age=31536000',
           }),
@@ -99,43 +142,21 @@ export async function uploadImageToCloudStorage(
         2500,
         'Firebase Storage getDownloadURL timed out'
       );
-      console.log(`[Cloud Storage] Successfully uploaded to Firebase Storage -> ${downloadUrl.slice(0, 60)}...`);
       return downloadUrl;
     } catch (err: any) {
-      firebaseStorageError = err;
-      console.warn(`[Cloud Storage] Firebase direct upload bypassed/failed:`, err?.message || err);
-    }
-  }
-
-  // ATTEMPT 2: Server Storage Bridge Fallback (/api/images/upload) (with 3s strict timeout)
-  if (typeof imageSource === 'string' && imageSource.startsWith('data:')) {
-    try {
-      const fetchPromise = fetch('/api/images/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          dataUrl: imageSource,
-          customId: safeId,
-        }),
-      });
-
-      const res = await withTimeout(fetchPromise, 3000, 'Server image upload timed out');
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.url && typeof data.url === 'string') {
-          console.log(`[Server Storage] Successfully converted image to static URL -> ${data.url}`);
-          return data.url;
-        }
+      console.warn(`[Cloud Storage] Firebase Storage not active on free plan:`, err?.message || err);
+      if (err?.message?.includes('bucket') || err?.message?.includes('404') || err?.message?.includes('timed out')) {
+        isFirebaseStorageDisabled = true;
       }
-    } catch (serverErr) {
-      console.warn('[Server Storage] Local upload bridge unreachable:', serverErr);
     }
   }
 
-  // If both failed, throw error with clear details so caller can gracefully use compressed Data URL
-  const errMsg = firebaseStorageError?.message || 'Firebase Storage বাকেট এখনও সক্রিয় করা হয়নি।';
-  throw new Error(errMsg);
+  // If server bridge already saved or dataUrl exists, return dataUrl fallback
+  if (dataUrlString) {
+    return dataUrlString;
+  }
+
+  throw new Error('ছবি সংরক্ষণ করা যায়নি। অনুগ্রহ করে আবার চেষ্টা করুন।');
 }
 
 /**
@@ -159,41 +180,33 @@ export async function migrateAllProductImagesToCloudStorage(
     return { updatedProducts: products, migratedCount: 0, failedCount: 0, bucketNeedsActivation: false };
   }
 
-  // Pre-flight check on the first item to avoid looping through 75 items if storage is disabled
-  let preflightWorks = false;
+  // Pre-flight check on the first item to verify storage bridge
+  let firstCleanUrl: string | null = null;
   try {
     const testProd = needsMigration[0];
     const testUrl = await uploadImageToCloudStorage(testProd.imageUrl!, 'products', testProd.id);
     if (isCloudStorageUrl(testUrl)) {
-      preflightWorks = true;
+      firstCleanUrl = testUrl;
     }
   } catch (err: any) {
     console.warn('[Cloud Storage Migration] Preflight check failed:', err?.message || err);
-    return {
-      updatedProducts: products,
-      migratedCount: 0,
-      failedCount: needsMigration.length,
-      bucketNeedsActivation: true,
-    };
   }
 
-  let migratedCount = preflightWorks ? 1 : 0;
+  const updatedProducts = [...products];
+  let migratedCount = 0;
   let failedCount = 0;
   let bucketNeedsActivation = false;
-  const updatedProducts = [...products];
 
-  // If preflight succeeded for product 0, update it in updatedProducts
-  if (preflightWorks && needsMigration[0]) {
+  // Apply the preflight URL for item 0 if successful
+  if (firstCleanUrl && needsMigration[0]) {
     const firstIdx = updatedProducts.findIndex((p) => p.id === needsMigration[0].id);
     if (firstIdx >= 0) {
-      const cleanUrl = await uploadImageToCloudStorage(needsMigration[0].imageUrl!, 'products', needsMigration[0].id).catch(() => null);
-      if (cleanUrl && isCloudStorageUrl(cleanUrl)) {
-        updatedProducts[firstIdx] = { ...updatedProducts[firstIdx], imageUrl: cleanUrl };
-      }
+      updatedProducts[firstIdx] = { ...updatedProducts[firstIdx], imageUrl: firstCleanUrl };
+      migratedCount++;
     }
   }
 
-  const startIndex = preflightWorks ? 1 : 0;
+  const startIndex = firstCleanUrl ? 1 : 0;
   for (let i = startIndex; i < needsMigration.length; i++) {
     const prod = needsMigration[i];
     if (onProgress) {

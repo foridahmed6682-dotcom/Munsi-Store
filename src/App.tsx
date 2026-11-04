@@ -422,12 +422,19 @@ export default function App() {
 
     const handleGlobalRuntimeError = (event: ErrorEvent) => {
       const msg = event?.message || String(event?.error || 'অজানা রানটাইম এরর');
+      // Ignore benign browser/cross-origin errors, harmless extension errors, or resize observers
       if (
+        !msg ||
+        msg === 'Script error.' ||
+        msg.includes('Script error') ||
+        (event?.lineno === 0 && (!event?.error || !event?.filename)) ||
         msg.includes('ResizeObserver') ||
         msg.includes('WebSocket') ||
         msg.includes('_leaflet_pos') ||
         msg.includes('_leaflet_id') ||
-        msg.includes('leaflet')
+        msg.includes('leaflet') ||
+        msg.includes('ChunkLoadError') ||
+        msg.includes('Loading chunk')
       ) return;
       recordDiagnosticEvent({
         source: 'client',
