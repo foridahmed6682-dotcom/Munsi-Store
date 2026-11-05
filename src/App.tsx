@@ -172,7 +172,7 @@ import {
   getAllProductImagesFromIndexedDB,
   saveProductImageToIndexedDB,
 } from './lib/indexedDb';
-import { clearAllOfflineQueue, getPendingOfflineActions } from './lib/offlineSyncQueue';
+import { clearAllOfflineQueue, getPendingOfflineActions, isEntityPendingDelete } from './lib/offlineSyncQueue';
 import { setMemoryOrdersCache } from './lib/storage';
 import {
   smartLoadData,
@@ -521,6 +521,9 @@ export default function App() {
       remoteArr.forEach((remoteItem) => {
         const key = remoteItem?.[idKey] ? String(remoteItem[idKey]) : '';
         if (!key) return;
+
+        // If currently queued for offline deletion on this device, do NOT resurrect it!
+        if (isEntityPendingDelete(key)) return;
 
         // Unblock active remote item if previously in deletedIds
         if (deletedIds.has(key)) {

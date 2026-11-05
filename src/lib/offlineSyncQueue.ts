@@ -124,6 +124,22 @@ export function isEntityPendingOffline(entity: OfflineEntityType, entityId: stri
   }
 }
 
+export function isEntityPendingDelete(entityId: string): boolean {
+  const queue = getPendingOfflineActions();
+  return queue.some((act) => act.type === 'delete' && act.entityId === entityId);
+}
+
+export function getPendingDeleteEntityIds(): Set<string> {
+  const queue = getPendingOfflineActions();
+  const set = new Set<string>();
+  for (const act of queue) {
+    if (act.type === 'delete' && act.entityId) {
+      set.add(act.entityId);
+    }
+  }
+  return set;
+}
+
 export function markEntityPendingOffline(
   entity: OfflineEntityType,
   entityId: string,

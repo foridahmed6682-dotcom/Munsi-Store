@@ -71,6 +71,8 @@ import {
   markEntityPendingOffline,
   enqueueOfflineAction,
   isEntityPendingOffline,
+  isEntityPendingDelete,
+  getPendingDeleteEntityIds,
   getPendingEntityIds,
   OfflineEntityType,
 } from './offlineSyncQueue';
@@ -389,7 +391,10 @@ export function mergeLocalAndCloud<T extends Record<string, any>>(
     // 1. Remote (Firebase) items are authoritative Single Source of Truth!
     for (const item of remoteItems) {
       const key = item?.[idField] ? String(item[idField]) : '';
-      if (!key) continue;
+      // If an offline delete is actively pending on this device, do NOT resurrect it!
+      if (isEntityPendingDelete(key)) {
+        continue;
+      }
 
       // If an item actively exists in Firebase, unblock it so it is never dropped by stale local tombstones
       if (deletedIds.has(key)) {
@@ -1545,6 +1550,7 @@ export async function deleteShopFromCloud(shopId: string) {
   // 1. Direct real-time Firestore deletion
   if (!isFirestoreQuotaExhausted()) {
     deleteDoc(doc(db, 'shops', shopId)).catch((error) => {
+      enqueueOfflineAction('delete', 'shops', shopId);
       handleFirestoreError(error, OperationType.DELETE, path);
     });
   }
@@ -1573,6 +1579,7 @@ export async function saveProductToCloud(product: Product) {
   // 1. Direct real-time Firestore write
   if (!isFirestoreQuotaExhausted()) {
     setDoc(doc(db, 'products', product.id), cleaned).catch((error) => {
+      enqueueOfflineAction('upsert', 'products', product.id, cleaned);
       handleFirestoreError(error, OperationType.WRITE, path);
     });
   }
@@ -1594,6 +1601,7 @@ export async function deleteProductFromCloud(productId: string) {
   // 1. Direct real-time Firestore deletion
   if (!isFirestoreQuotaExhausted()) {
     deleteDoc(doc(db, 'products', productId)).catch((error) => {
+      enqueueOfflineAction('delete', 'products', productId);
       handleFirestoreError(error, OperationType.DELETE, path);
     });
   }
@@ -1616,6 +1624,7 @@ export async function saveOrderToCloud(order: Order) {
   // 1. Direct real-time Firestore write
   if (!isFirestoreQuotaExhausted()) {
     setDoc(doc(db, 'orders', order.id), cleaned).catch((error) => {
+      enqueueOfflineAction('upsert', 'orders', order.id, cleaned);
       handleFirestoreError(error, OperationType.WRITE, path);
     });
   }
@@ -1637,6 +1646,7 @@ export async function deleteOrderFromCloud(orderId: string) {
   // 1. Direct real-time Firestore deletion
   if (!isFirestoreQuotaExhausted()) {
     deleteDoc(doc(db, 'orders', orderId)).catch((error) => {
+      enqueueOfflineAction('delete', 'orders', orderId);
       handleFirestoreError(error, OperationType.DELETE, path);
     });
   }
@@ -2660,12 +2670,13 @@ export async function reconcileAllPendingOfflineWithFirebase(): Promise<{
     }
   }
 
-  // 3. Unblock all IDs that exist in Firebase so local tombstones never hide them
-  if (remoteOrders.length > 0) unblockActiveRemoteIds('orders', remoteOrders.map((o) => o.id));
-  if (remoteShops.length > 0) unblockActiveRemoteIds('shops', remoteShops.map((s) => s.id));
-  if (remoteProds.length > 0) unblockActiveRemoteIds('products', remoteProds.map((p) => p.id));
-  if (remoteCats.length > 0) unblockActiveRemoteIds('categories', remoteCats.map((c) => c.id));
-  if (remoteRoutes.length > 0) unblockActiveRemoteIds('routes', remoteRoutes.map((r) => r.id));
+  // 3. Unblock all IDs that exist in Firebase so local tombstones never hide them (except those pending offline delete)
+  const pendingDeletes = getPendingDeleteEntityIds();
+  if (remoteOrders.length > 0) unblockActiveRemoteIds('orders', remoteOrders.filter((o) => !pendingDeletes.has(o.id)).map((o) => o.id));
+  if (remoteShops.length > 0) unblockActiveRemoteIds('shops', remoteShops.filter((s) => !pendingDeletes.has(s.id)).map((s) => s.id));
+  if (remoteProds.length > 0) unblockActiveRemoteIds('products', remoteProds.filter((p) => !pendingDeletes.has(p.id)).map((p) => p.id));
+  if (remoteCats.length > 0) unblockActiveRemoteIds('categories', remoteCats.filter((c) => !pendingDeletes.has(c.id)).map((c) => c.id));
+  if (remoteRoutes.length > 0) unblockActiveRemoteIds('routes', remoteRoutes.filter((r) => !pendingDeletes.has(r.id)).map((r) => r.id));
 
   // 4. Merge local with authoritative remote
   const finalOrders = mergeLocalAndCloud(getOrders(), remoteOrders, getDeletedOrderIds(), 'id', true)
