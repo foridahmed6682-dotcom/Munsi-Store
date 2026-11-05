@@ -532,6 +532,16 @@ export default function App() {
 
         const localItem = localMap.get(key);
         if (localItem) {
+          const isLocalPending = (localItem as any)._isOfflinePending === true;
+          const localTime = (localItem as any).updatedAt ? new Date((localItem as any).updatedAt).getTime() : 0;
+          const remoteTime = (remoteItem as any).updatedAt ? new Date((remoteItem as any).updatedAt).getTime() : 0;
+
+          // If local has pending modifications or was updated more recently: Local WINS and never reverts!
+          const localWins = isLocalPending || (localTime > 0 && localTime >= remoteTime);
+
+          const base = localWins ? remoteItem : localItem;
+          const winner = localWins ? localItem : remoteItem;
+
           const isRemoteClean = remoteItem.imageUrl && (remoteItem.imageUrl.startsWith('http') || remoteItem.imageUrl.startsWith('/uploads/'));
           const isLocalClean = localItem.imageUrl && (localItem.imageUrl.startsWith('http') || localItem.imageUrl.startsWith('/uploads/'));
 
@@ -547,9 +557,10 @@ export default function App() {
           }
 
           map.set(key, {
-            ...localItem,
-            ...remoteItem, // Remote (Firebase) overwrites local!
+            ...base,
+            ...winner,
             ...('imageUrl' in remoteItem || 'imageUrl' in localItem ? { imageUrl: validImage } : {}),
+            _isOfflinePending: isLocalPending,
           });
         } else {
           map.set(key, remoteItem);
@@ -902,6 +913,7 @@ export default function App() {
       const newOrder: Order = {
         id: orderData.id || `ord-${Date.now()}`,
         orderDate: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
         syncedWithSheets: false,
         bookedByUid: userProfile?.uid || orderData.bookedByUid || 'usr-local',
         bookedByName: userProfile?.displayName || orderData.bookedByName || (activeSimulatedRole === 'dsr' ? 'হাবিবুর রহমান (DSR)' : activeSimulatedRole === 'customer' ? 'অনলাইন কাস্টমার' : 'এডমিন অফিসার'),
@@ -1037,7 +1049,12 @@ export default function App() {
   // Add Shop Handler (also auto-creates Route if custom/new routeArea)
   const handleAddShop = (shop: Shop) => {
     const isCurrentlyOffline = typeof navigator !== 'undefined' && !navigator.onLine;
-    const finalShop: Shop = { ...shop, _isOfflinePending: isCurrentlyOffline };
+    const finalShop: Shop = {
+      ...shop,
+      createdAt: shop.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      _isOfflinePending: isCurrentlyOffline,
+    };
     setShops((prev) => [finalShop, ...prev.filter((s) => s.id !== finalShop.id)]);
     saveShop(finalShop);
     saveShopToCloud(finalShop).catch(() => {});
@@ -1068,7 +1085,11 @@ export default function App() {
   // Update Shop Handler (also auto-creates Route if custom/new routeArea)
   const handleUpdateShop = (shop: Shop) => {
     const isCurrentlyOffline = typeof navigator !== 'undefined' && !navigator.onLine;
-    const finalShop: Shop = { ...shop, _isOfflinePending: isCurrentlyOffline };
+    const finalShop: Shop = {
+      ...shop,
+      updatedAt: new Date().toISOString(),
+      _isOfflinePending: isCurrentlyOffline,
+    };
     setShops((prev) => {
       const idx = prev.findIndex((s) => s.id === finalShop.id);
       if (idx >= 0) {
@@ -1157,7 +1178,11 @@ export default function App() {
   // Add Product Handler
   const handleAddProduct = (product: Product) => {
     const isCurrentlyOffline = typeof navigator !== 'undefined' && !navigator.onLine;
-    const finalProduct: Product = { ...product, _isOfflinePending: isCurrentlyOffline };
+    const finalProduct: Product = {
+      ...product,
+      updatedAt: new Date().toISOString(),
+      _isOfflinePending: isCurrentlyOffline,
+    };
     saveProduct(finalProduct);
     setProducts((prev) => [finalProduct, ...prev.filter((p) => p.id !== finalProduct.id)]);
     saveProductToCloud(finalProduct).catch((err) => {
@@ -1178,6 +1203,7 @@ export default function App() {
           description: `${cleanCat} পণ্য সমূহ`,
           color: '#10b981',
           createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
           _isOfflinePending: isCurrentlyOffline,
         };
         addOrUpdateCategory(newCat);
@@ -1195,7 +1221,11 @@ export default function App() {
     const existing = getProducts();
     const existingMap = new Map(existing.map((p) => [p.id, p]));
     newProducts.forEach((p) => {
-      const finalP: Product = { ...p, _isOfflinePending: isCurrentlyOffline };
+      const finalP: Product = {
+        ...p,
+        updatedAt: new Date().toISOString(),
+        _isOfflinePending: isCurrentlyOffline,
+      };
       existingMap.set(finalP.id, finalP);
       saveProductToCloud(finalP).catch((err) => {
         console.warn('Could not sync bulk product to cloud:', finalP.banglaName, err);
@@ -1234,7 +1264,11 @@ export default function App() {
   // Update Product Handler
   const handleUpdateProduct = (product: Product) => {
     const isCurrentlyOffline = typeof navigator !== 'undefined' && !navigator.onLine;
-    const finalProduct: Product = { ...product, _isOfflinePending: isCurrentlyOffline };
+    const finalProduct: Product = {
+      ...product,
+      updatedAt: new Date().toISOString(),
+      _isOfflinePending: isCurrentlyOffline,
+    };
     saveProduct(finalProduct);
     setProducts((prev) => {
       const idx = prev.findIndex((p) => p.id === finalProduct.id);
@@ -1504,9 +1538,17 @@ export default function App() {
     adjustProductStock(productId, delta);
     const prod = products.find((p) => p.id === productId);
     if (prod) {
-      saveProductToCloud({ ...prod, stock: Math.max(0, prod.stock + delta) }).catch(() => {});
+      const isCurrentlyOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+      const updatedProd: Product = {
+        ...prod,
+        stock: Math.max(0, prod.stock + delta),
+        updatedAt: new Date().toISOString(),
+        _isOfflinePending: isCurrentlyOffline,
+      };
+      saveProduct(updatedProd);
+      setProducts((prev) => prev.map((p) => (p.id === productId ? updatedProd : p)));
+      saveProductToCloud(updatedProd).catch(() => {});
     }
-    reloadData();
     showToast('স্টক সফলভাবে আপডেট করা হয়েছে', 'success');
   };
 
@@ -1795,15 +1837,21 @@ export default function App() {
       }
     }
 
-    saveOrder(updatedOrder);
-    saveOrderToCloud(updatedOrder).catch(() => {});
-    smartSaveOrder(updatedOrder).catch(() => {});
-    setOrders((prev) => prev.map((o) => (o.id === updatedOrder.id ? updatedOrder : o)));
+    const isCurrentlyOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    const finalOrder: Order = {
+      ...updatedOrder,
+      updatedAt: new Date().toISOString(),
+      _isOfflinePending: isCurrentlyOffline,
+    };
+
+    saveOrder(finalOrder);
+    saveOrderToCloud(finalOrder).catch(() => {});
+    smartSaveOrder(finalOrder).catch(() => {});
+    setOrders((prev) => prev.map((o) => (o.id === finalOrder.id ? finalOrder : o)));
     setEditingOrder(null);
-    setSelectedMemoOrder(updatedOrder);
+    setSelectedMemoOrder(finalOrder);
     setIsMemoOpen(true);
-    reloadData();
-    showToast(`মেমো #${updatedOrder.memoNumber} সফলভাবে আপডেট ও সংরক্ষিত হয়েছে!`, 'success');
+    showToast(`মেমো #${finalOrder.memoNumber} সফলভাবে আপডেট ও সংরক্ষিত হয়েছে!`, 'success');
   };
 
   // Delete Order Handler (Admin, with Permission Prompt)

@@ -8,6 +8,7 @@ export interface Route {
   banglaName: string;
   description?: string;
   createdAt?: string;
+  updatedAt?: string;
   _isOfflinePending?: boolean;
 }
 
@@ -20,6 +21,7 @@ export interface Category {
   color?: string;
   imageUrl?: string;
   createdAt?: string;
+  updatedAt?: string;
   _isOfflinePending?: boolean;
 }
 
@@ -85,6 +87,7 @@ export interface Shop {
   lat?: number;
   lng?: number;
   createdAt?: string;
+  updatedAt?: string;
   _isOfflinePending?: boolean;
 }
 
@@ -109,6 +112,7 @@ export interface Product {
   isFlashSale?: boolean;
   rating?: number;
   description?: string;
+  updatedAt?: string;
   _isOfflinePending?: boolean;
 }
 
@@ -228,6 +232,7 @@ export interface Order {
   returnAmount?: number;
   returnReason?: string;
   returnedItems?: ReturnedOrderItem[];
+  updatedAt?: string;
   _isOfflinePending?: boolean;
 }
 

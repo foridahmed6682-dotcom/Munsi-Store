@@ -403,6 +403,16 @@ export function mergeLocalAndCloud<T extends Record<string, any>>(
 
       const local = localMap.get(key);
       if (local) {
+        const isLocalPending = (local as any)._isOfflinePending === true;
+        const localTime = (local as any).updatedAt ? new Date((local as any).updatedAt).getTime() : 0;
+        const remoteTime = (item as any).updatedAt ? new Date((item as any).updatedAt).getTime() : 0;
+
+        // If local has pending changes or local was updated more recently: Local WINS and never reverts!
+        const localWins = isLocalPending || (localTime > 0 && localTime >= remoteTime);
+
+        const base = localWins ? item : local;
+        const winner = localWins ? local : item;
+
         const isRemoteClean = item.imageUrl && (item.imageUrl.startsWith('http') || item.imageUrl.startsWith('/uploads/'));
         const isLocalClean = local.imageUrl && (local.imageUrl.startsWith('http') || local.imageUrl.startsWith('/uploads/'));
 
@@ -418,10 +428,10 @@ export function mergeLocalAndCloud<T extends Record<string, any>>(
         }
 
         map.set(key, {
-          ...local,
-          ...item, // Remote (Firebase) overwrites local!
+          ...base,
+          ...winner,
           ...('imageUrl' in item || 'imageUrl' in local ? { imageUrl: bestImage } : {}),
-          _isOfflinePending: false,
+          _isOfflinePending: isLocalPending,
         });
       } else {
         map.set(key, { ...item, _isOfflinePending: false });

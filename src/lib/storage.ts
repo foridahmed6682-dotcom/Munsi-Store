@@ -1035,9 +1035,9 @@ export function addOrUpdateCategory(category: Category): Category {
       c.id === category.id ||
       (c.banglaName && category.banglaName && c.banglaName.trim() === category.banglaName.trim())
   );
-  let finalCategory = category;
+  let finalCategory = { ...category, updatedAt: new Date().toISOString() };
   if (idx >= 0) {
-    finalCategory = { ...categories[idx], ...category, id: categories[idx].id };
+    finalCategory = { ...categories[idx], ...category, id: categories[idx].id, updatedAt: new Date().toISOString() };
     categories[idx] = finalCategory;
   } else {
     categories.push(finalCategory);
@@ -1154,9 +1154,9 @@ export function addOrUpdateRoute(route: Route): Route {
             (r.name && route.name && r.name.trim().toLowerCase() === route.name.trim().toLowerCase())
         );
 
-  let finalRoute = route;
+  let finalRoute = { ...route, updatedAt: new Date().toISOString() };
   if (byNameIdx >= 0) {
-    finalRoute = { ...routes[byNameIdx], ...route, id: routes[byNameIdx].id };
+    finalRoute = { ...routes[byNameIdx], ...route, id: routes[byNameIdx].id, updatedAt: new Date().toISOString() };
     routes[byNameIdx] = finalRoute;
   } else {
     routes.push(finalRoute);
