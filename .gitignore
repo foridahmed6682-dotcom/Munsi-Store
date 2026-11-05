@@ -7,4 +7,6 @@ coverage/
 .env*
 !.env.example
 .server_database_mirror.json
+.server_backup_snapshots.json
+dev-dist/
 .aistudio/
