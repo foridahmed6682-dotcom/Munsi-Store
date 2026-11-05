@@ -68,6 +68,7 @@ import {
 import {
   getPendingOfflineActions,
   removeOfflineAction,
+  removeOfflineActionByEntity,
   markEntityPendingOffline,
   enqueueOfflineAction,
   isEntityPendingOffline,
@@ -391,14 +392,11 @@ export function mergeLocalAndCloud<T extends Record<string, any>>(
     // 1. Remote (Firebase) items are authoritative Single Source of Truth!
     for (const item of remoteItems) {
       const key = item?.[idField] ? String(item[idField]) : '';
-      // If an offline delete is actively pending on this device, do NOT resurrect it!
-      if (isEntityPendingDelete(key)) {
-        continue;
-      }
+      if (!key) continue;
 
-      // If an item actively exists in Firebase, unblock it so it is never dropped by stale local tombstones
-      if (deletedIds.has(key)) {
-        deletedIds.delete(key);
+      // If this item was deleted or is pending deletion, NEVER resurrect it!
+      if (deletedIds.has(key) || isEntityPendingDelete(key)) {
+        continue;
       }
 
       const local = localMap.get(key);
@@ -583,7 +581,7 @@ export async function removeItemFromFirebaseCatalog(catalogKey: string, idValue:
   const filtered = current.filter(
     (x) => x && String(x[idField]).toLowerCase() !== keyVal && String(x.id || '').toLowerCase() !== keyVal
   );
-  await writeFirestoreCatalogDirect(catalogKey, filtered, false);
+  await writeFirestoreCatalogDirect(catalogKey, filtered, true);
 }
 
 // Server Mirror Helpers (Protects data across devices and guarantees 3-way synchronization)
@@ -1553,22 +1551,26 @@ export async function saveShopToCloud(shop: Shop) {
 export async function deleteShopFromCloud(shopId: string) {
   const path = `shops/${shopId}`;
 
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    enqueueOfflineAction('delete', 'shops', shopId);
-  }
+  // Always record delete action so it cannot be undone by stale caches
+  enqueueOfflineAction('delete', 'shops', shopId);
 
   // 1. Direct real-time Firestore deletion
   if (!isFirestoreQuotaExhausted()) {
-    deleteDoc(doc(db, 'shops', shopId)).catch((error) => {
-      enqueueOfflineAction('delete', 'shops', shopId);
+    try {
+      await deleteDoc(doc(db, 'shops', shopId));
+    } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
-    });
+    }
   }
 
-  // 2. Parallel background mirror & catalog update
+  // 2. Immediate catalog & mirror deletion
   deleteItemFromServerMirror('shops', shopId).catch(() => {});
   if (!isFirestoreWriteQuotaExhausted()) {
-    removeItemFromFirebaseCatalog('shops', shopId, 'id').catch(() => {});
+    await removeItemFromFirebaseCatalog('shops', shopId, 'id').catch(() => {});
+  }
+
+  if (typeof navigator !== 'undefined' && navigator.onLine) {
+    removeOfflineActionByEntity('shops', shopId);
   }
 }
 
@@ -1604,22 +1606,26 @@ export async function saveProductToCloud(product: Product) {
 export async function deleteProductFromCloud(productId: string) {
   const path = `products/${productId}`;
 
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    enqueueOfflineAction('delete', 'products', productId);
-  }
+  // Always record delete action so it cannot be undone by stale caches
+  enqueueOfflineAction('delete', 'products', productId);
 
   // 1. Direct real-time Firestore deletion
   if (!isFirestoreQuotaExhausted()) {
-    deleteDoc(doc(db, 'products', productId)).catch((error) => {
-      enqueueOfflineAction('delete', 'products', productId);
+    try {
+      await deleteDoc(doc(db, 'products', productId));
+    } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
-    });
+    }
   }
 
-  // 2. Parallel background mirror & catalog deletion
+  // 2. Immediate catalog & mirror deletion
   deleteItemFromServerMirror('products', productId).catch(() => {});
   if (!isFirestoreWriteQuotaExhausted()) {
-    removeItemFromFirebaseCatalog('products', productId, 'id').catch(() => {});
+    await removeItemFromFirebaseCatalog('products', productId, 'id').catch(() => {});
+  }
+
+  if (typeof navigator !== 'undefined' && navigator.onLine) {
+    removeOfflineActionByEntity('products', productId);
   }
 }
 
@@ -1649,22 +1655,26 @@ export async function saveOrderToCloud(order: Order) {
 export async function deleteOrderFromCloud(orderId: string) {
   const path = `orders/${orderId}`;
 
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    enqueueOfflineAction('delete', 'orders', orderId);
-  }
+  // Always record delete action so it cannot be undone by stale caches
+  enqueueOfflineAction('delete', 'orders', orderId);
 
   // 1. Direct real-time Firestore deletion
   if (!isFirestoreQuotaExhausted()) {
-    deleteDoc(doc(db, 'orders', orderId)).catch((error) => {
-      enqueueOfflineAction('delete', 'orders', orderId);
+    try {
+      await deleteDoc(doc(db, 'orders', orderId));
+    } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
-    });
+    }
   }
 
-  // 2. Parallel background mirror & catalog deletion
+  // 2. Immediate catalog & mirror deletion
   deleteItemFromServerMirror('orders', orderId).catch(() => {});
   if (!isFirestoreWriteQuotaExhausted()) {
-    removeItemFromFirebaseCatalog('orders', orderId, 'id').catch(() => {});
+    await removeItemFromFirebaseCatalog('orders', orderId, 'id').catch(() => {});
+  }
+
+  if (typeof navigator !== 'undefined' && navigator.onLine) {
+    removeOfflineActionByEntity('orders', orderId);
   }
 }
 
@@ -1768,22 +1778,25 @@ export async function saveCategoryToCloud(category: Category) {
 
 export async function deleteCategoryFromCloud(categoryId: string) {
   const path = `categories/${categoryId}`;
-
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    enqueueOfflineAction('delete', 'categories', categoryId);
-  }
+  enqueueOfflineAction('delete', 'categories', categoryId);
 
   // 1. Immediate real-time Firestore delete
   if (!isFirestoreQuotaExhausted()) {
-    deleteDoc(doc(db, 'categories', categoryId)).catch((error) => {
+    try {
+      await deleteDoc(doc(db, 'categories', categoryId));
+    } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
-    });
+    }
   }
 
-  // 2. Parallel background mirror & catalog update
+  // 2. Immediate catalog & mirror update
   deleteItemFromServerMirror('categories', categoryId).catch(() => {});
   if (!isFirestoreWriteQuotaExhausted()) {
-    removeItemFromFirebaseCatalog('categories', categoryId, 'id').catch(() => {});
+    await removeItemFromFirebaseCatalog('categories', categoryId, 'id').catch(() => {});
+  }
+
+  if (typeof navigator !== 'undefined' && navigator.onLine) {
+    removeOfflineActionByEntity('categories', categoryId);
   }
 }
 
@@ -1861,22 +1874,25 @@ export async function saveRouteToCloud(route: Route) {
 
 export async function deleteRouteFromCloud(routeId: string) {
   const path = `routes/${routeId}`;
-
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    enqueueOfflineAction('delete', 'routes', routeId);
-  }
+  enqueueOfflineAction('delete', 'routes', routeId);
 
   // 1. Immediate real-time Firestore delete
   if (!isFirestoreQuotaExhausted()) {
-    deleteDoc(doc(db, 'routes', routeId)).catch((error) => {
+    try {
+      await deleteDoc(doc(db, 'routes', routeId));
+    } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
-    });
+    }
   }
 
-  // 2. Parallel background mirror & catalog update
+  // 2. Immediate catalog & mirror update
   deleteItemFromServerMirror('routes', routeId).catch(() => {});
   if (!isFirestoreWriteQuotaExhausted()) {
-    removeItemFromFirebaseCatalog('routes', routeId, 'id').catch(() => {});
+    await removeItemFromFirebaseCatalog('routes', routeId, 'id').catch(() => {});
+  }
+
+  if (typeof navigator !== 'undefined' && navigator.onLine) {
+    removeOfflineActionByEntity('routes', routeId);
   }
 }
 
@@ -2680,13 +2696,55 @@ export async function reconcileAllPendingOfflineWithFirebase(): Promise<{
     }
   }
 
-  // 3. Unblock all IDs that exist in Firebase so local tombstones never hide them (except those pending offline delete)
-  const pendingDeletes = getPendingDeleteEntityIds();
-  if (remoteOrders.length > 0) unblockActiveRemoteIds('orders', remoteOrders.filter((o) => !pendingDeletes.has(o.id)).map((o) => o.id));
-  if (remoteShops.length > 0) unblockActiveRemoteIds('shops', remoteShops.filter((s) => !pendingDeletes.has(s.id)).map((s) => s.id));
-  if (remoteProds.length > 0) unblockActiveRemoteIds('products', remoteProds.filter((p) => !pendingDeletes.has(p.id)).map((p) => p.id));
-  if (remoteCats.length > 0) unblockActiveRemoteIds('categories', remoteCats.filter((c) => !pendingDeletes.has(c.id)).map((c) => c.id));
-  if (remoteRoutes.length > 0) unblockActiveRemoteIds('routes', remoteRoutes.filter((r) => !pendingDeletes.has(r.id)).map((r) => r.id));
+  // 3. ENFORCE DELETIONS: If an item was deleted locally, delete it from Firestore & Server Mirror!
+  const deletedOrders = getDeletedOrderIds();
+  const deletedShops = getDeletedShopIds();
+  const deletedProds = getDeletedProductIds();
+  const deletedCats = getDeletedCategoryIds();
+  const deletedRoutes = getDeletedRouteIds();
+
+  // Purge any deleted items from Firestore directly
+  const deletionPromises: Promise<any>[] = [];
+  remoteProds.forEach((p) => {
+    if (p && deletedProds.has(p.id)) {
+      deletionPromises.push(deleteDoc(doc(db, 'products', p.id)).catch(() => {}));
+      deleteItemFromServerMirror('products', p.id).catch(() => {});
+    }
+  });
+  remoteShops.forEach((s) => {
+    if (s && deletedShops.has(s.id)) {
+      deletionPromises.push(deleteDoc(doc(db, 'shops', s.id)).catch(() => {}));
+      deleteItemFromServerMirror('shops', s.id).catch(() => {});
+    }
+  });
+  remoteOrders.forEach((o) => {
+    if (o && deletedOrders.has(o.id)) {
+      deletionPromises.push(deleteDoc(doc(db, 'orders', o.id)).catch(() => {}));
+      deleteItemFromServerMirror('orders', o.id).catch(() => {});
+    }
+  });
+  remoteCats.forEach((c) => {
+    if (c && deletedCats.has(c.id)) {
+      deletionPromises.push(deleteDoc(doc(db, 'categories', c.id)).catch(() => {}));
+      deleteItemFromServerMirror('categories', c.id).catch(() => {});
+    }
+  });
+  remoteRoutes.forEach((r) => {
+    if (r && deletedRoutes.has(r.id)) {
+      deletionPromises.push(deleteDoc(doc(db, 'routes', r.id)).catch(() => {}));
+      deleteItemFromServerMirror('routes', r.id).catch(() => {});
+    }
+  });
+  if (deletionPromises.length > 0) {
+    await Promise.allSettled(deletionPromises);
+  }
+
+  // Filter deleted items out of remote collections so they are NEVER merged or resurrected!
+  remoteOrders = remoteOrders.filter((o) => o && !deletedOrders.has(o.id));
+  remoteShops = remoteShops.filter((s) => s && !deletedShops.has(s.id));
+  remoteProds = remoteProds.filter((p) => p && !deletedProds.has(p.id));
+  remoteCats = remoteCats.filter((c) => c && !deletedCats.has(c.id));
+  remoteRoutes = remoteRoutes.filter((r) => r && !deletedRoutes.has(r.id));
 
   // 4. Merge local with authoritative remote
   const finalOrders = mergeLocalAndCloud(getOrders(), remoteOrders, getDeletedOrderIds(), 'id', true)

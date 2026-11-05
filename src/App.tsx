@@ -522,13 +522,8 @@ export default function App() {
         const key = remoteItem?.[idKey] ? String(remoteItem[idKey]) : '';
         if (!key) return;
 
-        // If currently queued for offline deletion on this device, do NOT resurrect it!
-        if (isEntityPendingDelete(key)) return;
-
-        // Unblock active remote item if previously in deletedIds
-        if (deletedIds.has(key)) {
-          deletedIds.delete(key);
-        }
+        // If this item was deleted or is pending deletion, NEVER resurrect it!
+        if (deletedIds.has(key) || isEntityPendingDelete(key)) return;
 
         const localItem = localMap.get(key);
         if (localItem) {
@@ -1127,8 +1122,8 @@ export default function App() {
   // Delete Shop Handler (with Permission Prompt)
   const executeDeleteShop = (shopId: string) => {
     deleteShop(shopId);
+    setShops((prev) => prev.filter((s) => s.id !== shopId));
     deleteShopFromCloud(shopId).catch(() => {});
-    reloadData();
     showToast('দোকানটি সফলভাবে ডিলিট করা হয়েছে!', 'info');
   };
 
@@ -1332,7 +1327,6 @@ export default function App() {
     setProducts((prev) => prev.filter((p) => p.id !== productId));
     deleteProduct(productId);
     deleteProductFromCloud(productId).catch(() => {});
-    reloadData();
     showToast('পণ্যটি সফলভাবে মুছে ফেলা হয়েছে', 'info');
   };
 
@@ -1370,7 +1364,6 @@ export default function App() {
     deleteCategory(categoryId);
     setCategories((prev) => prev.filter((c) => c.id !== categoryId));
     deleteCategoryFromCloud(categoryId).catch(() => {});
-    reloadData();
     showToast('ক্যাটাগরি মুছে ফেলা হয়েছে', 'info');
   };
 
@@ -1459,7 +1452,6 @@ export default function App() {
       });
     }
 
-    reloadData();
     showToast('রুট সফলভাবে মুছে ফেলা হয়েছে', 'info');
   };
 
@@ -1882,7 +1874,6 @@ export default function App() {
       setIsMemoOpen(false);
       setSelectedMemoOrder(null);
     }
-    reloadData();
     showToast(`মেমো ${target?.memoNumber ? `#${target.memoNumber}` : ''} সফলভাবে ডিলিট করা হয়েছে`, 'info');
   };
 

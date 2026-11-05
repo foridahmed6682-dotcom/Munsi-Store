@@ -109,6 +109,13 @@ export function removeOfflineAction(actionId: string): void {
   persistQueue(updated);
 }
 
+export function removeOfflineActionByEntity(entity: OfflineEntityType, entityId: string): void {
+  const queue = getPendingOfflineActions();
+  const updated = queue.filter((a) => !(a.entity === entity && a.entityId === entityId));
+  persistQueue(updated);
+  markEntityPendingOffline(entity, entityId, false);
+}
+
 /**
  * Check if a specific entity has an offline write pending
  */
