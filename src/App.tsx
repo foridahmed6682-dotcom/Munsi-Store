@@ -1007,8 +1007,8 @@ export default function App() {
     try {
       const localRecord = recordDuePayment(shopId, amount, method, notes);
 
-      // Also persist due collection record to Firestore
-      const targetShop = shops.find((s) => s.id === shopId);
+      // Use freshly updated shop from storage (which already had previousDue reduced by amount)
+      const targetShop = getShops().find((s) => s.id === shopId);
       const collectionRecord: DueCollectionRecord = {
         ...localRecord,
         shopName: targetShop?.name || localRecord.shopName || 'শপ',
@@ -1026,12 +1026,15 @@ export default function App() {
       saveDueCollectionToCloud(collectionRecord).catch(() => {});
 
       if (targetShop) {
-        const updatedShop = {
+        const nowIso = new Date().toISOString();
+        const updatedShop: Shop = {
           ...targetShop,
-          previousDue: Math.max(0, targetShop.previousDue - amount),
-          lastVisitDate: new Date().toISOString().split('T')[0],
+          updatedAt: nowIso,
+          _isOfflinePending: true,
         };
+        saveShop(updatedShop);
         saveShopToCloud(updatedShop).catch(() => {});
+        setShops((prev) => prev.map((s) => (s.id === shopId ? updatedShop : s)));
       }
 
       reloadData();
@@ -2571,7 +2574,7 @@ export default function App() {
             dailyExpenses: finalDailyExpenses,
           });
           for (const p of finalProducts) {
-            if (p.id && p.imageUrl && p.imageUrl.startsWith('data:')) {
+            if (p.id && p.imageUrl) {
               saveProductImageToIndexedDB(p.id, p.imageUrl).catch(() => {});
             }
           }

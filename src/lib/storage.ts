@@ -305,7 +305,17 @@ export const DEFAULT_CATEGORIES: Category[] = [];
 
 export const DEFAULT_AUTHORIZED_EMAILS: AuthorizedUserEmail[] = [
   {
-    id: 'auth-main-admin',
+    id: 'auth-main-admin-1',
+    email: 'ahmedmdforid39@gmail.com',
+    role: 'admin',
+    fullName: 'মো: ফরিদ আহমেদ (এডমিন)',
+    assignedRoute: 'সব রুট (All Routes)',
+    phone: '',
+    addedAt: '2026-01-01T00:00:00.000Z',
+    addedBy: 'System',
+  },
+  {
+    id: 'auth-main-admin-2',
     email: 'foridahmed6682@gmail.com',
     role: 'admin',
     fullName: 'ফরিদ আহমদ (মেইন এ্যাডমিন)',
@@ -864,9 +874,17 @@ export async function initializeStorageFromIndexedDB(): Promise<{
       } catch {}
     }
 
-    // Attach high-res images from IndexedDB
+    // Attach offline blob images from IndexedDB
     if (idbImages && Object.keys(idbImages).length > 0) {
-      prods = prods.map((p) => (!p.imageUrl && idbImages[p.id] ? { ...p, imageUrl: idbImages[p.id] } : p));
+      prods = prods.map((p) => {
+        const offlineUrl = idbImages[p.id];
+        if (!offlineUrl) return p;
+        return {
+          ...p,
+          imageUrl: (!p.imageUrl || (typeof navigator !== 'undefined' && !navigator.onLine)) ? offlineUrl : p.imageUrl,
+          _offlineBlobUrl: offlineUrl,
+        };
+      });
     }
 
     // Filter deleted tombstones
@@ -967,7 +985,7 @@ export function saveProducts(products: Product[]) {
   if (isIndexedDBSupported()) {
     saveItemsToIndexedDB('products', clean).catch(() => {});
     clean.forEach((p) => {
-      if (p.imageUrl && p.imageUrl.startsWith('data:image/')) {
+      if (p.imageUrl) {
         saveProductImageToIndexedDB(p.id, p.imageUrl).catch(() => {});
       }
     });
@@ -1279,14 +1297,19 @@ export function deleteShop(shopId: string) {
   }
 }
 
-export function updateShopDue(shopId: string, dueDelta: number) {
+export function updateShopDue(shopId: string, dueDelta: number): Shop | null {
   const shops = getShops();
   const shop = shops.find((s) => s.id === shopId);
   if (shop) {
-    shop.previousDue = Math.max(0, shop.previousDue + dueDelta);
+    const currentDue = Number(shop.previousDue) || 0;
+    shop.previousDue = Math.max(0, currentDue + dueDelta);
     shop.lastVisitDate = new Date().toISOString().split('T')[0];
+    shop.updatedAt = new Date().toISOString();
+    (shop as any)._isOfflinePending = true;
     saveShops(shops);
+    return shop;
   }
+  return null;
 }
 
 export function getOrders(): Order[] {
@@ -1686,18 +1709,22 @@ export function deleteAllDueCollectionsLocal(): string[] {
 }
 
 export function resetAllShopDuesLocal(): Shop[] {
+  const nowIso = new Date().toISOString();
   const shops = getShops().map((s) => ({
     ...s,
     previousDue: 0,
+    updatedAt: nowIso,
+    _isOfflinePending: true,
   }));
   saveShops(shops);
   return shops;
 }
 
 export function resetShopDueLocal(shopId: string): Shop[] {
+  const nowIso = new Date().toISOString();
   const shops = getShops().map((s) => {
     if (s.id === shopId) {
-      return { ...s, previousDue: 0 };
+      return { ...s, previousDue: 0, updatedAt: nowIso, _isOfflinePending: true };
     }
     return s;
   });
@@ -1707,9 +1734,10 @@ export function resetShopDueLocal(shopId: string): Shop[] {
 
 export function resetBatchShopDuesLocal(shopIds: string[]): Shop[] {
   const idSet = new Set(shopIds);
+  const nowIso = new Date().toISOString();
   const shops = getShops().map((s) => {
     if (idSet.has(s.id)) {
-      return { ...s, previousDue: 0 };
+      return { ...s, previousDue: 0, updatedAt: nowIso, _isOfflinePending: true };
     }
     return s;
   });

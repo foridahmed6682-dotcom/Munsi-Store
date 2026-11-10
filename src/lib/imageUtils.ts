@@ -263,3 +263,44 @@ export async function compressDataUrlIfNeeded(
     return imageUrl;
   }
 }
+
+/**
+ * Converts a Base64 Data URL into a pure binary Blob object
+ */
+export function dataUrlToBlob(dataUrl: string): Blob | null {
+  if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) return null;
+  try {
+    const parts = dataUrl.split(';base64,');
+    if (parts.length < 2) return null;
+    const contentType = parts[0].split(':')[1] || 'image/webp';
+    const binaryStr = window.atob(parts[1]);
+    const len = binaryStr.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binaryStr.charCodeAt(i);
+    }
+    return new Blob([bytes], { type: contentType });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Safely fetches a remote image URL or converts Data URL into a raw Blob
+ */
+export async function urlToBlob(url: string): Promise<Blob | null> {
+  if (!url || typeof url !== 'string') return null;
+  if (url.startsWith('data:')) {
+    return dataUrlToBlob(url);
+  }
+  try {
+    const res = await fetch(url, { mode: 'cors' });
+    if (res.ok) {
+      return await res.blob();
+    }
+  } catch {
+    // ignore fetch error
+  }
+  return null;
+}
+

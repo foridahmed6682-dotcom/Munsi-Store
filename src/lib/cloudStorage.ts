@@ -63,8 +63,8 @@ export async function uploadImageToCloudStorage(
   const storagePath = `${folder}/${filename}`;
 
   // Cache in browser IndexedDB for 100% zero-latency offline loading
-  if (customId && typeof imageSource === 'string' && imageSource.startsWith('data:')) {
-    saveProductImageToIndexedDB(customId, imageSource).catch(() => {});
+  if (customId && imageSource) {
+    saveProductImageToIndexedDB(customId, imageSource as any).catch(() => {});
   }
 
   // Convert File / Blob to Data URL if needed

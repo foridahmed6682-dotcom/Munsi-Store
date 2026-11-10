@@ -406,7 +406,11 @@ export function mergeLocalAndCloud<T extends Record<string, any>>(
         const remoteTime = (item as any).updatedAt ? new Date((item as any).updatedAt).getTime() : 0;
 
         // If local has pending changes or local was updated more recently: Local WINS and never reverts!
-        const localWins = isLocalPending || (localTime > 0 && localTime >= remoteTime);
+        // When !isServerAuthoritative (e.g. static mirror/seed), local ALWAYS wins unless remote is strictly newer
+        const localWins =
+          isLocalPending ||
+          (localTime > 0 && localTime >= remoteTime) ||
+          (!isServerAuthoritative && (localTime >= remoteTime || remoteTime === 0));
 
         const base = localWins ? item : local;
         const winner = localWins ? local : item;
@@ -559,7 +563,7 @@ export async function writeFirestoreCatalogDirect(catalogKey: string, items: any
   );
 }
 
-export async function upsertItemInFirebaseCatalog(catalogKey: string, item: any, idField = 'id'): Promise<void> {
+export async function upsertItemInFirebaseCatalog(catalogKey: string, item: any, idField = 'id', immediate = false): Promise<void> {
   if (!item || !item[idField] || isFirestoreWriteQuotaExhausted()) return;
   const localList = getLocalCatalogFallback(catalogKey);
   const current = localList.length > 0 ? [...localList] : await readFirestoreCatalogDirect<any>(catalogKey);
@@ -570,7 +574,7 @@ export async function upsertItemInFirebaseCatalog(catalogKey: string, item: any,
   } else {
     current.unshift(item);
   }
-  await writeFirestoreCatalogDirect(catalogKey, current, false);
+  await writeFirestoreCatalogDirect(catalogKey, current, immediate);
 }
 
 export async function removeItemFromFirebaseCatalog(catalogKey: string, idValue: string, idField = 'id'): Promise<void> {
@@ -1237,6 +1241,11 @@ export async function updateUserRoleAndRoute(uid: string, role: UserRole, assign
 export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
   const syncFromLocalMirror = async (extraShops: Shop[] = []) => {
     if (isRestoreCooldownActive()) return;
+    const currentLocal = getShops();
+    // Do not poll or clobber local shops with static fallback mirror when Firestore is healthy and we already have shops
+    if (currentLocal.length > 0 && !isFirestoreQuotaExhausted() && !extraShops.length) {
+      return;
+    }
     const mirror = await fetchServerDatabaseMirror();
     const deletedIds = getDeletedShopIds();
     const mirrorShops: Shop[] = Array.isArray(mirror?.shops) ? mirror.shops : [];
@@ -1247,7 +1256,7 @@ export function subscribeToCloudShops(onData: (shops: Shop[]) => void) {
       'id',
       false
     );
-    const merged = mergeLocalAndCloud(getShops(), combinedRemote, deletedIds, 'id', false);
+    const merged = mergeLocalAndCloud(currentLocal, combinedRemote, deletedIds, 'id', false);
     onData(merged);
   };
 
@@ -1527,24 +1536,29 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
 
 // Cloud Mutation Operations (Real-Time Firestore First + Background Safe Mirror Sync)
 export async function saveShopToCloud(shop: Shop) {
-  const path = `shops/${shop.id}`;
-  const cleaned = cleanForFirestore(shop);
+  const nowIso = new Date().toISOString();
+  const shopWithTime: Shop = {
+    ...shop,
+    updatedAt: shop.updatedAt || nowIso,
+  };
+  const path = `shops/${shopWithTime.id}`;
+  const cleaned = cleanForFirestore(shopWithTime);
 
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    enqueueOfflineAction('upsert', 'shops', shop.id, cleaned);
+    enqueueOfflineAction('upsert', 'shops', shopWithTime.id, cleaned);
   }
 
   // 1. Direct real-time Firestore write (triggers onSnapshot immediately across all devices!)
   if (!isFirestoreQuotaExhausted()) {
-    setDoc(doc(db, 'shops', shop.id), cleaned).catch((error) => {
+    setDoc(doc(db, 'shops', shopWithTime.id), cleaned).catch((error) => {
       handleFirestoreError(error, OperationType.WRITE, path);
     });
   }
 
-  // 2. Parallel background mirror & catalog sync (prevents latency or blocks)
+  // 2. Parallel background mirror & immediate catalog sync (prevents latency or stale overwrite)
   syncItemToServerMirror('shops', cleaned).catch(() => {});
   if (!isFirestoreWriteQuotaExhausted()) {
-    upsertItemInFirebaseCatalog('shops', cleaned, 'id').catch(() => {});
+    upsertItemInFirebaseCatalog('shops', cleaned, 'id', true).catch(() => {});
   }
 }
 

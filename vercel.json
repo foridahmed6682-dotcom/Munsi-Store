@@ -1,13 +1,14 @@
 {
   "version": 2,
-  "cleanUrls": true,
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
   "rewrites": [
     {
       "source": "/api/db/mirror",
       "destination": "/database_seed_mirror.json"
     },
     {
-      "source": "/((?!api/|assets/|database_seed_mirror.json).*)",
+      "source": "/(.*)",
       "destination": "/index.html"
     }
   ]

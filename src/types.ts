@@ -114,6 +114,7 @@ export interface Product {
   description?: string;
   updatedAt?: string;
   _isOfflinePending?: boolean;
+  _offlineBlobUrl?: string;
 }
 
 export interface StoreBanner {

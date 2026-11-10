@@ -3,6 +3,8 @@
  * Provides robust offline storage (50MB - 1GB+) bypassing the 5MB localStorage limit.
  */
 
+import { dataUrlToBlob, urlToBlob } from './imageUtils';
+
 const DB_NAME = 'MunsiAppOfflineDB';
 const DB_VERSION = 3;
 
@@ -218,18 +220,33 @@ export async function removeKeyValFromIndexedDB(key: string): Promise<boolean> {
   }
 }
 
+// In-memory cache for fast blob object URLs
+const offlineObjectUrlCache = new Map<string, string>();
+
 /**
- * Save large product image data URLs in IndexedDB so localStorage never overflows
+ * Save raw product image Blob in IndexedDB so offline mode stores pure binary files instead of URLs
  */
-export async function saveProductImageToIndexedDB(productId: string, dataUrl: string): Promise<boolean> {
-  if (!isIndexedDBSupported() || !productId) return false;
+export async function saveProductImageBlobToIndexedDB(productId: string, blob: Blob): Promise<boolean> {
+  if (!isIndexedDBSupported() || !productId || !blob) return false;
   try {
     const db = await openOfflineDatabase();
     return new Promise((resolve) => {
       const tx = db.transaction('productImages', 'readwrite');
       const store = tx.objectStore('productImages');
-      store.put({ id: productId, dataUrl, updatedAt: Date.now() });
-      tx.oncomplete = () => resolve(true);
+      store.put({
+        id: productId,
+        blob,
+        mimeType: blob.type || 'image/webp',
+        updatedAt: Date.now(),
+      });
+      tx.oncomplete = () => {
+        try {
+          const old = offlineObjectUrlCache.get(productId);
+          if (old) URL.revokeObjectURL(old);
+          offlineObjectUrlCache.set(productId, URL.createObjectURL(blob));
+        } catch {}
+        resolve(true);
+      };
       tx.onerror = () => resolve(false);
     });
   } catch {
@@ -237,8 +254,46 @@ export async function saveProductImageToIndexedDB(productId: string, dataUrl: st
   }
 }
 
+/**
+ * Save product image to IndexedDB. Converts Base64 Data URL or remote image into a raw Blob object for pure offline binary storage.
+ */
+export async function saveProductImageToIndexedDB(
+  productId: string,
+  imageSource: string | Blob
+): Promise<boolean> {
+  if (!isIndexedDBSupported() || !productId || !imageSource) return false;
+
+  if (imageSource instanceof Blob) {
+    return saveProductImageBlobToIndexedDB(productId, imageSource);
+  }
+
+  if (typeof imageSource === 'string' && imageSource.startsWith('data:')) {
+    const blob = dataUrlToBlob(imageSource);
+    if (blob) {
+      return saveProductImageBlobToIndexedDB(productId, blob);
+    }
+  }
+
+  // If remote URL, fetch in background and cache as raw Blob in IndexedDB
+  if (typeof imageSource === 'string' && (imageSource.startsWith('http') || imageSource.startsWith('/uploads/'))) {
+    urlToBlob(imageSource).then((blob) => {
+      if (blob) {
+        saveProductImageBlobToIndexedDB(productId, blob).catch(() => {});
+      }
+    }).catch(() => {});
+  }
+
+  return false;
+}
+
+/**
+ * Retrieve raw image Blob from IndexedDB and return an offline object URL
+ */
 export async function getProductImageFromIndexedDB(productId: string): Promise<string | null> {
   if (!isIndexedDBSupported() || !productId) return null;
+  if (offlineObjectUrlCache.has(productId)) {
+    return offlineObjectUrlCache.get(productId) || null;
+  }
   try {
     const db = await openOfflineDatabase();
     return new Promise((resolve) => {
@@ -246,7 +301,20 @@ export async function getProductImageFromIndexedDB(productId: string): Promise<s
       const store = tx.objectStore('productImages');
       const req = store.get(productId);
       req.onsuccess = () => {
-        resolve(req.result ? (req.result.dataUrl as string) : null);
+        if (!req.result) return resolve(null);
+        let blob: Blob | null = null;
+        if (req.result.blob instanceof Blob) {
+          blob = req.result.blob;
+        } else if (req.result.dataUrl) {
+          blob = dataUrlToBlob(req.result.dataUrl);
+        }
+        if (blob) {
+          const objUrl = URL.createObjectURL(blob);
+          offlineObjectUrlCache.set(productId, objUrl);
+          resolve(objUrl);
+        } else {
+          resolve(null);
+        }
       };
       req.onerror = () => resolve(null);
     });
@@ -255,6 +323,9 @@ export async function getProductImageFromIndexedDB(productId: string): Promise<s
   }
 }
 
+/**
+ * Retrieves all product images as offline Object URLs from raw Blobs stored in IndexedDB
+ */
 export async function getAllProductImagesFromIndexedDB(): Promise<Record<string, string>> {
   if (!isIndexedDBSupported()) return {};
   try {
@@ -267,8 +338,21 @@ export async function getAllProductImagesFromIndexedDB(): Promise<Record<string,
         const res: Record<string, string> = {};
         if (Array.isArray(req.result)) {
           for (const item of req.result) {
-            if (item && item.id && item.dataUrl) {
-              res[item.id] = item.dataUrl;
+            if (item && item.id) {
+              let blob: Blob | null = null;
+              if (item.blob instanceof Blob) {
+                blob = item.blob;
+              } else if (item.dataUrl) {
+                blob = dataUrlToBlob(item.dataUrl);
+              }
+              if (blob) {
+                let objUrl = offlineObjectUrlCache.get(item.id);
+                if (!objUrl) {
+                  objUrl = URL.createObjectURL(blob);
+                  offlineObjectUrlCache.set(item.id, objUrl);
+                }
+                res[item.id] = objUrl;
+              }
             }
           }
         }
