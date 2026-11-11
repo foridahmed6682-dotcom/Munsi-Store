@@ -1,12 +1,64 @@
 // Munsi Store & FMCG Order Booker - Service Worker
-const CACHE_NAME = 'munsi-store-v2';
+const CACHE_NAME = 'munsi-store-v3';
+const IMAGE_CACHE_NAME = 'munsi-images-v1';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(
+        keys
+          .filter((k) => k !== CACHE_NAME && k !== IMAGE_CACHE_NAME)
+          .map((k) => caches.delete(k))
+      )
+    ).then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener('fetch', (event) => {
+  const req = event.request;
+  if (req.method !== 'GET') return;
+
+  const url = new URL(req.url);
+  // Skip API, Firestore, Google Auth, and dev HMR traffic
+  if (
+    url.pathname.startsWith('/api/') ||
+    url.hostname.includes('googleapis.com') ||
+    url.hostname.includes('firebaseapp.com') ||
+    url.hostname.includes('firebaseio.com')
+  ) {
+    return;
+  }
+
+  // Cache-first for /uploads/ product photos & static icons
+  if (
+    url.origin === self.location.origin &&
+    (url.pathname.startsWith('/uploads/') ||
+      url.pathname.endsWith('.png') ||
+      url.pathname.endsWith('.webp') ||
+      url.pathname.endsWith('.jpg') ||
+      url.pathname.endsWith('.jpeg') ||
+      url.pathname.endsWith('.svg'))
+  ) {
+    event.respondWith(
+      caches.open(IMAGE_CACHE_NAME).then(async (cache) => {
+        const cached = await cache.match(req);
+        if (cached) return cached;
+        try {
+          const networkRes = await fetch(req);
+          if (networkRes && networkRes.ok) {
+            cache.put(req, networkRes.clone()).catch(() => {});
+          }
+          return networkRes;
+        } catch {
+          return cached || Response.error();
+        }
+      })
+    );
+  }
 });
 
 // Push Notification Handler

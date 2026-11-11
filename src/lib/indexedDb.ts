@@ -222,12 +222,44 @@ export async function removeKeyValFromIndexedDB(key: string): Promise<boolean> {
 
 // In-memory cache for fast blob object URLs
 const offlineObjectUrlCache = new Map<string, string>();
+const cachedImageSourceUrlMap = new Map<string, string>();
+const attemptedPrecacheKeys = new Set<string>();
+const offlineImageCacheListeners = new Set<() => void>();
+
+let notifyTimer: ReturnType<typeof setTimeout> | null = null;
+function notifyOfflineImageCacheListeners() {
+  if (notifyTimer) return;
+  notifyTimer = setTimeout(() => {
+    notifyTimer = null;
+    offlineImageCacheListeners.forEach((cb) => {
+      try {
+        cb();
+      } catch {}
+    });
+  }, 120);
+}
+
+export function getCachedOfflineObjectUrl(productId?: string): string | undefined {
+  if (!productId) return undefined;
+  return offlineObjectUrlCache.get(productId);
+}
+
+export function subscribeOfflineImageCache(listener: () => void): () => void {
+  offlineImageCacheListeners.add(listener);
+  return () => {
+    offlineImageCacheListeners.delete(listener);
+  };
+}
 
 /**
  * Save raw product image Blob in IndexedDB so offline mode stores pure binary files instead of URLs
  */
-export async function saveProductImageBlobToIndexedDB(productId: string, blob: Blob): Promise<boolean> {
-  if (!isIndexedDBSupported() || !productId || !blob) return false;
+export async function saveProductImageBlobToIndexedDB(
+  productId: string,
+  blob: Blob,
+  sourceUrl?: string
+): Promise<boolean> {
+  if (!isIndexedDBSupported() || !productId || !blob || blob.size === 0) return false;
   try {
     const db = await openOfflineDatabase();
     return new Promise((resolve) => {
@@ -237,6 +269,7 @@ export async function saveProductImageBlobToIndexedDB(productId: string, blob: B
         id: productId,
         blob,
         mimeType: blob.type || 'image/webp',
+        sourceUrl: sourceUrl && !sourceUrl.startsWith('blob:') ? sourceUrl : undefined,
         updatedAt: Date.now(),
       });
       tx.oncomplete = () => {
@@ -244,6 +277,10 @@ export async function saveProductImageBlobToIndexedDB(productId: string, blob: B
           const old = offlineObjectUrlCache.get(productId);
           if (old) URL.revokeObjectURL(old);
           offlineObjectUrlCache.set(productId, URL.createObjectURL(blob));
+          if (sourceUrl && !sourceUrl.startsWith('blob:')) {
+            cachedImageSourceUrlMap.set(productId, sourceUrl);
+          }
+          notifyOfflineImageCacheListeners();
         } catch {}
         resolve(true);
       };
@@ -267,23 +304,103 @@ export async function saveProductImageToIndexedDB(
     return saveProductImageBlobToIndexedDB(productId, imageSource);
   }
 
-  if (typeof imageSource === 'string' && imageSource.startsWith('data:')) {
+  if (typeof imageSource !== 'string' || imageSource.startsWith('blob:')) {
+    return false;
+  }
+
+  // Already cached for this exact sourceUrl and available in memory
+  if (offlineObjectUrlCache.has(productId) && cachedImageSourceUrlMap.get(productId) === imageSource) {
+    return true;
+  }
+
+  if (imageSource.startsWith('data:')) {
     const blob = dataUrlToBlob(imageSource);
     if (blob) {
-      return saveProductImageBlobToIndexedDB(productId, blob);
+      return saveProductImageBlobToIndexedDB(productId, blob, imageSource);
+    }
+    return false;
+  }
+
+  // If remote or server URL and browser is online, fetch and cache as raw Blob in IndexedDB
+  if (imageSource.startsWith('http') || imageSource.startsWith('/uploads/')) {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return false;
+    }
+    try {
+      const blob = await urlToBlob(imageSource);
+      if (blob) {
+        return await saveProductImageBlobToIndexedDB(productId, blob, imageSource);
+      }
+    } catch {
+      return false;
     }
   }
 
-  // If remote URL, fetch in background and cache as raw Blob in IndexedDB
-  if (typeof imageSource === 'string' && (imageSource.startsWith('http') || imageSource.startsWith('/uploads/'))) {
-    urlToBlob(imageSource).then((blob) => {
-      if (blob) {
-        saveProductImageBlobToIndexedDB(productId, blob).catch(() => {});
-      }
-    }).catch(() => {});
+  return false;
+}
+
+let isPrecacheRunning = false;
+const pendingPrecacheQueue: Array<{ id: string; imageUrl: string }> = [];
+
+/**
+ * Throttled background precacher that converts all product images into binary Blobs inside IndexedDB
+ */
+export function precacheProductImagesToIndexedDB(
+  products: Array<{ id?: string; imageUrl?: string }>
+): void {
+  if (!isIndexedDBSupported() || !Array.isArray(products) || products.length === 0) return;
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+
+  let added = false;
+  for (const p of products) {
+    if (!p?.id || !p.imageUrl || typeof p.imageUrl !== 'string') continue;
+    const url = p.imageUrl.trim();
+    if (!url || url.startsWith('blob:')) continue;
+    if (offlineObjectUrlCache.has(p.id) && cachedImageSourceUrlMap.get(p.id) === url) {
+      continue;
+    }
+    const attemptKey = `${p.id}::${url}`;
+    if (attemptedPrecacheKeys.has(attemptKey)) continue;
+    attemptedPrecacheKeys.add(attemptKey);
+    pendingPrecacheQueue.push({ id: p.id, imageUrl: url });
+    added = true;
   }
 
-  return false;
+  if (!added || isPrecacheRunning) return;
+  isPrecacheRunning = true;
+
+  const CONCURRENCY = 4;
+  const runWorker = async () => {
+    while (pendingPrecacheQueue.length > 0) {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        // Put remaining back? Allow re-attempt when back online by clearing from attemptedPrecacheKeys
+        while (pendingPrecacheQueue.length > 0) {
+          const skipped = pendingPrecacheQueue.shift();
+          if (skipped) attemptedPrecacheKeys.delete(`${skipped.id}::${skipped.imageUrl}`);
+        }
+        break;
+      }
+      const task = pendingPrecacheQueue.shift();
+      if (!task) break;
+      const ok = await saveProductImageToIndexedDB(task.id, task.imageUrl).catch(() => false);
+      if (!ok && typeof navigator !== 'undefined' && !navigator.onLine) {
+        attemptedPrecacheKeys.delete(`${task.id}::${task.imageUrl}`);
+      }
+    }
+  };
+
+  Promise.all(Array.from({ length: CONCURRENCY }, () => runWorker()))
+    .catch(() => {})
+    .finally(() => {
+      isPrecacheRunning = false;
+      if (pendingPrecacheQueue.length > 0) {
+        precacheProductImagesToIndexedDB([]);
+      }
+    });
+}
+
+export function clearFailedImagePrecacheHistory(): void {
+  attemptedPrecacheKeys.clear();
 }
 
 /**
@@ -308,9 +425,12 @@ export async function getProductImageFromIndexedDB(productId: string): Promise<s
         } else if (req.result.dataUrl) {
           blob = dataUrlToBlob(req.result.dataUrl);
         }
-        if (blob) {
+        if (blob && blob.size > 0) {
           const objUrl = URL.createObjectURL(blob);
           offlineObjectUrlCache.set(productId, objUrl);
+          if (req.result.sourceUrl) {
+            cachedImageSourceUrlMap.set(productId, req.result.sourceUrl);
+          }
           resolve(objUrl);
         } else {
           resolve(null);
@@ -345,11 +465,14 @@ export async function getAllProductImagesFromIndexedDB(): Promise<Record<string,
               } else if (item.dataUrl) {
                 blob = dataUrlToBlob(item.dataUrl);
               }
-              if (blob) {
+              if (blob && blob.size > 0) {
                 let objUrl = offlineObjectUrlCache.get(item.id);
                 if (!objUrl) {
                   objUrl = URL.createObjectURL(blob);
                   offlineObjectUrlCache.set(item.id, objUrl);
+                }
+                if (item.sourceUrl) {
+                  cachedImageSourceUrlMap.set(item.id, item.sourceUrl);
                 }
                 res[item.id] = objUrl;
               }

@@ -290,13 +290,18 @@ export function dataUrlToBlob(dataUrl: string): Blob | null {
  */
 export async function urlToBlob(url: string): Promise<Blob | null> {
   if (!url || typeof url !== 'string') return null;
+  if (url.startsWith('blob:')) return null;
   if (url.startsWith('data:')) {
     return dataUrlToBlob(url);
   }
   try {
-    const res = await fetch(url, { mode: 'cors' });
+    const isSameOrigin = url.startsWith('/') || (typeof window !== 'undefined' && url.startsWith(window.location.origin));
+    const res = await fetch(url, isSameOrigin ? { cache: 'force-cache' } : { mode: 'cors', cache: 'force-cache' });
     if (res.ok) {
-      return await res.blob();
+      const blob = await res.blob();
+      if (blob && blob.size > 0 && (!blob.type || blob.type.startsWith('image/'))) {
+        return blob;
+      }
     }
   } catch {
     // ignore fetch error

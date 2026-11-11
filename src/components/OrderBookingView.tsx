@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { Product, Shop, OrderItem, PaymentMethod, Route, Order, ReturnedOrderItem } from '../types';
 import { AddShopModal } from './AddShopModal';
+import { OfflineProductImage } from './OfflineProductImage';
 import { getBusinessInfo } from '../lib/storage';
 import { ProductImageLightboxModal } from './ProductImageLightboxModal';
 
@@ -1169,14 +1170,14 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                         title="ফুল ছবি বড় করে দেখতে ক্লিক করুন"
                         className="w-18 h-18 sm:w-20 sm:h-20 rounded-2xl bg-gradient-to-b from-[#FAFBFD] via-[#F4F5F8] to-[#EAEDF2] border border-[#E2E8F0] shadow-[inset_0_1px_3px_rgba(0,0,0,0.03)] overflow-hidden shrink-0 flex items-center justify-center p-1.5 cursor-pointer hover:border-emerald-500 hover:shadow-xs group/img relative transition-all"
                       >
-                        {prod.imageUrl ? (
+                        {(prod.imageUrl || prod._offlineBlobUrl) ? (
                           <>
-                            <img
-                              src={prod.imageUrl}
+                            <OfflineProductImage
+                              product={prod}
                               alt={prod.banglaName}
                               className="w-full h-full object-contain group-hover/img:scale-106 transition-transform duration-300"
                               loading="lazy"
-                              referrerPolicy="no-referrer"
+                              fallback={<Package className="w-7 h-7 text-neutral-400" />}
                             />
                             <div className="absolute inset-0 bg-black/20 opacity-0 group-hover/img:opacity-100 flex items-center justify-center transition-opacity rounded-2xl">
                               <span className="px-1.5 py-0.5 rounded-md bg-black/70 text-white text-[9px] font-bold flex items-center gap-0.5">

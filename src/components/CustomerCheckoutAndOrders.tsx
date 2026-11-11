@@ -41,6 +41,7 @@ import {
   DeliveryZone,
   PromoCoupon
 } from '../types';
+import { OfflineProductImage } from './OfflineProductImage';
 
 // 1. SodaiBhai Product Card (mf from sodaibhai.vercel.app)
 interface SodaiProductCardProps {
@@ -94,13 +95,17 @@ export const SodaiProductCard: React.FC<SodaiProductCardProps> = ({
         title="ফুল ছবি দেখতে ক্লিক করুন"
         className="relative aspect-[1/0.95] sm:aspect-square rounded-2xl overflow-hidden mb-2 cursor-pointer bg-gradient-to-b from-[#FAFBFD] via-[#F4F5F8] to-[#EAEDF2] border border-[#E5E7EB]/80 shadow-[inset_0_1px_3px_rgba(0,0,0,0.03)] flex items-center justify-center p-1.5 sm:p-2"
       >
-        {product.imageUrl ? (
-          <img
-            src={product.imageUrl}
+        {(product.imageUrl || product._offlineBlobUrl) ? (
+          <OfflineProductImage
+            product={product}
             alt={product.banglaName}
             loading="lazy"
-            referrerPolicy="no-referrer"
             className="w-full h-full object-contain drop-shadow-xs group-hover:scale-106 transition-transform duration-300"
+            fallback={
+              <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-red-50 to-neutral-100 text-[#E21E26] font-black text-3xl">
+                {product.banglaName[0]}
+              </div>
+            }
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-red-50 to-neutral-100 text-[#E21E26] font-black text-3xl">

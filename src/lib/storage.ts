@@ -5,6 +5,8 @@ import {
   isIndexedDBSupported,
   saveProductImageToIndexedDB,
   getAllProductImagesFromIndexedDB,
+  getCachedOfflineObjectUrl,
+  precacheProductImagesToIndexedDB,
   saveSingleItemToIndexedDB,
   deleteItemFromIndexedDB,
   setKeyValToIndexedDB,
@@ -874,18 +876,16 @@ export async function initializeStorageFromIndexedDB(): Promise<{
       } catch {}
     }
 
-    // Attach offline blob images from IndexedDB
-    if (idbImages && Object.keys(idbImages).length > 0) {
-      prods = prods.map((p) => {
-        const offlineUrl = idbImages[p.id];
-        if (!offlineUrl) return p;
-        return {
-          ...p,
-          imageUrl: (!p.imageUrl || (typeof navigator !== 'undefined' && !navigator.onLine)) ? offlineUrl : p.imageUrl,
-          _offlineBlobUrl: offlineUrl,
-        };
-      });
-    }
+    // Attach offline blob images from IndexedDB cleanly without overwriting persistent imageUrl with ephemeral blob: URLs
+    prods = prods.map((p) => {
+      const offlineUrl = idbImages?.[p.id] || getCachedOfflineObjectUrl(p.id) || p._offlineBlobUrl;
+      const cleanImageUrl = p.imageUrl && !p.imageUrl.startsWith('blob:') ? p.imageUrl : '';
+      return {
+        ...p,
+        imageUrl: cleanImageUrl,
+        ...(offlineUrl ? { _offlineBlobUrl: offlineUrl } : {}),
+      };
+    });
 
     // Filter deleted tombstones
     const delProducts = getDeletedProductIds();
@@ -904,9 +904,12 @@ export async function initializeStorageFromIndexedDB(): Promise<{
     memoryDueCollectionsCache = dueCollections;
     memoryDailyExpensesCache = dailyExpenses;
 
+    // Strip ephemeral _offlineBlobUrl when persisting to IndexedDB products store
+    const cleanProductsForIdb = memoryProductsCache.map(({ _offlineBlobUrl, ...rest }) => rest);
+
     // Firmly persist into IndexedDB
     await Promise.allSettled([
-      saveItemsToIndexedDB('products', memoryProductsCache),
+      saveItemsToIndexedDB('products', cleanProductsForIdb),
       saveItemsToIndexedDB('shops', memoryShopsCache),
       saveItemsToIndexedDB('orders', memoryOrdersCache),
       saveItemsToIndexedDB('categories', memoryCategoriesCache),
@@ -915,6 +918,9 @@ export async function initializeStorageFromIndexedDB(): Promise<{
       saveItemsToIndexedDB('dueCollections', memoryDueCollectionsCache),
       saveItemsToIndexedDB('dailyExpenses', memoryDailyExpensesCache),
     ]);
+
+    // Pre-cache any uncached product image blobs in background while online
+    precacheProductImagesToIndexedDB(memoryProductsCache);
 
     // PURGE heavy arrays from localStorage to permanently prevent 5MB storage quota overflows
     try {
@@ -978,17 +984,32 @@ export function getProducts(): Product[] {
 
 export function saveProducts(products: Product[]) {
   const deletedIds = getDeletedProductIds();
-  const clean = products.filter((p) => !deletedIds.has(p.id));
+  const prevById = new Map<string, Product>((memoryProductsCache || []).map((p) => [p.id, p]));
+  const clean = products
+    .filter((p) => p && !deletedIds.has(p.id))
+    .map((p) => {
+      const prev = prevById.get(p.id);
+      const cachedBlobUrl = p._offlineBlobUrl || getCachedOfflineObjectUrl(p.id) || prev?._offlineBlobUrl;
+      const persistentImageUrl =
+        p.imageUrl && !p.imageUrl.startsWith('blob:')
+          ? p.imageUrl
+          : prev?.imageUrl && !prev.imageUrl.startsWith('blob:')
+          ? prev.imageUrl
+          : '';
+      return {
+        ...p,
+        imageUrl: persistentImageUrl,
+        ...(cachedBlobUrl ? { _offlineBlobUrl: cachedBlobUrl } : {}),
+      };
+    });
+
   memoryProductsCache = clean;
 
   // Persist directly to IndexedDB (virtually unlimited capacity, zero 5MB limit)
   if (isIndexedDBSupported()) {
-    saveItemsToIndexedDB('products', clean).catch(() => {});
-    clean.forEach((p) => {
-      if (p.imageUrl) {
-        saveProductImageToIndexedDB(p.id, p.imageUrl).catch(() => {});
-      }
-    });
+    const cleanForIdb = clean.map(({ _offlineBlobUrl, ...rest }) => rest);
+    saveItemsToIndexedDB('products', cleanForIdb).catch(() => {});
+    precacheProductImagesToIndexedDB(clean);
   }
 }
 

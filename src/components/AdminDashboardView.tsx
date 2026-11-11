@@ -73,6 +73,7 @@ import {
   StaffTargetConfig
 } from '../types';
 import { processImageFile } from '../lib/imageUtils';
+import { OfflineProductImage } from './OfflineProductImage';
 import { fetchAllUsers, updateUserRoleAndRoute, saveBusinessInfoToCloud, subscribeToCloudBusinessInfo } from '../lib/firebase';
 import {
   saveBusinessInfoLocal,
@@ -2772,12 +2773,16 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                               title="ফুল ছবি বড় করে দেখুন"
                               className="w-11 h-11 rounded-xl bg-gradient-to-b from-[#FAFBFD] via-[#F4F5F8] to-[#EAEDF2] border border-neutral-200 shrink-0 overflow-hidden flex items-center justify-center p-0.5 cursor-pointer hover:border-[#E21E26] hover:shadow-xs transition-all"
                             >
-                              <img
-                                src={p.imageUrl || 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500&auto=format&fit=crop&q=80'}
-                                alt={p.name}
-                                className="w-full h-full object-contain"
-                                referrerPolicy="no-referrer"
-                              />
+                              {(p.imageUrl || p._offlineBlobUrl) ? (
+                                <OfflineProductImage
+                                  product={p}
+                                  alt={p.name}
+                                  className="w-full h-full object-contain"
+                                  fallback={<Package className="w-5 h-5 text-neutral-400" />}
+                                />
+                              ) : (
+                                <Package className="w-5 h-5 text-neutral-400" />
+                              )}
                             </div>
                             <div>
                               <div className="font-bold text-neutral-900">{p.banglaName}</div>

@@ -171,6 +171,9 @@ import {
   isIndexedDBSupported,
   getAllProductImagesFromIndexedDB,
   saveProductImageToIndexedDB,
+  getCachedOfflineObjectUrl,
+  precacheProductImagesToIndexedDB,
+  clearFailedImagePrecacheHistory,
 } from './lib/indexedDb';
 import { clearAllOfflineQueue, getPendingOfflineActions, isEntityPendingDelete } from './lib/offlineSyncQueue';
 import { setMemoryOrdersCache } from './lib/storage';
@@ -429,6 +432,8 @@ export default function App() {
       setIsOnline(true);
       showToast('ইন্টারনেট সংযোগ পাওয়া গেছে। ফায়ারবেস ক্লাউড সিঙ্ক চালু হয়েছে।', 'success');
       try {
+        clearFailedImagePrecacheHistory();
+        precacheProductImagesToIndexedDB(getProducts());
         const synced = await flushOfflinePendingActionsToFirebase();
         if (synced > 0) {
           showToast(`ইন্টারনেট সংযোগ ফিরে এসেছে: ${synced}টি অফলাইন অ্যাকশন ফায়ারবেজে সিঙ্ক হয়েছে!`, 'success');
@@ -537,28 +542,32 @@ export default function App() {
           const base = localWins ? remoteItem : localItem;
           const winner = localWins ? localItem : remoteItem;
 
-          const isRemoteClean = remoteItem.imageUrl && (remoteItem.imageUrl.startsWith('http') || remoteItem.imageUrl.startsWith('/uploads/'));
-          const isLocalClean = localItem.imageUrl && (localItem.imageUrl.startsWith('http') || localItem.imageUrl.startsWith('/uploads/'));
+          const isRemoteClean = remoteItem.imageUrl && !remoteItem.imageUrl.startsWith('blob:') && (remoteItem.imageUrl.startsWith('http') || remoteItem.imageUrl.startsWith('/uploads/') || remoteItem.imageUrl.startsWith('data:'));
+          const isLocalClean = localItem.imageUrl && !localItem.imageUrl.startsWith('blob:') && (localItem.imageUrl.startsWith('http') || localItem.imageUrl.startsWith('/uploads/') || localItem.imageUrl.startsWith('data:'));
 
           let validImage = '';
           if (isRemoteClean) {
             validImage = remoteItem.imageUrl;
           } else if (isLocalClean) {
             validImage = localItem.imageUrl;
-          } else if (remoteItem.imageUrl) {
+          } else if (remoteItem.imageUrl && !remoteItem.imageUrl.startsWith('blob:')) {
             validImage = remoteItem.imageUrl;
-          } else {
-            validImage = localItem.imageUrl || '';
+          } else if (localItem.imageUrl && !localItem.imageUrl.startsWith('blob:')) {
+            validImage = localItem.imageUrl;
           }
+
+          const preservedOfflineBlob = localItem._offlineBlobUrl || getCachedOfflineObjectUrl(key);
 
           map.set(key, {
             ...base,
             ...winner,
             ...('imageUrl' in remoteItem || 'imageUrl' in localItem ? { imageUrl: validImage } : {}),
+            ...(preservedOfflineBlob ? { _offlineBlobUrl: preservedOfflineBlob } : {}),
             _isOfflinePending: isLocalPending,
           });
         } else {
-          map.set(key, remoteItem);
+          const cachedBlob = getCachedOfflineObjectUrl(key);
+          map.set(key, cachedBlob ? { ...remoteItem, _offlineBlobUrl: cachedBlob } : remoteItem);
         }
       });
 
@@ -583,7 +592,7 @@ export default function App() {
           if (Array.isArray(mirror.products) && mirror.products.length > 0) {
             const merged = mergeById(getProducts(), mirror.products, getDeletedProductIds());
             saveProducts(merged);
-            setProducts(merged);
+            setProducts(getProducts());
             updatedAny = true;
           }
           if (Array.isArray(mirror.shops) && mirror.shops.length > 0) {
@@ -672,7 +681,7 @@ export default function App() {
 
       unsubscribeProducts = subscribeToCloudProducts((cloudProducts) => {
         saveProducts(cloudProducts);
-        setProducts(cloudProducts);
+        setProducts(getProducts());
       });
 
       unsubscribeOrders = subscribeToCloudOrders((cloudOrders) => {

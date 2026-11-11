@@ -66,6 +66,7 @@ import {
   CustomerOfficialMemoModal
 } from './CustomerProductModal';
 import { ProductImageLightboxModal } from './ProductImageLightboxModal';
+import { OfflineProductImage } from './OfflineProductImage';
 import {
   SodaiProductCard,
   SodaiBottomNav,
@@ -760,8 +761,13 @@ export const CustomerStoreView: React.FC<CustomerStoreViewProps> = ({
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
                           <div className="w-9 h-9 rounded-lg bg-[#F9FAFB] border border-[#ECECEC] overflow-hidden shrink-0 flex items-center justify-center">
-                            {item.imageUrl ? (
-                              <img src={item.imageUrl} alt="" className="w-full h-full object-cover" />
+                            {(item.imageUrl || item._offlineBlobUrl) ? (
+                              <OfflineProductImage
+                                product={item}
+                                alt={item.banglaName}
+                                className="w-full h-full object-cover"
+                                fallback={<span className="font-black text-xs text-[#E21E26]">{item.banglaName[0]}</span>}
+                              />
                             ) : (
                               <span className="font-black text-xs text-[#E21E26]">{item.banglaName[0]}</span>
                             )}

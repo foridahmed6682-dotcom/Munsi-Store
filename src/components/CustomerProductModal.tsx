@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { Product, ProductReview, Order, StoreStory, BusinessInfo } from '../types';
 import { ProductImageLightboxModal } from './ProductImageLightboxModal';
+import { OfflineProductImage } from './OfflineProductImage';
 
 // 1. Product Details Sheet / Page (Ove from sodaibhai.vercel.app)
 interface ProductDetailsProps {
@@ -97,12 +98,16 @@ export const CustomerProductDetailsView: React.FC<ProductDetailsProps> = ({
         title="ফুল ছবি দেখতে ক্লিক করুন"
         className="relative h-[340px] sm:h-[420px] bg-gradient-to-b from-[#FDFDFE] via-[#F4F6F9] to-[#EAEFF5] cursor-pointer flex items-center justify-center p-6 sm:p-8"
       >
-        {product.imageUrl ? (
-          <img
-            src={product.imageUrl}
+        {(product.imageUrl || product._offlineBlobUrl) ? (
+          <OfflineProductImage
+            product={product}
             alt={product.banglaName}
-            referrerPolicy="no-referrer"
             className="max-h-full max-w-full object-contain drop-shadow-xl hover:scale-104 transition-transform duration-300"
+            fallback={
+              <div className="w-full h-full flex items-center justify-center rounded-b-[3.5rem] bg-gradient-to-br from-red-50 to-neutral-100 text-[#E21E26] font-black text-6xl">
+                {product.banglaName[0]}
+              </div>
+            }
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center rounded-b-[3.5rem] bg-gradient-to-br from-red-50 to-neutral-100 text-[#E21E26] font-black text-6xl">
@@ -468,8 +473,17 @@ export const CustomerProductDetailsView: React.FC<ProductDetailsProps> = ({
                   className="bg-white p-2.5 rounded-2xl border border-[#ECECEC] hover:border-[#E21E26]/40 text-left transition-all shadow-xs group"
                 >
                   <div className="aspect-square rounded-xl overflow-hidden bg-gradient-to-b from-[#FAFBFD] via-[#F4F5F8] to-[#EAEDF2] border border-[#E5E7EB]/80 p-1.5 flex items-center justify-center mb-2">
-                    {rp.imageUrl ? (
-                      <img src={rp.imageUrl} alt={rp.banglaName} className="w-full h-full object-contain group-hover:scale-105 transition-transform" />
+                    {(rp.imageUrl || rp._offlineBlobUrl) ? (
+                      <OfflineProductImage
+                        product={rp}
+                        alt={rp.banglaName}
+                        className="w-full h-full object-contain group-hover:scale-105 transition-transform"
+                        fallback={
+                          <div className="w-full h-full flex items-center justify-center font-black text-xl text-[#E21E26]">
+                            {rp.banglaName[0]}
+                          </div>
+                        }
+                      />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center font-black text-xl text-[#E21E26]">
                         {rp.banglaName[0]}

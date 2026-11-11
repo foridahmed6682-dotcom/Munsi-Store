@@ -11,6 +11,7 @@ import {
   Maximize2
 } from 'lucide-react';
 import { Product } from '../types';
+import { OfflineProductImage } from './OfflineProductImage';
 
 interface ProductImageLightboxModalProps {
   product: Product | null;
@@ -229,13 +230,18 @@ export const ProductImageLightboxModal: React.FC<ProductImageLightboxModalProps>
             transform: `translate(${position.x}px, ${position.y}px) scale(${zoomLevel})`
           }}
         >
-          {product.imageUrl ? (
-            <img
-              src={product.imageUrl}
+          {(product.imageUrl || product._offlineBlobUrl) ? (
+            <OfflineProductImage
+              product={product}
               alt={product.banglaName}
               draggable={false}
-              referrerPolicy="no-referrer"
               className="max-h-[62vh] max-w-[85vw] sm:max-w-xl object-contain drop-shadow-md select-none rounded-xl"
+              fallback={
+                <div className="w-64 h-64 flex flex-col items-center justify-center text-[#E21E26]">
+                  <span className="font-black text-7xl mb-2">{product.banglaName[0]}</span>
+                  <span className="text-xs font-bold text-neutral-500">কোনো ছবি নেই</span>
+                </div>
+              }
             />
           ) : (
             <div className="w-64 h-64 flex flex-col items-center justify-center text-[#E21E26]">

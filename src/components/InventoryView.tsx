@@ -43,6 +43,7 @@ import {
 } from '../lib/backupService';
 import { ProductImageLightboxModal } from './ProductImageLightboxModal';
 import { SupplierSummaryModal } from './SupplierSummaryModal';
+import { OfflineProductImage } from './OfflineProductImage';
 
 interface InventoryViewProps {
   products: Product[];
@@ -938,13 +939,13 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                           title="ফুল ছবি দেখতে ক্লিক করুন"
                           className="w-12 h-12 rounded-xl bg-gradient-to-b from-[#FAFBFD] via-[#F4F5F8] to-[#EAEDF2] border border-neutral-200 overflow-hidden shrink-0 flex items-center justify-center p-1 cursor-pointer hover:border-[#E21E26] hover:shadow-xs transition-all"
                         >
-                          {prod.imageUrl ? (
-                            <img
-                              src={prod.imageUrl}
+                          {(prod.imageUrl || prod._offlineBlobUrl) ? (
+                            <OfflineProductImage
+                              product={prod}
                               alt={prod.banglaName}
                               className="w-full h-full object-contain"
                               loading="lazy"
-                              referrerPolicy="no-referrer"
+                              fallback={<Package className="w-6 h-6 text-neutral-400" />}
                             />
                           ) : (
                             <Package className="w-6 h-6 text-neutral-400" />
@@ -1852,10 +1853,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
                                   {/* Image with Direct Upload / Replace / Remove */}
                                   <td className="p-2 text-center">
-                                    {p.imageUrl ? (
+                                    {(p.imageUrl || p._offlineBlobUrl) ? (
                                       <div className="relative inline-block group">
-                                        <img
-                                          src={p.imageUrl}
+                                        <OfflineProductImage
+                                          product={p}
                                           alt={p.banglaName}
                                           className="w-10 h-10 rounded-xl object-cover border border-teal-200 shadow-2xs mx-auto"
                                         />
