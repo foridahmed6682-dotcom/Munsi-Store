@@ -66,13 +66,15 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
   const [shopSearch, setShopSearch] = useState<string>('');
 
   // Cart
-  const [cart, setCart] = useState<{
-    [productId: string]: {
-      quantity: number;
-      unitPrice: number;
-      selectedUnit: string;
-    };
-  }>({});
+  type CartEntry = {
+    quantity: number;
+    unitPrice: number;
+    selectedUnit: string;
+    fallbackName?: string;
+    fallbackTradeOfferQty?: number;
+    fallbackSupplier?: string;
+  };
+  const [cart, setCart] = useState<{ [productId: string]: CartEntry }>({});
   const [productSelectedUnits, setProductSelectedUnits] = useState<{
     [productId: string]: string;
   }>({});
@@ -81,34 +83,47 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
   const [paidAmountInput, setPaidAmountInput] = useState<string>('');
   const [orderNotes, setOrderNotes] = useState<string>('');
 
-  // Synchronize from editingOrder when editing an order
+  const lastLoadedEditKeyRef = React.useRef<string | null>(null);
+  const wasEditingRef = React.useRef<boolean>(false);
+  const productsRef = React.useRef<Product[]>(products);
+  productsRef.current = products;
+  const shopsRef = React.useRef<Shop[]>(shops);
+  shopsRef.current = shops;
+
+  // Synchronize from editingOrder ONLY when entering/switching edit mode (never wipe user edits on background product refresh)
   useEffect(() => {
     if (editingOrder) {
-      setSelectedShopId(editingOrder.shopId);
-      if (editingOrder.shopRoute) {
-        setRouteFilter(editingOrder.shopRoute);
+      const editKey = `${editingOrder.id}::${editingOrder.updatedAt || ''}`;
+      if (lastLoadedEditKeyRef.current === editKey) {
+        return;
       }
-      const initialCart: {
-        [productId: string]: {
-          quantity: number;
-          unitPrice: number;
-          selectedUnit: string;
-        };
-      } = {};
-      const initialUnits: {
-        [productId: string]: string;
-      } = {};
+      lastLoadedEditKeyRef.current = editKey;
+      wasEditingRef.current = true;
+
+      setSelectedShopId(editingOrder.shopId);
+      const matchedShop = shopsRef.current.find((s) => s.id === editingOrder.shopId);
+      const targetRoute = matchedShop?.routeArea || editingOrder.shopRoute || 'all';
+      setRouteFilter(targetRoute || 'all');
+      setShopSearch('');
+
+      const curProducts = productsRef.current;
+      const initialCart: { [productId: string]: CartEntry } = {};
+      const initialUnits: { [productId: string]: string } = {};
 
       editingOrder.items.forEach((it) => {
         const matchedProd =
-          products.find((p) => p.id === it.productId) ||
-          products.find((p) => p.banglaName === it.productName || p.name === it.productName);
-        const prodKey = matchedProd ? matchedProd.id : (it.productId || it.productName);
-        const u = it.unit || (matchedProd?.unit || 'পিস');
+          curProducts.find((p) => p.id === it.productId) ||
+          curProducts.find((p) => p.banglaName === it.productName || p.name === it.productName);
+        const prodKey = matchedProd ? matchedProd.id : (it.productId || `custom-${it.productName}`);
+        const u = it.unit || matchedProd?.unit || 'পিস';
+        const existingQty = initialCart[prodKey]?.quantity || 0;
         initialCart[prodKey] = {
-          quantity: it.quantity,
-          unitPrice: it.unitPrice,
+          quantity: existingQty + (Number(it.quantity) || 0),
+          unitPrice: Number(it.unitPrice) || 0,
           selectedUnit: u,
+          fallbackName: it.productName,
+          fallbackTradeOfferQty: it.tradeOfferQty,
+          fallbackSupplier: it.supplier,
         };
         initialUnits[prodKey] = u;
       });
@@ -117,12 +132,31 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
       setProductSelectedUnits(initialUnits);
       setDiscountPercent(editingOrder.discountPercent || 0);
       setPaymentMethod(editingOrder.paymentMethod || 'DUE');
-      setPaidAmountInput(editingOrder.paidAmount ? String(editingOrder.paidAmount) : '');
+      setPaidAmountInput(
+        editingOrder.deliveryStatus === 'DELIVERED'
+          ? String(Number(editingOrder.paidAmount) || 0)
+          : editingOrder.paidAmount
+          ? String(editingOrder.paidAmount)
+          : ''
+      );
       setOrderNotes(editingOrder.notes || '');
-    } else if (selectedShopIdProp) {
-      setSelectedShopId(selectedShopIdProp);
+      setLastBookedOrder(null);
+    } else {
+      if (wasEditingRef.current) {
+        wasEditingRef.current = false;
+        lastLoadedEditKeyRef.current = null;
+        setCart({});
+        setProductSelectedUnits({});
+        setDiscountPercent(0);
+        setPaymentMethod('DUE');
+        setPaidAmountInput('');
+        setOrderNotes('');
+      }
+      if (selectedShopIdProp) {
+        setSelectedShopId(selectedShopIdProp);
+      }
     }
-  }, [editingOrder, selectedShopIdProp, products]);
+  }, [editingOrder, selectedShopIdProp]);
 
   // Product Catalog search & filter
   const [productSearch, setProductSearch] = useState<string>('');
@@ -208,10 +242,10 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
     });
   }, [shops, routeFilter, shopSearch]);
 
-  // Keep selectedShopId synchronized with filteredShops when routeFilter or shopSearch changes
+  // Keep selectedShopId synchronized when routeFilter or shopSearch changes (allow freely changing shop during edit)
   useEffect(() => {
-    if (editingOrder && shops.some((s) => s.id === editingOrder.shopId)) {
-      setSelectedShopId(editingOrder.shopId);
+    if (editingOrder && selectedShopId === editingOrder.shopId && !shops.some((s) => s.id === editingOrder.shopId)) {
+      // Keep direct/custom shop ID from the edited memo instead of overriding it
       return;
     }
     if (filteredShops.length > 0) {
@@ -219,21 +253,33 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
       if (!existsInFiltered) {
         setSelectedShopId(filteredShops[0].id);
       }
-    } else if (selectedShopId !== '') {
-      if (!editingOrder) {
-        setSelectedShopId('');
-      }
+    } else if (selectedShopId !== '' && !editingOrder) {
+      setSelectedShopId('');
     }
   }, [filteredShops, selectedShopId, editingOrder, shops]);
 
   const selectedShop = useMemo(() => {
-    return (
+    const matched =
       shops.find((s) => s.id === selectedShopId) ||
-      filteredShops.find((s) => s.id === selectedShopId) ||
-      filteredShops[0] ||
-      null
-    );
-  }, [shops, filteredShops, selectedShopId]);
+      filteredShops.find((s) => s.id === selectedShopId);
+    if (matched) return matched;
+    if (editingOrder && selectedShopId === editingOrder.shopId) {
+      return {
+        id: editingOrder.shopId || 'shop-direct-customer',
+        name: editingOrder.shopName,
+        ownerName: editingOrder.customerName || editingOrder.shopName,
+        phone: editingOrder.shopPhone || '',
+        address: editingOrder.shopAddress || '',
+        routeArea: editingOrder.shopRoute || '',
+        category: 'রুট দোকান',
+        previousDue: editingOrder.previousDueAtBooking || 0,
+        lat: 25.28,
+        lng: 89.35,
+        createdAt: editingOrder.orderDate,
+      } as Shop;
+    }
+    return filteredShops[0] || null;
+  }, [shops, filteredShops, selectedShopId, editingOrder]);
 
   // Tool #5: Find most recent order for the selected shop
   const lastShopOrder = useMemo(() => {
@@ -346,33 +392,60 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
         ? 12
         : 1;
 
-    // Total stock in single pieces
-    const stock = Number(prod.stock) || 0;
+    const targetPiecesPerUnit =
+      targetUnit === baseUnit
+        ? piecesPerBase
+        : targetUnit === 'ডজন'
+        ? 12
+        : targetUnit === 'পাতা'
+        ? 10
+        : targetUnit === 'বক্স' || targetUnit === 'কার্টুন'
+        ? 24
+        : targetUnit === 'প্যাকেট'
+        ? 12
+        : 1;
+
+    // Total stock in single pieces (plus pieces already reserved by this memo if editing)
+    let reservedBaseUnits = 0;
+    if (editingOrder) {
+      for (const it of editingOrder.items) {
+        const isMatch =
+          it.productId === prod.id ||
+          it.productName === prod.banglaName ||
+          it.productName === prod.name;
+        if (isMatch) {
+          const itRaw = (Number(it.quantity) || 0) + (Number(it.tradeOfferQty) || 0);
+          const itUnit = it.unit || baseUnit;
+          if (itUnit === baseUnit) {
+            reservedBaseUnits += itRaw;
+          } else if (baseUnit !== 'পিস' && piecesPerBase > 1) {
+            if (itUnit === 'পিস') reservedBaseUnits += itRaw / piecesPerBase;
+            else if (itUnit === 'ডজন') reservedBaseUnits += (itRaw * 12) / piecesPerBase;
+            else reservedBaseUnits += itRaw;
+          } else if (baseUnit === 'পিস') {
+            if (itUnit === 'ডজন') reservedBaseUnits += itRaw * 12;
+            else if (prod.piecesPerUnit && prod.piecesPerUnit > 1) reservedBaseUnits += itRaw * prod.piecesPerUnit;
+            else reservedBaseUnits += itRaw;
+          } else {
+            reservedBaseUnits += itRaw;
+          }
+        }
+      }
+    }
+
+    const stock = (Number(prod.stock) || 0) + reservedBaseUnits;
     const totalPieces =
       baseUnit === 'পিস'
         ? stock
         : stock * piecesPerBase;
 
     if (targetUnit === baseUnit) {
-      return stock;
+      return Math.floor(stock * 100) / 100;
     }
     if (targetUnit === 'পিস') {
-      return totalPieces;
+      return Math.floor(totalPieces);
     }
-    if (targetUnit === 'ডজন') {
-      return Math.floor(totalPieces / 12);
-    }
-    if (targetUnit === 'পাতা') {
-      return Math.floor(totalPieces / 10);
-    }
-    if (targetUnit === 'বক্স' || targetUnit === 'কার্টুন') {
-      return Math.floor(totalPieces / 24);
-    }
-    if (targetUnit === 'প্যাকেট') {
-      return Math.floor(totalPieces / 12);
-    }
-
-    return stock;
+    return Math.floor(totalPieces / targetPiecesPerUnit);
   };
 
   const handleUnitChange = (productId: string, newUnit: string) => {
@@ -386,11 +459,12 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
       const currentEntry = prev[productId];
       const newPrice = getDefaultPriceForUnit(prod, newUnit);
       const maxStock = getMaxStockForUnit(prod, newUnit);
-      const clampedQty = Math.max(1, Math.min(currentEntry.quantity, maxStock));
+      const clampedQty = maxStock > 0 ? Math.max(1, Math.min(currentEntry.quantity, maxStock)) : currentEntry.quantity;
 
       return {
         ...prev,
         [productId]: {
+          ...currentEntry,
           quantity: clampedQty,
           unitPrice: newPrice,
           selectedUnit: newUnit,
@@ -529,22 +603,37 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
     });
   }, [products, selectedCategory, productSearch]);
 
-  // Cart calculation
+  // Cart calculation (preserves custom/deleted items while editing a memo)
   const cartItems: OrderItem[] = useMemo(() => {
     return Object.entries(cart)
       .filter(([_, data]) => data.quantity > 0)
       .map(([productId, data]) => {
         const prod = products.find((p) => p.id === productId);
-        if (!prod) return null;
-
         const qty = data.quantity;
-        const price = data.unitPrice;
+        const price = Number(data.unitPrice) || 0;
+
+        if (!prod) {
+          const fallbackUnit = data.selectedUnit || 'পিস';
+          return {
+            productId,
+            productName: data.fallbackName || productId,
+            unit: fallbackUnit,
+            unitPrice: price,
+            quantity: qty,
+            tradeOfferQty: data.fallbackTradeOfferQty || 0,
+            lineTotal: +(price * qty).toFixed(2),
+            supplier: data.fallbackSupplier || undefined,
+          };
+        }
+
         const unit = data.selectedUnit || getEffectiveUnit(productId, prod);
 
-        // Trade offer logic: e.g. 1 free every 10
+        // Trade offer logic: e.g. 1 free every 10 (or preserve original trade offer if custom)
         let tradeOfferQty = 0;
         if (prod.tradeOfferDesc?.includes('১০') && qty >= 10) {
           tradeOfferQty = Math.floor(qty / 10);
+        } else if (data.fallbackTradeOfferQty && editingOrder) {
+          tradeOfferQty = data.fallbackTradeOfferQty;
         }
 
         const lineTotal = +(price * qty).toFixed(2);
@@ -556,14 +645,13 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
           quantity: qty,
           tradeOfferQty,
           lineTotal,
-          supplier: prod.supplier || undefined,
+          supplier: prod.supplier || data.fallbackSupplier || undefined,
         };
-      })
-      .filter(Boolean) as OrderItem[];
-  }, [cart, products, productSelectedUnits]);
+      });
+  }, [cart, products, productSelectedUnits, editingOrder]);
 
   const subTotal = useMemo(() => {
-    return cartItems.reduce((sum, item) => sum + item.lineTotal, 0);
+    return +(cartItems.reduce((sum, item) => sum + item.lineTotal, 0)).toFixed(2);
   }, [cartItems]);
 
   const discountAmount = useMemo(() => {
@@ -572,7 +660,7 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
   }, [subTotal, discountPercent]);
 
   const netTotal = useMemo(() => {
-    return Math.max(0, subTotal - discountAmount);
+    return Math.max(0, +(subTotal - discountAmount).toFixed(2));
   }, [subTotal, discountAmount]);
 
   // Total quantity count in cart
@@ -584,19 +672,52 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
     onCartCountChange?.(totalCartItemCount);
   }, [totalCartItemCount, onCartCountChange]);
 
-  // At order booking time, goods are not delivered yet.
-  // Cash collection and due settlement happen at delivery time (next day).
-  const paidAmount = 0;
-  const dueAmount = 0;
+  const isEditingDeliveredOrder = editingOrder?.deliveryStatus === 'DELIVERED';
+  const existingReturnAmount = editingOrder ? Math.max(0, Number(editingOrder.returnAmount || 0)) : 0;
+  const effectiveDeliverableBill = Math.max(0, +(netTotal - existingReturnAmount).toFixed(2));
+
+  // At new order booking time, goods are not delivered yet (paidAmount = 0, dueAmount = 0).
+  // When editing an already DELIVERED memo, preserve & allow editing paidAmount / dueAmount accurately!
+  const paidAmount = useMemo(() => {
+    if (!isEditingDeliveredOrder) return 0;
+    const parsed = parseFloat(paidAmountInput);
+    if (isNaN(parsed) || parsed < 0) return 0;
+    return Math.min(effectiveDeliverableBill, +(parsed).toFixed(2));
+  }, [isEditingDeliveredOrder, paidAmountInput, effectiveDeliverableBill]);
+
+  const dueAmount = useMemo(() => {
+    if (!isEditingDeliveredOrder) return 0;
+    return Math.max(0, +(effectiveDeliverableBill - paidAmount).toFixed(2));
+  }, [isEditingDeliveredOrder, effectiveDeliverableBill, paidAmount]);
 
   const totalOutstandingAfterOrder = useMemo(() => {
-    return selectedShop ? selectedShop.previousDue : 0;
-  }, [selectedShop]);
+    if (!selectedShop) return 0;
+    if (isEditingDeliveredOrder && editingOrder) {
+      const oldDueOnSelectedShop =
+        editingOrder.shopId === selectedShop.id ? Number(editingOrder.dueAmount || 0) : 0;
+      return Math.max(0, (selectedShop.previousDue || 0) - oldDueOnSelectedShop + dueAmount);
+    }
+    return selectedShop.previousDue || 0;
+  }, [selectedShop, isEditingDeliveredOrder, editingOrder, dueAmount]);
 
   // Handlers
   const handleQuantityChange = (productId: string, delta: number) => {
     const prod = products.find((p) => p.id === productId);
-    if (!prod) return;
+    if (!prod) {
+      // Allow decreasing/removing custom or unlisted items in cart
+      setCart((prev) => {
+        const current = prev[productId];
+        if (!current) return prev;
+        const nextQty = current.quantity + delta;
+        if (nextQty <= 0) {
+          const copy = { ...prev };
+          delete copy[productId];
+          return copy;
+        }
+        return { ...prev, [productId]: { ...current, quantity: nextQty } };
+      });
+      return;
+    }
 
     const curUnit = getEffectiveUnit(productId, prod);
     const maxStock = getMaxStockForUnit(prod, curUnit);
@@ -614,7 +735,7 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
         delete copy[productId];
         return copy;
       }
-      if (nextQty > maxStock) {
+      if (delta > 0 && nextQty > maxStock) {
         alert(`দুঃখিত! এই পণ্যের সর্বোচ্চ স্টক মাত্র ${maxStock} ${curUnit}`);
         return prev;
       }
@@ -632,7 +753,20 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
   const handleSetExactQuantity = (productId: string, val: string) => {
     const num = parseInt(val, 10);
     const prod = products.find((p) => p.id === productId);
-    if (!prod) return;
+    if (!prod) {
+      if (isNaN(num) || num <= 0) {
+        setCart((prev) => {
+          const copy = { ...prev };
+          delete copy[productId];
+          return copy;
+        });
+      } else {
+        setCart((prev) =>
+          prev[productId] ? { ...prev, [productId]: { ...prev[productId], quantity: num } } : prev
+        );
+      }
+      return;
+    }
 
     const curUnit = getEffectiveUnit(productId, prod);
     const maxStock = getMaxStockForUnit(prod, curUnit);
@@ -665,7 +799,7 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
 
   const handleUpdatePrice = (productId: string, newPrice: string) => {
     const price = parseFloat(newPrice);
-    if (isNaN(price)) return;
+    if (isNaN(price) || price < 0) return;
 
     setCart((prev) => {
       if (!prev[productId]) return prev;
@@ -693,13 +827,23 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
     }
 
     if (editingOrder) {
+      const nextPaymentMethod: PaymentMethod = isEditingDeliveredOrder
+        ? dueAmount === 0
+          ? paymentMethod === 'DUE'
+            ? 'CASH'
+            : paymentMethod
+          : paidAmount > 0
+          ? 'PARTIAL'
+          : 'DUE'
+        : paymentMethod;
+
       const updatedOrder: Order = {
         ...editingOrder,
         shopId: selectedShop.id,
         shopName: selectedShop.name,
         shopPhone: selectedShop.phone,
         shopAddress: selectedShop.address,
-        shopRoute: selectedShop.routeArea,
+        shopRoute: selectedShop.routeArea || editingOrder.shopRoute,
         items: cartItems,
         subTotal,
         discountPercent,
@@ -707,9 +851,14 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
         netTotal,
         paidAmount,
         dueAmount,
+        previousDueAtBooking:
+          editingOrder.shopId === selectedShop.id
+            ? editingOrder.previousDueAtBooking
+            : selectedShop.previousDue || 0,
         totalOutstandingAfterOrder,
-        paymentMethod,
+        paymentMethod: nextPaymentMethod,
         notes: orderNotes,
+        syncedWithSheets: false,
       };
 
       if (onUpdateOrder) {
@@ -1427,39 +1576,118 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                   <span className="text-emerald-800 text-base">৳{netTotal.toLocaleString()}</span>
                 </div>
 
-                {/* Next-Day Delivery Payment Info Notice */}
-                <div className="p-2.5 bg-amber-50/90 border border-amber-200 rounded-xl text-[11px] text-amber-900 leading-relaxed">
-                  <span className="font-extrabold block text-amber-950">📦 ডেলিভারির সময় পেমেন্ট ও বাকি হিসাব:</span>
-                  <span>পরের দিন দোকানে মাল বুঝিয়ে দেওয়ার সময় <strong>"দৈনিক অর্ডার ও মেমো"</strong> থেকে নগদ টাকা বা বাকি এন্ট্রি করুন।</span>
-                </div>
+                {isEditingDeliveredOrder ? (
+                  <>
+                    <div className="p-2.5 bg-emerald-50/90 border border-emerald-300 rounded-xl text-[11px] text-emerald-950 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-extrabold">✅ ডেলিভারি সম্পন্ন মেমো এডিট</span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setPaidAmountInput(String(effectiveDeliverableBill))}
+                            className="px-2 py-0.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded text-[10px] font-bold cursor-pointer"
+                          >
+                            পূর্ণ নগদ
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPaidAmountInput('0')}
+                            className="px-2 py-0.5 bg-rose-600 hover:bg-rose-700 text-white rounded text-[10px] font-bold cursor-pointer"
+                          >
+                            সব বাকি
+                          </button>
+                        </div>
+                      </div>
+                      {existingReturnAmount > 0 && (
+                        <div className="flex justify-between text-rose-700 font-bold">
+                          <span>আগের রিটার্ন/ফেরত বাদ:</span>
+                          <span>-৳{existingReturnAmount.toLocaleString()}</span>
+                        </div>
+                      )}
+                      <div>
+                        <label className="block font-bold text-neutral-700 mb-1">
+                          নগদ জমা / অগ্রিম (সর্বোচ্চ ৳{effectiveDeliverableBill.toLocaleString()}):
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          max={effectiveDeliverableBill}
+                          value={paidAmountInput}
+                          onChange={(e) => setPaidAmountInput(e.target.value)}
+                          placeholder="0"
+                          className="w-full px-2.5 py-1.5 text-xs font-extrabold text-emerald-900 bg-white border border-emerald-300 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-emerald-600 font-mono"
+                        />
+                      </div>
+                    </div>
 
-                {/* Financial Summary - Mot, Agrim, Baki */}
-                <div className="rounded-xl border border-neutral-300 overflow-hidden bg-white shadow-xs">
-                  <table className="w-full text-xs font-bold border-collapse">
-                    <tbody>
-                      <tr className="border-b border-neutral-200">
-                        <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 w-1/2 border-r border-neutral-200">
-                          মোট
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono text-emerald-800 text-sm">
-                          ৳{netTotal.toLocaleString()}
-                        </td>
-                      </tr>
-                      <tr className="border-b border-neutral-200">
-                        <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 border-r border-neutral-200">
-                          অগ্রিম
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono text-neutral-900 text-sm h-7"></td>
-                      </tr>
-                      <tr>
-                        <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 border-r border-neutral-200">
-                          বাঁকী
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono text-neutral-900 text-sm h-7"></td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
+                    <div className="rounded-xl border border-neutral-300 overflow-hidden bg-white shadow-xs">
+                      <table className="w-full text-xs font-bold border-collapse">
+                        <tbody>
+                          <tr className="border-b border-neutral-200">
+                            <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 w-1/2 border-r border-neutral-200">
+                              {existingReturnAmount > 0 ? 'মোট (রিটার্ন বাদে)' : 'মোট'}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono text-emerald-800 text-sm">
+                              ৳{effectiveDeliverableBill.toLocaleString()}
+                            </td>
+                          </tr>
+                          <tr className="border-b border-neutral-200">
+                            <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 border-r border-neutral-200">
+                              অগ্রিম / নগদ জমা
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono text-emerald-700 text-sm">
+                              ৳{paidAmount.toLocaleString()}
+                            </td>
+                          </tr>
+                          <tr>
+                            <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 border-r border-neutral-200">
+                              বাঁকী
+                            </td>
+                            <td className={`px-3 py-2 text-right font-mono text-sm ${dueAmount > 0 ? 'text-rose-700' : 'text-neutral-700'}`}>
+                              ৳{dueAmount.toLocaleString()}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {/* Next-Day Delivery Payment Info Notice */}
+                    <div className="p-2.5 bg-amber-50/90 border border-amber-200 rounded-xl text-[11px] text-amber-900 leading-relaxed">
+                      <span className="font-extrabold block text-amber-950">📦 ডেলিভারির সময় পেমেন্ট ও বাকি হিসাব:</span>
+                      <span>পরের দিন দোকানে মাল বুঝিয়ে দেওয়ার সময় <strong>"দৈনিক অর্ডার ও মেমো"</strong> থেকে নগদ টাকা বা বাকি এন্ট্রি করুন।</span>
+                    </div>
+
+                    {/* Financial Summary - Mot, Agrim, Baki */}
+                    <div className="rounded-xl border border-neutral-300 overflow-hidden bg-white shadow-xs">
+                      <table className="w-full text-xs font-bold border-collapse">
+                        <tbody>
+                          <tr className="border-b border-neutral-200">
+                            <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 w-1/2 border-r border-neutral-200">
+                              মোট
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono text-emerald-800 text-sm">
+                              ৳{netTotal.toLocaleString()}
+                            </td>
+                          </tr>
+                          <tr className="border-b border-neutral-200">
+                            <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 border-r border-neutral-200">
+                              অগ্রিম
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono text-neutral-900 text-sm h-7"></td>
+                          </tr>
+                          <tr>
+                            <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 border-r border-neutral-200">
+                              বাঁকী
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono text-neutral-900 text-sm h-7"></td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
 
                 {/* Notes Input */}
                 <div>
@@ -1686,39 +1914,118 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                     </div>
                   </div>
 
-                  {/* Next-Day Delivery Payment Info Notice */}
-                  <div className="p-2.5 bg-amber-50/90 border border-amber-200 rounded-xl text-[11px] text-amber-900 leading-relaxed">
-                    <span className="font-extrabold block text-amber-950">📦 ডেলিভারির সময় পেমেন্ট ও বাকি হিসাব:</span>
-                    <span>পরের দিন দোকানে মাল বুঝিয়ে দেওয়ার সময় <strong>"দৈনিক অর্ডার ও মেমো"</strong> থেকে নগদ টাকা বা বাকি এন্ট্রি করুন।</span>
-                  </div>
+                  {isEditingDeliveredOrder ? (
+                    <>
+                      <div className="p-2.5 bg-emerald-50/90 border border-emerald-300 rounded-xl text-[11px] text-emerald-950 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-extrabold">✅ ডেলিভারি সম্পন্ন মেমো এডিট</span>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setPaidAmountInput(String(effectiveDeliverableBill))}
+                              className="px-2 py-0.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded text-[10px] font-bold cursor-pointer"
+                            >
+                              পূর্ণ নগদ
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPaidAmountInput('0')}
+                              className="px-2 py-0.5 bg-rose-600 hover:bg-rose-700 text-white rounded text-[10px] font-bold cursor-pointer"
+                            >
+                              সব বাকি
+                            </button>
+                          </div>
+                        </div>
+                        {existingReturnAmount > 0 && (
+                          <div className="flex justify-between text-rose-700 font-bold">
+                            <span>আগের রিটার্ন/ফেরত বাদ:</span>
+                            <span>-৳{existingReturnAmount.toLocaleString()}</span>
+                          </div>
+                        )}
+                        <div>
+                          <label className="block font-bold text-neutral-700 mb-1">
+                            নগদ জমা / অগ্রিম (সর্বোচ্চ ৳{effectiveDeliverableBill.toLocaleString()}):
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            max={effectiveDeliverableBill}
+                            value={paidAmountInput}
+                            onChange={(e) => setPaidAmountInput(e.target.value)}
+                            placeholder="0"
+                            className="w-full px-2.5 py-1.5 text-xs font-extrabold text-emerald-900 bg-white border border-emerald-300 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-emerald-600 font-mono"
+                          />
+                        </div>
+                      </div>
 
-                  {/* Calculations - Mot, Agrim, Baki structure */}
-                  <div className="rounded-2xl border border-neutral-300 overflow-hidden bg-white shadow-xs">
-                    <table className="w-full text-xs font-bold border-collapse">
-                      <tbody>
-                        <tr className="border-b border-neutral-200">
-                          <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 w-1/2 border-r border-neutral-200">
-                            মোট
-                          </td>
-                          <td className="px-3 py-2 text-right font-mono text-emerald-800 text-sm">
-                            ৳{netTotal.toLocaleString()}
-                          </td>
-                        </tr>
-                        <tr className="border-b border-neutral-200">
-                          <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 border-r border-neutral-200">
-                            অগ্রিম
-                          </td>
-                          <td className="px-3 py-2 text-right font-mono text-neutral-900 text-sm h-8"></td>
-                        </tr>
-                        <tr>
-                          <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 border-r border-neutral-200">
-                            বাঁকী
-                          </td>
-                          <td className="px-3 py-2 text-right font-mono text-neutral-900 text-sm h-8"></td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
+                      <div className="rounded-2xl border border-neutral-300 overflow-hidden bg-white shadow-xs">
+                        <table className="w-full text-xs font-bold border-collapse">
+                          <tbody>
+                            <tr className="border-b border-neutral-200">
+                              <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 w-1/2 border-r border-neutral-200">
+                                {existingReturnAmount > 0 ? 'মোট (রিটার্ন বাদে)' : 'মোট'}
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono text-emerald-800 text-sm">
+                                ৳{effectiveDeliverableBill.toLocaleString()}
+                              </td>
+                            </tr>
+                            <tr className="border-b border-neutral-200">
+                              <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 border-r border-neutral-200">
+                                অগ্রিম / নগদ জমা
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono text-emerald-700 text-sm">
+                                ৳{paidAmount.toLocaleString()}
+                              </td>
+                            </tr>
+                            <tr>
+                              <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 border-r border-neutral-200">
+                                বাঁকী
+                              </td>
+                              <td className={`px-3 py-2 text-right font-mono text-sm ${dueAmount > 0 ? 'text-rose-700' : 'text-neutral-700'}`}>
+                                ৳{dueAmount.toLocaleString()}
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {/* Next-Day Delivery Payment Info Notice */}
+                      <div className="p-2.5 bg-amber-50/90 border border-amber-200 rounded-xl text-[11px] text-amber-900 leading-relaxed">
+                        <span className="font-extrabold block text-amber-950">📦 ডেলিভারির সময় পেমেন্ট ও বাকি হিসাব:</span>
+                        <span>পরের দিন দোকানে মাল বুঝিয়ে দেওয়ার সময় <strong>"দৈনিক অর্ডার ও মেমো"</strong> থেকে নগদ টাকা বা বাকি এন্ট্রি করুন।</span>
+                      </div>
+
+                      {/* Calculations - Mot, Agrim, Baki structure */}
+                      <div className="rounded-2xl border border-neutral-300 overflow-hidden bg-white shadow-xs">
+                        <table className="w-full text-xs font-bold border-collapse">
+                          <tbody>
+                            <tr className="border-b border-neutral-200">
+                              <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 w-1/2 border-r border-neutral-200">
+                                মোট
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono text-emerald-800 text-sm">
+                                ৳{netTotal.toLocaleString()}
+                              </td>
+                            </tr>
+                            <tr className="border-b border-neutral-200">
+                              <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 border-r border-neutral-200">
+                                অগ্রিম
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono text-neutral-900 text-sm h-8"></td>
+                            </tr>
+                            <tr>
+                              <td className="px-3 py-2 bg-neutral-100/80 text-neutral-800 border-r border-neutral-200">
+                                বাঁকী
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono text-neutral-900 text-sm h-8"></td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
 
                   {/* Order Notes */}
                   <div>

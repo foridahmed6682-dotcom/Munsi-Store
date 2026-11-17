@@ -234,6 +234,7 @@ export interface Order {
   returnReason?: string;
   returnedItems?: ReturnedOrderItem[];
   updatedAt?: string;
+  updatedAtMs?: number;
   _isOfflinePending?: boolean;
 }
 

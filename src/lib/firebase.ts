@@ -1645,7 +1645,14 @@ export async function deleteProductFromCloud(productId: string) {
 
 export async function saveOrderToCloud(order: Order) {
   const path = `orders/${order.id}`;
-  const cleaned = cleanForFirestore(order);
+  const nowIso = order.updatedAt || new Date().toISOString();
+  const nowMs = (order as any).updatedAtMs || new Date(nowIso).getTime() || Date.now();
+  const stampedOrder = {
+    ...order,
+    updatedAt: nowIso,
+    updatedAtMs: nowMs,
+  };
+  const cleaned = cleanForFirestore(stampedOrder);
 
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
     enqueueOfflineAction('upsert', 'orders', order.id, cleaned);
@@ -1659,10 +1666,10 @@ export async function saveOrderToCloud(order: Order) {
     });
   }
 
-  // 2. Parallel background mirror & catalog sync
+  // 2. Parallel immediate mirror & catalog sync (immediate=true prevents 1.5s debounce race on memo edits)
   syncItemToServerMirror('orders', cleaned).catch(() => {});
   if (!isFirestoreWriteQuotaExhausted()) {
-    upsertItemInFirebaseCatalog('orders', cleaned, 'id').catch(() => {});
+    upsertItemInFirebaseCatalog('orders', cleaned, 'id', true).catch(() => {});
   }
 }
 

@@ -390,11 +390,44 @@ export default function App() {
       console.warn('Initial IndexedDB hydration error:', err);
     });
 
+    const mergeIncomingEngineOrders = (freshOrders: Order[]) => {
+      if (!Array.isArray(freshOrders) || freshOrders.length === 0) return;
+      const deletedIds = getDeletedOrderIds();
+      const existingOrders = getOrders();
+      const map = new Map<string, Order>();
+
+      existingOrders.forEach((o) => {
+        if (o && o.id && !deletedIds.has(o.id) && !isEntityPendingDelete(o.id)) {
+          map.set(o.id, o);
+        }
+      });
+
+      freshOrders.forEach((incoming) => {
+        if (!incoming || !incoming.id) return;
+        if (deletedIds.has(incoming.id) || isEntityPendingDelete(incoming.id)) return;
+        const local = map.get(incoming.id);
+        if (!local) {
+          map.set(incoming.id, incoming);
+          return;
+        }
+        const isLocalPending = (local as any)._isOfflinePending === true;
+        const localTime = Number((local as any).updatedAtMs || (local.updatedAt ? new Date(local.updatedAt).getTime() : 0));
+        const incomingTime = Number((incoming as any).updatedAtMs || (incoming.updatedAt ? new Date(incoming.updatedAt).getTime() : 0));
+        if (!isLocalPending && incomingTime > localTime) {
+          map.set(incoming.id, incoming);
+        }
+      });
+
+      const merged = Array.from(map.values()).sort(
+        (a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime()
+      );
+      saveOrders(merged);
+      setOrders(merged);
+    };
+
     // 2b. Two-Way Sync Engine: Cache-first load + Zero-Read cost metadata check
     smartLoadData((freshOrders) => {
-      if (freshOrders && freshOrders.length > 0) {
-        setOrders(freshOrders);
-      }
+      mergeIncomingEngineOrders(freshOrders);
     }).catch((err) => {
       console.warn('smartLoadData initial check notice:', err);
     });
@@ -423,9 +456,7 @@ export default function App() {
     }, 40000);
 
     const cleanupNetworkSync = setupNetworkSyncListeners((freshOrders) => {
-      if (freshOrders && freshOrders.length > 0) {
-        setOrders(freshOrders);
-      }
+      mergeIncomingEngineOrders(freshOrders);
     });
 
     const handleOnline = async () => {
@@ -1689,6 +1720,8 @@ export default function App() {
       }
     }
 
+    const isCurrentlyOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    const nowIso = new Date().toISOString();
     const updatedOrder: Order = {
       ...ord,
       deliveryStatus: 'DELIVERED',
@@ -1701,10 +1734,14 @@ export default function App() {
       totalOutstandingAfterOrder: updatedShopDue,
       notes: notes !== undefined ? notes : ord.notes,
       syncedWithSheets: false,
+      updatedAt: nowIso,
+      updatedAtMs: Date.now(),
+      _isOfflinePending: isCurrentlyOffline,
     };
 
     saveOrder(updatedOrder);
     saveOrderToCloud(updatedOrder).catch(() => {});
+    smartSaveOrder(updatedOrder).catch(() => {});
     if (selectedMemoOrder?.id === orderId) {
       setSelectedMemoOrder(updatedOrder);
     }
@@ -1728,6 +1765,9 @@ export default function App() {
     const ord = orders.find((o) => o.id === orderId);
     if (!ord) return;
 
+    const isCurrentlyOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    const nowIso = new Date().toISOString();
+
     // If reverting from DELIVERED to PENDING/CANCELLED, remove any due that was added to shop
     if (ord.deliveryStatus === 'DELIVERED' && status !== 'DELIVERED') {
       const prevDueFromOrder = ord.dueAmount || 0;
@@ -1737,6 +1777,8 @@ export default function App() {
           const updatedShop: Shop = {
             ...targetShop,
             previousDue: Math.max(0, (targetShop.previousDue || 0) - prevDueFromOrder),
+            updatedAt: nowIso,
+            _isOfflinePending: isCurrentlyOffline,
           };
           saveShop(updatedShop);
           saveShopToCloud(updatedShop).catch(() => {});
@@ -1748,12 +1790,25 @@ export default function App() {
         paidAmount: 0,
         dueAmount: 0,
         syncedWithSheets: false,
+        updatedAt: nowIso,
+        updatedAtMs: Date.now(),
+        _isOfflinePending: isCurrentlyOffline,
       };
       saveOrder(resetOrder);
       saveOrderToCloud(resetOrder).catch(() => {});
+      smartSaveOrder(resetOrder).catch(() => {});
     } else {
       updateOrderStatus(orderId, status);
-      saveOrderToCloud({ ...ord, deliveryStatus: status }).catch(() => {});
+      const nextOrder: Order = {
+        ...ord,
+        deliveryStatus: status,
+        updatedAt: nowIso,
+        updatedAtMs: Date.now(),
+        _isOfflinePending: isCurrentlyOffline,
+      };
+      saveOrder(nextOrder);
+      saveOrderToCloud(nextOrder).catch(() => {});
+      smartSaveOrder(nextOrder).catch(() => {});
     }
 
     reloadData();
@@ -1778,73 +1833,136 @@ export default function App() {
   // Cancel Memo Edit Handler
   const handleCancelEditOrder = () => {
     setEditingOrder(null);
+    setTargetOrderShopId(undefined);
     showToast('মেমো এডিট বাতিল করা হয়েছে', 'info');
   };
 
   // Update Order / Memo Edit Handler
   const handleUpdateOrder = (updatedOrder: Order) => {
-    const oldOrder = orders.find((o) => o.id === updatedOrder.id);
+    const isCurrentlyOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    const nowIso = new Date().toISOString();
+    const nowMs = Date.now();
 
-    // Reconcile inventory stock differences between old items and new items
+    const latestOrders = getOrders();
+    const oldOrder = latestOrders.find((o) => o.id === updatedOrder.id) || orders.find((o) => o.id === updatedOrder.id);
+    const latestProducts = getProducts();
+
+    // 1. Net inventory stock reconciliation across added, edited, AND removed items
     if (oldOrder) {
-      // 1. Revert previous deductions
+      const stockDeltaMap = new Map<string, number>();
+
       for (const item of oldOrder.items) {
-        const prod = products.find(
+        const prod = latestProducts.find(
           (p) =>
             p.id === item.productId ||
             p.banglaName === item.productName ||
             p.name === item.productName
         );
         if (prod) {
-          const rawOldQty = item.quantity + (item.tradeOfferQty || 0);
+          const rawOldQty = (Number(item.quantity) || 0) + (Number(item.tradeOfferQty) || 0);
           const oldQty = calcStockDeductionInBaseUnit(prod, rawOldQty, item.unit);
-          adjustProductStock(prod.id, oldQty);
+          stockDeltaMap.set(prod.id, (stockDeltaMap.get(prod.id) || 0) + oldQty);
         }
       }
-      // 2. Apply new item deductions
+
       for (const item of updatedOrder.items) {
-        const prod = products.find(
+        const prod = latestProducts.find(
           (p) =>
             p.id === item.productId ||
             p.banglaName === item.productName ||
             p.name === item.productName
         );
         if (prod) {
-          const rawNewQty = item.quantity + (item.tradeOfferQty || 0);
+          const rawNewQty = (Number(item.quantity) || 0) + (Number(item.tradeOfferQty) || 0);
           const newQty = calcStockDeductionInBaseUnit(prod, rawNewQty, item.unit);
-          adjustProductStock(prod.id, -newQty);
-          const updatedProd = { ...prod, stock: Math.max(0, prod.stock - newQty) };
-          saveProductToCloud(updatedProd).catch(() => {});
+          stockDeltaMap.set(prod.id, (stockDeltaMap.get(prod.id) || 0) - newQty);
         }
+      }
+
+      const updatedProductsMap = new Map<string, Product>();
+      stockDeltaMap.forEach((netDelta, prodId) => {
+        if (Math.abs(netDelta) < 0.0001) return;
+        const prod = latestProducts.find((p) => p.id === prodId);
+        if (!prod) return;
+        const nextStock = Math.max(0, +(Number(prod.stock || 0) + netDelta).toFixed(2));
+        adjustProductStock(prod.id, netDelta);
+        const updatedProd: Product = {
+          ...prod,
+          stock: nextStock,
+          updatedAt: nowIso,
+          _isOfflinePending: isCurrentlyOffline,
+        };
+        saveProduct(updatedProd);
+        saveProductToCloud(updatedProd).catch(() => {});
+        updatedProductsMap.set(prodId, updatedProd);
+      });
+
+      if (updatedProductsMap.size > 0) {
+        setProducts((prev) => prev.map((p) => updatedProductsMap.get(p.id) || p));
       }
     }
 
-    if (
+    // 2. Reconcile DELIVERED shop due cleanly for same shop AND shop changes
+    const latestShops = getShops();
+    let finalOutstanding = updatedOrder.totalOutstandingAfterOrder || 0;
+    const oldWasDeliveredWithShop =
       oldOrder &&
+      oldOrder.deliveryStatus === 'DELIVERED' &&
+      oldOrder.shopId &&
+      oldOrder.shopId !== 'shop-direct-customer';
+    const newIsDeliveredWithShop =
       updatedOrder.deliveryStatus === 'DELIVERED' &&
       updatedOrder.shopId &&
-      updatedOrder.shopId !== 'shop-direct-customer'
-    ) {
-      const oldDue = oldOrder.deliveryStatus === 'DELIVERED' ? oldOrder.dueAmount || 0 : 0;
-      const newDue = updatedOrder.dueAmount || 0;
-      const dueDiff = newDue - oldDue;
-      if (dueDiff !== 0) {
-        const targetShop = shops.find((s) => s.id === updatedOrder.shopId);
-        if (targetShop) {
-          const updatedShop: Shop = {
-            ...targetShop,
-            previousDue: Math.max(0, (targetShop.previousDue || 0) + dueDiff),
-          };
-          saveShop(updatedShop);
-          saveShopToCloud(updatedShop).catch(() => {});
+      updatedOrder.shopId !== 'shop-direct-customer';
+
+    const oldDue = oldWasDeliveredWithShop ? Number(oldOrder.dueAmount || 0) : 0;
+    const newDue = newIsDeliveredWithShop ? Number(updatedOrder.dueAmount || 0) : 0;
+
+    const shopDueDeltaMap = new Map<string, number>();
+    if (oldWasDeliveredWithShop && oldDue !== 0) {
+      shopDueDeltaMap.set(oldOrder.shopId, (shopDueDeltaMap.get(oldOrder.shopId) || 0) - oldDue);
+    }
+    if (newIsDeliveredWithShop && newDue !== 0) {
+      shopDueDeltaMap.set(updatedOrder.shopId, (shopDueDeltaMap.get(updatedOrder.shopId) || 0) + newDue);
+    }
+
+    if (shopDueDeltaMap.size > 0) {
+      const updatedShopsMap = new Map<string, Shop>();
+      shopDueDeltaMap.forEach((dueDelta, shopId) => {
+        if (Math.abs(dueDelta) < 0.0001) return;
+        const targetShop = latestShops.find((s) => s.id === shopId);
+        if (!targetShop) return;
+        const nextDue = Math.max(0, +(Number(targetShop.previousDue || 0) + dueDelta).toFixed(2));
+        const updatedShop: Shop = {
+          ...targetShop,
+          previousDue: nextDue,
+          updatedAt: nowIso,
+          _isOfflinePending: isCurrentlyOffline,
+        };
+        saveShop(updatedShop);
+        saveShopToCloud(updatedShop).catch(() => {});
+        updatedShopsMap.set(shopId, updatedShop);
+        if (shopId === updatedOrder.shopId) {
+          finalOutstanding = nextDue;
         }
+      });
+
+      if (updatedShopsMap.size > 0) {
+        setShops((prev) => prev.map((s) => updatedShopsMap.get(s.id) || s));
+      }
+    } else if (newIsDeliveredWithShop) {
+      const targetShop = latestShops.find((s) => s.id === updatedOrder.shopId);
+      if (targetShop) {
+        finalOutstanding = Number(targetShop.previousDue || 0);
       }
     }
 
-    const isCurrentlyOffline = typeof navigator !== 'undefined' && !navigator.onLine;
     const finalOrder: Order = {
       ...updatedOrder,
-      updatedAt: new Date().toISOString(),
+      totalOutstandingAfterOrder: finalOutstanding,
+      syncedWithSheets: false,
+      updatedAt: nowIso,
+      updatedAtMs: nowMs,
       _isOfflinePending: isCurrentlyOffline,
     };
 
@@ -1853,8 +1971,10 @@ export default function App() {
     smartSaveOrder(finalOrder).catch(() => {});
     setOrders((prev) => prev.map((o) => (o.id === finalOrder.id ? finalOrder : o)));
     setEditingOrder(null);
+    setTargetOrderShopId(undefined);
     setSelectedMemoOrder(finalOrder);
     setIsMemoOpen(true);
+    reloadData();
     showToast(`মেমো #${finalOrder.memoNumber} সফলভাবে আপডেট ও সংরক্ষিত হয়েছে!`, 'success');
   };
 

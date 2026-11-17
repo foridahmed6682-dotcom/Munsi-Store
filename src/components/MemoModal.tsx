@@ -68,6 +68,9 @@ export const MemoModal: React.FC<MemoModalProps> = ({
   const [editShopPhone, setEditShopPhone] = useState('');
   const [editShopAddress, setEditShopAddress] = useState('');
   const [editShopRoute, setEditShopRoute] = useState('');
+  const [editDiscountPercent, setEditDiscountPercent] = useState(0);
+  const [editPaidAmount, setEditPaidAmount] = useState('0');
+  const [editNotes, setEditNotes] = useState('');
   const [editItems, setEditItems] = useState<OrderItem[]>([]);
   const [selectedAddProductId, setSelectedAddProductId] = useState('');
 
@@ -78,6 +81,9 @@ export const MemoModal: React.FC<MemoModalProps> = ({
       setEditShopPhone(order.shopPhone || '');
       setEditShopAddress(order.shopAddress || '');
       setEditShopRoute(order.shopRoute || '');
+      setEditDiscountPercent(Number(order.discountPercent || 0));
+      setEditPaidAmount(order.deliveryStatus === 'DELIVERED' ? String(order.paidAmount ?? 0) : '0');
+      setEditNotes(order.notes || '');
       setEditItems(order.items.map((it) => ({ ...it })));
     }
   }, [order, isOpen, initialEditMode]);
@@ -189,11 +195,21 @@ export const MemoModal: React.FC<MemoModalProps> = ({
     const prod = products.find((p) => p.id === selectedAddProductId);
     if (!prod) return;
 
-    const existingIdx = editItems.findIndex((i) => i.productId === prod.id);
-    if (existingIdx >= 0) {
-      handleItemChange(existingIdx, 'quantity', editItems[existingIdx].quantity + 1);
-    } else {
-      setEditItems((prev) => [
+    setEditItems((prev) => {
+      const existingIdx = prev.findIndex((i) => i.productId === prod.id);
+      if (existingIdx >= 0) {
+        const next = [...prev];
+        const cur = next[existingIdx];
+        const nextQty = (Number(cur.quantity) || 0) + 1;
+        const unitPrice = Number(cur.unitPrice) || 0;
+        next[existingIdx] = {
+          ...cur,
+          quantity: nextQty,
+          lineTotal: +(nextQty * unitPrice).toFixed(2),
+        };
+        return next;
+      }
+      return [
         ...prev,
         {
           productId: prod.id,
@@ -202,9 +218,10 @@ export const MemoModal: React.FC<MemoModalProps> = ({
           unitPrice: prod.unitPrice,
           quantity: 1,
           lineTotal: prod.unitPrice,
+          supplier: prod.supplier,
         },
-      ]);
-    }
+      ];
+    });
     setSelectedAddProductId('');
   };
 
@@ -222,7 +239,19 @@ export const MemoModal: React.FC<MemoModalProps> = ({
     ]);
   };
 
-  const editedNetTotal = editItems.reduce((sum, it) => sum + (Number(it.lineTotal) || 0), 0);
+  const editedSubTotal = +(editItems.reduce((sum, it) => sum + (Number(it.lineTotal) || 0), 0)).toFixed(2);
+  const editedDiscountAmount =
+    editDiscountPercent > 0 ? Math.round((editedSubTotal * editDiscountPercent) / 100) : 0;
+  const editedNetTotal = Math.max(0, +(editedSubTotal - editedDiscountAmount).toFixed(2));
+  const existingReturnAmount = Math.max(0, Number(order.returnAmount || 0));
+  const effectiveDeliverableBill = Math.max(0, +(editedNetTotal - existingReturnAmount).toFixed(2));
+  const isDeliveredOrder = order.deliveryStatus === 'DELIVERED';
+  const parsedEditPaid = isDeliveredOrder
+    ? Math.max(0, Math.min(effectiveDeliverableBill, +(parseFloat(editPaidAmount) || 0).toFixed(2)))
+    : 0;
+  const editedDueAmount = isDeliveredOrder
+    ? Math.max(0, +(effectiveDeliverableBill - parsedEditPaid).toFixed(2))
+    : 0;
 
   const handleSaveMemoEdits = () => {
     if (!editShopName.trim()) {
@@ -234,8 +263,15 @@ export const MemoModal: React.FC<MemoModalProps> = ({
       return;
     }
 
-    const isDelivered = order.deliveryStatus === 'DELIVERED';
-    const nextDue = isDelivered ? Math.max(0, editedNetTotal - (order.paidAmount || 0)) : 0;
+    const nextPaymentMethod = isDeliveredOrder
+      ? editedDueAmount === 0
+        ? order.paymentMethod === 'DUE'
+          ? 'CASH'
+          : order.paymentMethod
+        : parsedEditPaid > 0
+        ? 'PARTIAL'
+        : 'DUE'
+      : order.paymentMethod;
 
     const updatedOrder: Order = {
       ...order,
@@ -244,11 +280,17 @@ export const MemoModal: React.FC<MemoModalProps> = ({
       shopAddress: editShopAddress.trim(),
       shopRoute: editShopRoute.trim() || order.shopRoute,
       items: editItems,
-      subTotal: editedNetTotal,
+      subTotal: editedSubTotal,
+      discountPercent: editDiscountPercent,
+      discountAmount: editedDiscountAmount,
       netTotal: editedNetTotal,
-      dueAmount: nextDue,
-      totalOutstandingAfterOrder: (order.previousDueAtBooking || 0) + nextDue,
+      paidAmount: parsedEditPaid,
+      dueAmount: editedDueAmount,
+      paymentMethod: nextPaymentMethod,
+      notes: editNotes.trim(),
+      totalOutstandingAfterOrder: (order.previousDueAtBooking || 0) + editedDueAmount,
       syncedWithSheets: false,
+      updatedAt: new Date().toISOString(),
     };
 
     if (onUpdateOrder) {
@@ -430,7 +472,7 @@ export const MemoModal: React.FC<MemoModalProps> = ({
             </div>
 
             {/* Customer / Shop Metadata Edit */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-neutral-50 p-3.5 rounded-xl border border-neutral-200">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-neutral-50 p-3.5 rounded-xl border border-neutral-200">
               <div>
                 <label className="block font-bold text-neutral-700 mb-1">দোকান / ক্রেতার নাম *</label>
                 <input
@@ -455,6 +497,15 @@ export const MemoModal: React.FC<MemoModalProps> = ({
                   type="text"
                   value={editShopAddress}
                   onChange={(e) => setEditShopAddress(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-neutral-300 bg-white"
+                />
+              </div>
+              <div>
+                <label className="block font-bold text-neutral-700 mb-1">রুট / এলাকা</label>
+                <input
+                  type="text"
+                  value={editShopRoute}
+                  onChange={(e) => setEditShopRoute(e.target.value)}
                   className="w-full px-3 py-2 rounded-lg border border-neutral-300 bg-white"
                 />
               </div>
@@ -566,9 +617,81 @@ export const MemoModal: React.FC<MemoModalProps> = ({
                 </table>
               </div>
 
-              <div className="flex items-center justify-between pt-2 font-black text-sm text-neutral-900">
-                <span>পরিবর্তিত সর্বমোট বিল:</span>
-                <span className="text-emerald-700 font-mono text-base">৳{editedNetTotal.toLocaleString()}</span>
+              <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-3 space-y-2.5">
+                <div className="flex items-center justify-between text-neutral-700 font-semibold">
+                  <span>সাবটোটাল:</span>
+                  <span className="font-mono font-bold">৳{editedSubTotal.toLocaleString()}</span>
+                </div>
+
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-bold text-neutral-700">ক্যাশ ডিসকাউন্ট (%):</span>
+                  <div className="flex items-center gap-1">
+                    {[0, 2, 3, 5].map((pct) => (
+                      <button
+                        key={pct}
+                        type="button"
+                        onClick={() => setEditDiscountPercent(pct)}
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
+                          editDiscountPercent === pct
+                            ? 'bg-emerald-700 text-white'
+                            : 'bg-white border border-neutral-300 text-neutral-700 hover:bg-neutral-100'
+                        }`}
+                      >
+                        {pct}%
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {editedDiscountAmount > 0 && (
+                  <div className="flex items-center justify-between text-emerald-700 font-semibold">
+                    <span>ডিসকাউন্ট ছাড় ({editDiscountPercent}%):</span>
+                    <span className="font-mono">-৳{editedDiscountAmount.toLocaleString()}</span>
+                  </div>
+                )}
+
+                {existingReturnAmount > 0 && (
+                  <div className="flex items-center justify-between text-rose-700 font-semibold">
+                    <span>আগের রিটার্ন/ফেরত বাদ:</span>
+                    <span className="font-mono">-৳{existingReturnAmount.toLocaleString()}</span>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between pt-2 border-t border-neutral-200 font-black text-sm text-neutral-900">
+                  <span>পরিবর্তিত সর্বমোট বিল:</span>
+                  <span className="text-emerald-700 font-mono text-base">৳{editedNetTotal.toLocaleString()}</span>
+                </div>
+
+                {isDeliveredOrder && (
+                  <div className="pt-2 border-t border-neutral-200 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="font-bold text-neutral-800">নগদ জমা / অগ্রিম (৳):</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max={effectiveDeliverableBill}
+                        value={editPaidAmount}
+                        onChange={(e) => setEditPaidAmount(e.target.value)}
+                        className="w-32 px-2.5 py-1 border border-emerald-300 rounded-lg bg-white text-right font-mono font-extrabold text-emerald-800"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between font-bold text-rose-700">
+                      <span>হিসাবকৃত বাঁকী:</span>
+                      <span className="font-mono">৳{editedDueAmount.toLocaleString()}</span>
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block font-bold text-neutral-700 mb-1">মন্তব্য / নোট:</label>
+                  <input
+                    type="text"
+                    value={editNotes}
+                    onChange={(e) => setEditNotes(e.target.value)}
+                    placeholder="মেমোর নোট বা মন্তব্য..."
+                    className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 bg-white"
+                  />
+                </div>
               </div>
             </div>
 

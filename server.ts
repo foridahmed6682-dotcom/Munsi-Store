@@ -438,12 +438,28 @@ async function bootstrapServerMirrorFromFirestore() {
 }
 bootstrapServerMirrorFromFirestore();
 
+function getItemTimestampMs(item: any): number {
+  if (!item || typeof item !== 'object') return 0;
+  if (typeof item.updatedAtMs === 'number' && !isNaN(item.updatedAtMs)) return item.updatedAtMs;
+  if (item.updatedAt) {
+    const parsed = new Date(item.updatedAt).getTime();
+    if (!isNaN(parsed)) return parsed;
+  }
+  return 0;
+}
+
 function upsertById(list: any[], item: any, idField = 'id'): any[] {
   if (!item || !item[idField]) return list;
   const idx = list.findIndex((x) => x && x[idField] === item[idField]);
   if (idx >= 0) {
+    const prev = list[idx];
+    const prevTime = getItemTimestampMs(prev);
+    const nextTime = getItemTimestampMs(item);
+    if (prevTime > 0 && nextTime < prevTime) {
+      return list;
+    }
     const next = [...list];
-    next[idx] = { ...next[idx], ...item };
+    next[idx] = { ...prev, ...item };
     return next;
   }
   return [item, ...list];
@@ -457,8 +473,18 @@ function mergeArrayById(existing: any[], incoming: any[], idField = 'id'): any[]
   });
   incoming.forEach((item) => {
     if (item && item[idField]) {
-      const prev = map.get(String(item[idField]));
-      map.set(String(item[idField]), prev ? { ...prev, ...item } : item);
+      const key = String(item[idField]);
+      const prev = map.get(key);
+      if (!prev) {
+        map.set(key, item);
+        return;
+      }
+      const prevTime = getItemTimestampMs(prev);
+      const nextTime = getItemTimestampMs(item);
+      if (prevTime > 0 && nextTime < prevTime) {
+        return; // Keep newer edited record
+      }
+      map.set(key, { ...prev, ...item });
     }
   });
   return Array.from(map.values());
