@@ -372,23 +372,19 @@ export default function App() {
 
   // Initial load
   useEffect(() => {
-    // 1. Initial RAM load
-    reloadData();
+    let isDisposed = false;
+    let unsubscribeShops: (() => void) | undefined;
+    let unsubscribeProducts: (() => void) | undefined;
+    let unsubscribeOrders: (() => void) | undefined;
+    let unsubscribeCategories: (() => void) | undefined;
+    let unsubscribeRoutes: (() => void) | undefined;
+    let unsubscribeAuthEmails: (() => void) | undefined;
+    let unsubscribeBizInfo: (() => void) | undefined;
+    let unsubscribeDueCollections: (() => void) | undefined;
+    let unsubscribeDailyExpenses: (() => void) | undefined;
 
-    // 2. Primary IndexedDB hydration: loads all products, shops, orders, and assets directly from IndexedDB
-    initializeStorageFromIndexedDB().then((hydrated) => {
-      setProducts([...hydrated.products]);
-      setShops([...hydrated.shops]);
-      setOrders([...hydrated.orders]);
-      setCategories([...hydrated.categories]);
-      setRoutes([...hydrated.routes]);
-      setSuppliers([...hydrated.suppliers]);
-      setDueCollections([...hydrated.dueCollections]);
-      setDailyExpenses([...hydrated.dailyExpenses]);
-      reloadData();
-    }).catch((err) => {
-      console.warn('Initial IndexedDB hydration error:', err);
-    });
+    // 1. Initial RAM load (if already hydrated)
+    reloadData();
 
     const mergeIncomingEngineOrders = (freshOrders: Order[]) => {
       if (!Array.isArray(freshOrders) || freshOrders.length === 0) return;
@@ -424,22 +420,6 @@ export default function App() {
       saveOrders(merged);
       setOrders(merged);
     };
-
-    // 2b. Two-Way Sync Engine: Cache-first load + Zero-Read cost metadata check
-    smartLoadData((freshOrders) => {
-      mergeIncomingEngineOrders(freshOrders);
-    }).catch((err) => {
-      console.warn('smartLoadData initial check notice:', err);
-    });
-
-    // Auto-flush pending offline actions on mount if online
-    if (typeof navigator !== 'undefined' && navigator.onLine) {
-      flushOfflinePendingActionsToFirebase().then((count) => {
-        if (count > 0) {
-          reloadData();
-        }
-      }).catch(() => {});
-    }
 
     // Background interval: Reconcile / flush any pending offline actions every 40 seconds
     const autoSyncInterval = setInterval(() => {
@@ -615,10 +595,45 @@ export default function App() {
     };
 
     (async () => {
+      // 2. Primary IndexedDB hydration MUST complete before mirror sync or Firestore snapshots run
+      try {
+        const hydrated = await initializeStorageFromIndexedDB();
+        if (isDisposed) return;
+        setProducts([...hydrated.products]);
+        setShops([...hydrated.shops]);
+        setOrders([...hydrated.orders]);
+        setCategories([...hydrated.categories]);
+        setRoutes([...hydrated.routes]);
+        setSuppliers([...hydrated.suppliers]);
+        setDueCollections([...hydrated.dueCollections]);
+        setDailyExpenses([...hydrated.dailyExpenses]);
+        reloadData();
+      } catch (err) {
+        console.warn('Initial IndexedDB hydration error:', err);
+      }
+
+      if (isDisposed) return;
+
+      // 2b. Two-Way Sync Engine: Cache-first load + Zero-Read cost metadata check
+      smartLoadData((freshOrders) => {
+        if (!isDisposed) mergeIncomingEngineOrders(freshOrders);
+      }).catch((err) => {
+        console.warn('smartLoadData initial check notice:', err);
+      });
+
+      // Auto-flush pending offline actions on mount if online
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        flushOfflinePendingActionsToFirebase().then((count) => {
+          if (!isDisposed && count > 0) {
+            reloadData();
+          }
+        }).catch(() => {});
+      }
+
       try {
         // Safe read-only sync on mount: we never push stale local data to overwrite remote!
         const mirror = await fetchServerDatabaseMirror();
-        if (mirror) {
+        if (!isDisposed && mirror) {
           let updatedAny = false;
           if (Array.isArray(mirror.products) && mirror.products.length > 0) {
             const merged = mergeById(getProducts(), mirror.products, getDeletedProductIds());
@@ -677,100 +692,93 @@ export default function App() {
       } catch (e) {
         console.warn('Server mirror sync skipped:', e);
       }
-    })();
 
-    let unsubscribeShops: (() => void) | undefined;
-    let unsubscribeProducts: (() => void) | undefined;
-    let unsubscribeOrders: (() => void) | undefined;
-    let unsubscribeCategories: (() => void) | undefined;
-    let unsubscribeRoutes: (() => void) | undefined;
-    let unsubscribeAuthEmails: (() => void) | undefined;
-    let unsubscribeBizInfo: (() => void) | undefined;
-    let unsubscribeDueCollections: (() => void) | undefined;
-    let unsubscribeDailyExpenses: (() => void) | undefined;
+      if (isDisposed) return;
 
-    try {
-      unsubscribeBizInfo = subscribeToCloudBusinessInfo((cloudBiz) => {
-        setBusinessInfo(cloudBiz);
-        saveBusinessInfoLocal(cloudBiz);
-      });
+      try {
+        unsubscribeBizInfo = subscribeToCloudBusinessInfo((cloudBiz) => {
+          setBusinessInfo(cloudBiz);
+          saveBusinessInfoLocal(cloudBiz);
+        });
 
-      unsubscribeDueCollections = subscribeToCloudDueCollections((cloudCols) => {
-        saveDueCollections(cloudCols);
-        setDueCollections(cloudCols);
-      });
+        unsubscribeDueCollections = subscribeToCloudDueCollections((cloudCols) => {
+          saveDueCollections(cloudCols);
+          setDueCollections(cloudCols);
+        });
 
-      unsubscribeDailyExpenses = subscribeToCloudDailyExpenses((cloudExps) => {
-        saveDailyExpenses(cloudExps);
-        setDailyExpenses(cloudExps);
-      });
+        unsubscribeDailyExpenses = subscribeToCloudDailyExpenses((cloudExps) => {
+          saveDailyExpenses(cloudExps);
+          setDailyExpenses(cloudExps);
+        });
 
-      unsubscribeShops = subscribeToCloudShops((cloudShops) => {
-        saveShops(cloudShops);
-        setShops(cloudShops);
-      });
+        unsubscribeShops = subscribeToCloudShops((cloudShops) => {
+          saveShops(cloudShops);
+          setShops(cloudShops);
+        });
 
-      unsubscribeProducts = subscribeToCloudProducts((cloudProducts) => {
-        saveProducts(cloudProducts);
-        setProducts(getProducts());
-      });
+        unsubscribeProducts = subscribeToCloudProducts((cloudProducts) => {
+          saveProducts(cloudProducts);
+          setProducts(getProducts());
+        });
 
-      unsubscribeOrders = subscribeToCloudOrders((cloudOrders) => {
-        const sorted = [...cloudOrders].sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
-        saveOrders(sorted);
-        setOrders(sorted);
-      });
+        unsubscribeOrders = subscribeToCloudOrders((cloudOrders) => {
+          const sorted = [...cloudOrders].sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
+          saveOrders(sorted);
+          setOrders(sorted);
+        });
 
-      unsubscribeCategories = subscribeToCloudCategories((cloudCategories) => {
-        saveCategories(cloudCategories);
-        setCategories(cloudCategories);
-      });
+        unsubscribeCategories = subscribeToCloudCategories((cloudCategories) => {
+          saveCategories(cloudCategories);
+          setCategories(cloudCategories);
+        });
 
-      unsubscribeRoutes = subscribeToCloudRoutes((cloudRoutes) => {
-        saveRoutes(cloudRoutes);
-        setRoutes(cloudRoutes);
-      });
+        unsubscribeRoutes = subscribeToCloudRoutes((cloudRoutes) => {
+          saveRoutes(cloudRoutes);
+          setRoutes(cloudRoutes);
+        });
 
-      unsubscribeAuthEmails = subscribeToAuthorizedEmails((cloudAuths) => {
-        saveAuthorizedEmails(cloudAuths);
-        setAuthorizedEmails(cloudAuths);
+        unsubscribeAuthEmails = subscribeToAuthorizedEmails((cloudAuths) => {
+          saveAuthorizedEmails(cloudAuths);
+          setAuthorizedEmails(cloudAuths);
 
-        // Reactive role check for current logged in profile
-        const currentStoredUser = getUserProfile();
-        if (currentStoredUser?.email) {
-          const emailClean = currentStoredUser.email.toLowerCase().trim();
-          if (isMainSuperAdmin(emailClean)) {
-            if (currentStoredUser.role !== 'admin') {
-              const updated = { ...currentStoredUser, role: 'admin' as UserRole };
-              saveUserProfile(updated);
-              setUserProfileState(updated);
-              setActiveSimulatedRole('admin');
-            }
-          } else {
-            const matchedAuth = cloudAuths.find((a) => a.email.toLowerCase().trim() === emailClean);
-            // Only update if matchedAuth is explicitly configured by admin with a role
-            if (matchedAuth && matchedAuth.role && currentStoredUser.role !== matchedAuth.role) {
-              const updated: UserProfile = {
-                ...currentStoredUser,
-                role: matchedAuth.role,
-                assignedRoute: matchedAuth.assignedRoute || currentStoredUser.assignedRoute,
-              };
-              saveUserProfile(updated);
-              setUserProfileState(updated);
-              setActiveSimulatedRole(matchedAuth.role);
+          // Reactive role check for current logged in profile
+          const currentStoredUser = getUserProfile();
+          if (currentStoredUser?.email) {
+            const emailClean = currentStoredUser.email.toLowerCase().trim();
+            if (isMainSuperAdmin(emailClean)) {
+              if (currentStoredUser.role !== 'admin') {
+                const updated = { ...currentStoredUser, role: 'admin' as UserRole };
+                saveUserProfile(updated);
+                setUserProfileState(updated);
+                setActiveSimulatedRole('admin');
+              }
+            } else {
+              const matchedAuth = cloudAuths.find((a) => a.email.toLowerCase().trim() === emailClean);
+              // Only update if matchedAuth is explicitly configured by admin with a role
+              if (matchedAuth && matchedAuth.role && currentStoredUser.role !== matchedAuth.role) {
+                const updated: UserProfile = {
+                  ...currentStoredUser,
+                  role: matchedAuth.role,
+                  assignedRoute: matchedAuth.assignedRoute || currentStoredUser.assignedRoute,
+                };
+                saveUserProfile(updated);
+                setUserProfileState(updated);
+                setActiveSimulatedRole(matchedAuth.role);
 
-              if (matchedAuth.role !== 'admin') {
-                setActiveTab((prev) => (prev === 'admin' ? 'order' : prev));
+                if (matchedAuth.role !== 'admin') {
+                  setActiveTab((prev) => (prev === 'admin' ? 'order' : prev));
+                }
               }
             }
           }
-        }
-      });
-    } catch (err) {
-      console.warn('Firestore subscription initialized in offline mode:', err);
-    }
+        });
+      } catch (err) {
+        console.warn('Firestore subscription initialized in offline mode:', err);
+      }
+    })();
 
     return () => {
+      isDisposed = true;
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('error', handleGlobalRuntimeError);

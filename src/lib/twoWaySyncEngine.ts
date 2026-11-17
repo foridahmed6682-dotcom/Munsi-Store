@@ -438,10 +438,20 @@ export async function backgroundSyncEngine(renderUI?: (orders: Order[]) => void)
       const deltaSnap = await getDocs(deltaQuery);
 
       if (!deltaSnap.empty) {
+        let localDeletedOrderIds = new Set<string>();
+        try {
+          const rawDel = localStorage.getItem('dsr_deleted_orders_v1');
+          if (rawDel) {
+            const parsedDel = JSON.parse(rawDel);
+            if (Array.isArray(parsedDel)) localDeletedOrderIds = new Set(parsedDel);
+          }
+        } catch {}
+
         const orderTx = idb.transaction(STORE_ORDERS, 'readwrite');
 
         for (const docSnap of deltaSnap.docs) {
           const remoteOrder = docSnap.data() as Order;
+          if (!remoteOrder?.id || localDeletedOrderIds.has(remoteOrder.id)) continue;
           const localOrder = await orderTx.store.get(remoteOrder.id);
 
           // Conflict resolution: Last-Write-Wins (LWW)

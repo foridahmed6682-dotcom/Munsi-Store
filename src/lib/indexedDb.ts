@@ -342,6 +342,40 @@ export async function saveProductImageToIndexedDB(
 let isPrecacheRunning = false;
 const pendingPrecacheQueue: Array<{ id: string; imageUrl: string }> = [];
 
+function startPrecacheWorkers(): void {
+  if (isPrecacheRunning || pendingPrecacheQueue.length === 0) return;
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+  isPrecacheRunning = true;
+
+  const CONCURRENCY = 4;
+  const runWorker = async () => {
+    while (pendingPrecacheQueue.length > 0) {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        while (pendingPrecacheQueue.length > 0) {
+          const skipped = pendingPrecacheQueue.shift();
+          if (skipped) attemptedPrecacheKeys.delete(`${skipped.id}::${skipped.imageUrl}`);
+        }
+        break;
+      }
+      const task = pendingPrecacheQueue.shift();
+      if (!task) break;
+      const ok = await saveProductImageToIndexedDB(task.id, task.imageUrl).catch(() => false);
+      if (!ok && typeof navigator !== 'undefined' && !navigator.onLine) {
+        attemptedPrecacheKeys.delete(`${task.id}::${task.imageUrl}`);
+      }
+    }
+  };
+
+  Promise.all(Array.from({ length: CONCURRENCY }, () => runWorker()))
+    .catch(() => {})
+    .finally(() => {
+      isPrecacheRunning = false;
+      if (pendingPrecacheQueue.length > 0) {
+        startPrecacheWorkers();
+      }
+    });
+}
+
 /**
  * Throttled background precacher that converts all product images into binary Blobs inside IndexedDB
  */
@@ -366,37 +400,9 @@ export function precacheProductImagesToIndexedDB(
     added = true;
   }
 
-  if (!added || isPrecacheRunning) return;
-  isPrecacheRunning = true;
-
-  const CONCURRENCY = 4;
-  const runWorker = async () => {
-    while (pendingPrecacheQueue.length > 0) {
-      if (typeof navigator !== 'undefined' && !navigator.onLine) {
-        // Put remaining back? Allow re-attempt when back online by clearing from attemptedPrecacheKeys
-        while (pendingPrecacheQueue.length > 0) {
-          const skipped = pendingPrecacheQueue.shift();
-          if (skipped) attemptedPrecacheKeys.delete(`${skipped.id}::${skipped.imageUrl}`);
-        }
-        break;
-      }
-      const task = pendingPrecacheQueue.shift();
-      if (!task) break;
-      const ok = await saveProductImageToIndexedDB(task.id, task.imageUrl).catch(() => false);
-      if (!ok && typeof navigator !== 'undefined' && !navigator.onLine) {
-        attemptedPrecacheKeys.delete(`${task.id}::${task.imageUrl}`);
-      }
-    }
-  };
-
-  Promise.all(Array.from({ length: CONCURRENCY }, () => runWorker()))
-    .catch(() => {})
-    .finally(() => {
-      isPrecacheRunning = false;
-      if (pendingPrecacheQueue.length > 0) {
-        precacheProductImagesToIndexedDB([]);
-      }
-    });
+  if (added) {
+    startPrecacheWorkers();
+  }
 }
 
 export function clearFailedImagePrecacheHistory(): void {
@@ -552,6 +558,17 @@ export async function getIndexedDBStats(): Promise<{
 export async function clearAllIndexedDBData(): Promise<boolean> {
   if (!isIndexedDBSupported()) return false;
   try {
+    pendingPrecacheQueue.length = 0;
+    attemptedPrecacheKeys.clear();
+    cachedImageSourceUrlMap.clear();
+    offlineObjectUrlCache.forEach((url) => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch {}
+    });
+    offlineObjectUrlCache.clear();
+    notifyOfflineImageCacheListeners();
+
     const db = await openOfflineDatabase();
     return new Promise((resolve) => {
       const tx = db.transaction(INDEXED_DB_STORES as unknown as string[], 'readwrite');

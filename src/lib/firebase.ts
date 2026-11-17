@@ -1557,6 +1557,7 @@ export async function saveShopToCloud(shop: Shop) {
   // 1. Direct real-time Firestore write (triggers onSnapshot immediately across all devices!)
   if (!isFirestoreQuotaExhausted()) {
     setDoc(doc(db, 'shops', shopWithTime.id), cleaned).catch((error) => {
+      enqueueOfflineAction('upsert', 'shops', shopWithTime.id, cleaned);
       handleFirestoreError(error, OperationType.WRITE, path);
     });
   }
@@ -1616,10 +1617,10 @@ export async function saveProductToCloud(product: Product) {
     });
   }
 
-  // 2. Parallel background mirror & catalog sync
+  // 2. Parallel background mirror & immediate catalog sync
   syncItemToServerMirror('products', cleaned).catch(() => {});
   if (!isFirestoreWriteQuotaExhausted()) {
-    upsertItemInFirebaseCatalog('products', cleaned, 'id').catch(() => {});
+    upsertItemInFirebaseCatalog('products', cleaned, 'id', true).catch(() => {});
   }
 }
 
@@ -1716,14 +1717,15 @@ export async function saveDueCollectionToCloud(record: DueCollectionRecord) {
   // 1. Direct real-time Firestore write
   if (!isFirestoreQuotaExhausted()) {
     setDoc(doc(db, 'dueCollections', record.id), cleaned).catch((error) => {
+      enqueueOfflineAction('upsert', 'dueCollections', record.id, cleaned);
       handleFirestoreError(error, OperationType.WRITE, path);
     });
   }
 
-  // 2. Parallel background mirror & catalog sync
+  // 2. Parallel background mirror & immediate catalog sync
   syncItemToServerMirror('dueCollections', cleaned).catch(() => {});
   if (!isFirestoreWriteQuotaExhausted()) {
-    upsertItemInFirebaseCatalog('dueCollections', cleaned, 'id').catch(() => {});
+    upsertItemInFirebaseCatalog('dueCollections', cleaned, 'id', true).catch(() => {});
   }
 }
 
@@ -1792,14 +1794,15 @@ export async function saveCategoryToCloud(category: Category) {
   // 1. Immediate real-time Firestore write
   if (!isFirestoreQuotaExhausted()) {
     setDoc(doc(db, 'categories', category.id), cleaned).catch((error) => {
+      enqueueOfflineAction('upsert', 'categories', category.id, cleaned);
       handleFirestoreError(error, OperationType.WRITE, path);
     });
   }
 
-  // 2. Parallel background mirror & catalog sync
+  // 2. Parallel background mirror & immediate catalog sync
   syncItemToServerMirror('categories', cleaned).catch(() => {});
   if (!isFirestoreWriteQuotaExhausted()) {
-    upsertItemInFirebaseCatalog('categories', cleaned, 'id').catch(() => {});
+    upsertItemInFirebaseCatalog('categories', cleaned, 'id', true).catch(() => {});
   }
 }
 
@@ -1888,14 +1891,15 @@ export async function saveRouteToCloud(route: Route) {
   // 1. Immediate real-time Firestore write
   if (!isFirestoreQuotaExhausted()) {
     setDoc(doc(db, 'routes', route.id), cleaned).catch((error) => {
+      enqueueOfflineAction('upsert', 'routes', route.id, cleaned);
       handleFirestoreError(error, OperationType.WRITE, path);
     });
   }
 
-  // 2. Parallel background mirror & catalog sync
+  // 2. Parallel background mirror & immediate catalog sync
   syncItemToServerMirror('routes', cleaned).catch(() => {});
   if (!isFirestoreWriteQuotaExhausted()) {
-    upsertItemInFirebaseCatalog('routes', cleaned, 'id').catch(() => {});
+    upsertItemInFirebaseCatalog('routes', cleaned, 'id', true).catch(() => {});
   }
 }
 
@@ -3033,6 +3037,34 @@ export async function restoreBulkDataToFirestore(payload: {
       currentBatch.set(ref, cleaned);
       opCount++;
       writtenCount++;
+    }
+
+    // 11. In 'replace' mode, delete obsolete root collection docs not present in the restored backup
+    if (mode === 'replace') {
+      const cleanupTargets: Array<{ col: string; keepIds: Set<string> }> = [
+        { col: 'products', keepIds: new Set(payload.products.map((p) => p?.id).filter(Boolean) as string[]) },
+        { col: 'shops', keepIds: new Set(payload.shops.map((s) => s?.id).filter(Boolean) as string[]) },
+        { col: 'orders', keepIds: new Set(payload.orders.map((o) => o?.id).filter(Boolean) as string[]) },
+        { col: 'categories', keepIds: new Set(payload.categories.map((c) => c?.id).filter(Boolean) as string[]) },
+        { col: 'routes', keepIds: new Set(payload.routes.map((r) => r?.id).filter(Boolean) as string[]) },
+        { col: 'dueCollections', keepIds: new Set((payload.dueCollections || []).map((d) => d?.id).filter(Boolean) as string[]) },
+        { col: 'dailyExpenses', keepIds: new Set((payload.dailyExpenses || []).map((e) => e?.id).filter(Boolean) as string[]) },
+      ];
+      for (const target of cleanupTargets) {
+        try {
+          const snap = await getDocs(collection(db, target.col));
+          for (const d of snap.docs) {
+            if (!target.keepIds.has(d.id)) {
+              currentBatch.delete(d.ref);
+              opCount++;
+              deletedCount++;
+              await commitBatchIfNeeded();
+            }
+          }
+        } catch {
+          // ignore if read quota limits cleanup
+        }
+      }
     }
 
     // Commit any remaining operations in the final batch

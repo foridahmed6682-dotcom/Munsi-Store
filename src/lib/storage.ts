@@ -1039,6 +1039,9 @@ export function deleteProduct(productId: string) {
   const products = getProducts();
   const filtered = products.filter((p) => p.id !== productId);
   saveProducts(filtered);
+  if (isIndexedDBSupported()) {
+    deleteItemFromIndexedDB('productImages', productId).catch(() => {});
+  }
 }
 
 // Categories Management
@@ -1675,7 +1678,13 @@ export function deleteAllProductsLocal(): string[] {
   const ids = current.map((p) => p.id);
   ids.forEach((id) => addDeletedProductId(id));
   DEMO_PRODUCT_IDS.forEach((id) => addDeletedProductId(id));
-  localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify([]));
+  saveProducts([]);
+  if (isIndexedDBSupported()) {
+    saveItemsToIndexedDB('productImages', []).catch(() => {});
+  }
+  try {
+    localStorage.removeItem(STORAGE_KEYS.PRODUCTS);
+  } catch {}
   return ids;
 }
 
@@ -1684,7 +1693,10 @@ export function deleteAllShopsLocal(): string[] {
   const ids = current.map((s) => s.id);
   ids.forEach((id) => addDeletedShopId(id));
   ['shop-1', 'shop-2', 'shop-3', 'shop-4', 'shop-5', 'shop-6'].forEach((id) => addDeletedShopId(id));
-  localStorage.setItem(STORAGE_KEYS.SHOPS, JSON.stringify([]));
+  saveShops([]);
+  try {
+    localStorage.removeItem(STORAGE_KEYS.SHOPS);
+  } catch {}
   return ids;
 }
 
@@ -1693,7 +1705,10 @@ export function deleteAllOrdersLocal(): string[] {
   const ids = current.map((o) => o.id);
   ids.forEach((id) => addDeletedOrderId(id));
   ['ord-101', 'ord-102'].forEach((id) => addDeletedOrderId(id));
-  localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify([]));
+  saveOrders([]);
+  try {
+    localStorage.removeItem(STORAGE_KEYS.ORDERS);
+  } catch {}
   return ids;
 }
 
@@ -1702,7 +1717,10 @@ export function deleteAllCategoriesLocal(): string[] {
   const ids = current.map((c) => c.id);
   ids.forEach((id) => addDeletedCategoryId(id));
   DEMO_CATEGORY_IDS.forEach((id) => addDeletedCategoryId(id));
-  localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify([]));
+  saveCategories([]);
+  try {
+    localStorage.removeItem(STORAGE_KEYS.CATEGORIES);
+  } catch {}
   return ids;
 }
 
@@ -1711,21 +1729,30 @@ export function deleteAllRoutesLocal(): string[] {
   const ids = current.map((r) => r.id);
   ids.forEach((id) => addDeletedRouteId(id));
   DEMO_ROUTE_IDS.forEach((id) => addDeletedRouteId(id));
-  localStorage.setItem(STORAGE_KEYS.ROUTES, JSON.stringify([]));
+  saveRoutes([]);
+  try {
+    localStorage.removeItem(STORAGE_KEYS.ROUTES);
+  } catch {}
   return ids;
 }
 
 export function deleteAllDailyExpensesLocal(): string[] {
   const current = getDailyExpenses();
   const ids = current.map((e) => e.id);
-  localStorage.setItem(STORAGE_KEYS.DAILY_EXPENSES, JSON.stringify([]));
+  saveDailyExpenses([]);
+  try {
+    localStorage.removeItem(STORAGE_KEYS.DAILY_EXPENSES);
+  } catch {}
   return ids;
 }
 
 export function deleteAllDueCollectionsLocal(): string[] {
   const current = getDueCollections();
   const ids = current.map((c) => c.id);
-  localStorage.setItem(STORAGE_KEYS.COLLECTIONS, JSON.stringify([]));
+  saveDueCollections([]);
+  try {
+    localStorage.removeItem(STORAGE_KEYS.COLLECTIONS);
+  } catch {}
   return ids;
 }
 

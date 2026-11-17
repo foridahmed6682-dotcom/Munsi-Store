@@ -122,8 +122,15 @@ export const AdminFirebaseInspector: React.FC<AdminFirebaseInspectorProps> = ({
         await flushOfflinePendingActionsToFirebase().catch(() => {});
         setPendingOfflineCount(getPendingOfflineActions().length);
       }
-      const res = await fetchFirebaseCloudInspection();
+      const [res, idbStats] = await Promise.all([
+        fetchFirebaseCloudInspection(),
+        getIndexedDBStats().catch(() => null),
+      ]);
       setInspectionData(res);
+      if (idbStats && idbStats.breakdown) {
+        setIdbBreakdown(idbStats.breakdown);
+      }
+      setPendingOfflineCount(getPendingOfflineActions().length);
       setLastCheckTime(new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
       if (isManual) {
         setStatusMessage('ফায়ারবেজ ক্লাউড ডাটা সফলভাবে রিফ্রেশ হয়েছে!');
