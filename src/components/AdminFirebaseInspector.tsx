@@ -161,7 +161,7 @@ export const AdminFirebaseInspector: React.FC<AdminFirebaseInspectorProps> = ({
       setPendingOfflineCount(0);
       onReloadData?.();
       await handleRefreshLive(false);
-      setStatusMessage(`সমতা সফল! ফায়ারবেজে থাকা সকল পণ্য (${res.counts.products}টি), দোকান (${res.counts.shops}টি) ও মেমো (${res.counts.orders}টি) শতভাগ ডিভাইসে সিঙ্ক হয়েছে।`);
+      setStatusMessage(`সমতা সফল! ফায়ারবেজে থাকা সকল পণ্য (${res.counts.products}টি), দোকান (${res.counts.shops}টি), মেমো (${res.counts.orders}টি) ও রুট (${res.counts.routes}টি) শতভাগ ডিভাইসে সিঙ্ক হয়েছে।`);
       setTimeout(() => setStatusMessage(null), 4500);
     } catch (err: any) {
       setStatusMessage(`সিঙ্ক ব্যর্থ: ${err?.message || 'ত্রুটি'}`);
@@ -592,7 +592,7 @@ export const AdminFirebaseInspector: React.FC<AdminFirebaseInspectorProps> = ({
                   </span>
                 </div>
                 <p className="text-[11px] text-neutral-600 mt-0.5 leading-relaxed">
-                  ডিভাইস মেমরিতে পণ্য {products.length}টি, দোকান {shops.length}টি, মেমো {orders.length}টি সংরক্ষিত আছে। এখনই ফায়ারবেজ ও সার্ভার মিররে শতভাগ সমতা নিশ্চিত করতে পাশের বাটনে ক্লিক করুন।
+                  ডিভাইস মেমরিতে পণ্য {products.length}টি, দোকান {shops.length}টি, মেমো {orders.length}টি ও রুট {routes.length}টি সংরক্ষিত আছে। এখনই ফায়ারবেজ ও সার্ভার মিররে শতভাগ সমতা নিশ্চিত করতে পাশের বাটনে ক্লিক করুন।
                 </p>
               </div>
             </div>

@@ -287,7 +287,13 @@ export async function smartDeleteOrder(
   const idb = await initLocalDB();
   const nowMs = Date.now();
 
-  // Step 1: Hard Delete from local IndexedDB immediately
+  // Step 1: Hard Delete from local IndexedDB immediately & record deleted tombstone
+  try {
+    const rawDel = localStorage.getItem('dsr_deleted_orders_v1');
+    const delSet = new Set<string>(rawDel ? JSON.parse(rawDel) : ['ord-101', 'ord-102']);
+    delSet.add(orderId);
+    localStorage.setItem('dsr_deleted_orders_v1', JSON.stringify(Array.from(delSet)));
+  } catch {}
   await idb.delete(STORE_ORDERS, orderId);
   if (renderUI) {
     const updatedList = await getLocalOrders();
@@ -413,13 +419,28 @@ export async function backgroundSyncEngine(renderUI?: (orders: Order[]) => void)
       const tombstoneSnap = await getDocs(tombstoneQuery);
 
       if (!tombstoneSnap.empty) {
+        let localDelSet = new Set<string>(['ord-101', 'ord-102']);
+        try {
+          const rawDel = localStorage.getItem('dsr_deleted_orders_v1');
+          if (rawDel) {
+            const parsed = JSON.parse(rawDel);
+            if (Array.isArray(parsed)) localDelSet = new Set(parsed);
+          }
+        } catch {}
+
         const orderTx = idb.transaction(STORE_ORDERS, 'readwrite');
         for (const docSnap of tombstoneSnap.docs) {
           const tombData = docSnap.data();
           const targetId = tombData.id || docSnap.id;
-          await orderTx.store.delete(targetId);
+          if (targetId) {
+            localDelSet.add(targetId);
+            await orderTx.store.delete(targetId);
+          }
         }
         await orderTx.done;
+        try {
+          localStorage.setItem('dsr_deleted_orders_v1', JSON.stringify(Array.from(localDelSet)));
+        } catch {}
         console.log(`[Tombstone Purge] Permanently purged ${tombstoneSnap.size} deleted records from local IndexedDB.`);
       }
     } catch (tombErr) {

@@ -899,7 +899,9 @@ export async function initializeStorageFromIndexedDB(): Promise<{
     memoryShopsCache = shops.filter((s) => s && !delShops.has(s.id));
     memoryOrdersCache = orders.filter((o) => o && !delOrders.has(o.id));
     memoryCategoriesCache = (categories.length > 0 ? categories : DEFAULT_CATEGORIES).filter((c) => c && !delCategories.has(c.id));
-    memoryRoutesCache = (routes.length > 0 ? routes : DEFAULT_ROUTES).filter((r) => r && !delRoutes.has(r.id));
+    memoryRoutesCache = deduplicateRoutes(
+      (routes.length > 0 ? routes : DEFAULT_ROUTES).filter((r) => r && !delRoutes.has(r.id))
+    );
     memorySuppliersCache = suppliers.filter((s) => s && !delSuppliers.has(s.id));
     memoryDueCollectionsCache = dueCollections;
     memoryDailyExpensesCache = dailyExpenses;
@@ -1158,17 +1160,68 @@ export function deleteSupplier(supplierId: string) {
   saveSuppliers(filtered);
 }
 
+const STARTER_ROUTE_IDS = new Set([
+  'rt-palashbari',
+  'rt-gaibandha',
+  'rt-tulsighat',
+  'rt-hasnerpara',
+  'rt-gobindaganj',
+]);
+
+function normalizeRouteMatchKey(r: Route): string {
+  const raw = (r.banglaName || r.name || '').trim().toLowerCase();
+  if (!raw) return r.id || '';
+  if (raw === 'palashbari' || raw === 'polashbari' || raw === 'পলাশবাড়ী' || raw === 'পলাশবাড়ী') {
+    return 'পলাশবাড়ী';
+  }
+  if (raw === 'gaibandha sadar' || raw === 'গাইবান্ধা সদর') {
+    return 'গাইবান্ধা সদর';
+  }
+  return raw;
+}
+
+export function deduplicateRoutes(routes: Route[]): Route[] {
+  const valid = (routes || []).filter((r) => r && r.id);
+  const hasRealCloudRoutes = valid.some((r) => !STARTER_ROUTE_IDS.has(r.id));
+  const filtered = hasRealCloudRoutes ? valid.filter((r) => !STARTER_ROUTE_IDS.has(r.id)) : valid;
+
+  const map = new Map<string, Route>();
+  for (const r of filtered) {
+    const key = normalizeRouteMatchKey(r);
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, r);
+      continue;
+    }
+    const existingTime = new Date(existing.createdAt || 0).getTime() || Number.MAX_SAFE_INTEGER;
+    const nextTime = new Date(r.createdAt || 0).getTime() || Number.MAX_SAFE_INTEGER;
+    // Prefer the canonical earlier-created route ID while preserving richer description
+    if (nextTime < existingTime) {
+      map.set(key, {
+        ...r,
+        description: r.description || existing.description || '',
+      });
+    } else {
+      map.set(key, {
+        ...existing,
+        description: existing.description || r.description || '',
+      });
+    }
+  }
+  return Array.from(map.values());
+}
+
 // Routes Management
 export function getRoutes(): Route[] {
   if (memoryRoutesCache) {
-    return memoryRoutesCache;
+    return deduplicateRoutes(memoryRoutesCache);
   }
   return DEFAULT_ROUTES;
 }
 
 export function saveRoutes(routes: Route[]) {
   const deletedIds = getDeletedRouteIds();
-  const clean = routes.filter((r) => !deletedIds.has(r.id));
+  const clean = deduplicateRoutes(routes.filter((r) => r && !deletedIds.has(r.id)));
   memoryRoutesCache = clean;
   if (isIndexedDBSupported()) {
     saveItemsToIndexedDB('routes', clean).catch(() => {});
@@ -1187,14 +1240,19 @@ export function addOrUpdateRoute(route: Route): Route {
   }
   const routes = getRoutes();
   const byIdIdx = routes.findIndex((r) => r.id === route.id);
+  const normalizedBangla = (route.banglaName || '').trim().toLowerCase();
+  const normalizedName = (route.name || '').trim().toLowerCase();
   const byNameIdx =
     byIdIdx >= 0
       ? byIdIdx
-      : routes.findIndex(
-          (r) =>
-            (r.banglaName && route.banglaName && r.banglaName.trim() === route.banglaName.trim()) ||
-            (r.name && route.name && r.name.trim().toLowerCase() === route.name.trim().toLowerCase())
-        );
+      : routes.findIndex((r) => {
+          const rBangla = (r.banglaName || '').trim().toLowerCase();
+          const rName = (r.name || '').trim().toLowerCase();
+          return (
+            (normalizedBangla && (rBangla === normalizedBangla || rName === normalizedBangla)) ||
+            (normalizedName && (rName === normalizedName || rBangla === normalizedName))
+          );
+        });
 
   let finalRoute = { ...route, updatedAt: new Date().toISOString() };
   if (byNameIdx >= 0) {
@@ -1214,6 +1272,35 @@ export function deleteRoute(routeId: string) {
   saveRoutes(filtered);
 }
 
+function deduplicateAuthorizedEmailsLocal(list: AuthorizedUserEmail[]): AuthorizedUserEmail[] {
+  const mockEmails = new Set(['sr.karim@munsistore.com', 'dsr.habib@munsistore.com']);
+  const map = new Map<string, AuthorizedUserEmail>();
+  for (const item of list || []) {
+    const emailKey = (item?.email || '').toLowerCase().trim();
+    if (!emailKey || mockEmails.has(emailKey)) continue;
+    const slugId = emailKey.replace(/[@.]/g, '_');
+    const existing = map.get(emailKey);
+    if (!existing) {
+      map.set(emailKey, { ...item, email: emailKey, id: slugId });
+      continue;
+    }
+    const itemHasSlug = item.id === slugId;
+    const existingHasSlug = existing.id === slugId;
+    const itemNonCustomer = item.role && item.role !== 'customer';
+    const existingNonCustomer = existing.role && existing.role !== 'customer';
+    const itemTime = new Date((item as any).updatedAt || item.addedAt || (item as any).createdAt || 0).getTime();
+    const existingTime = new Date((existing as any).updatedAt || existing.addedAt || (existing as any).createdAt || 0).getTime();
+    const shouldReplace =
+      (itemNonCustomer && !existingNonCustomer) ||
+      (itemNonCustomer === existingNonCustomer && itemHasSlug && !existingHasSlug) ||
+      (itemNonCustomer === existingNonCustomer && itemHasSlug === existingHasSlug && itemTime >= existingTime);
+    if (shouldReplace) {
+      map.set(emailKey, { ...existing, ...item, email: emailKey, id: slugId });
+    }
+  }
+  return Array.from(map.values());
+}
+
 // Authorized Staff Emails Management
 export function getAuthorizedEmails(): AuthorizedUserEmail[] {
   try {
@@ -1222,14 +1309,15 @@ export function getAuthorizedEmails(): AuthorizedUserEmail[] {
       localStorage.setItem(STORAGE_KEYS.AUTHORIZED_EMAILS, JSON.stringify(DEFAULT_AUTHORIZED_EMAILS));
       return DEFAULT_AUTHORIZED_EMAILS;
     }
-    return JSON.parse(raw);
+    return deduplicateAuthorizedEmailsLocal(JSON.parse(raw));
   } catch {
     return DEFAULT_AUTHORIZED_EMAILS;
   }
 }
 
 export function saveAuthorizedEmails(emails: AuthorizedUserEmail[]) {
-  safeSetLocalStorage(STORAGE_KEYS.AUTHORIZED_EMAILS, JSON.stringify(emails));
+  const clean = deduplicateAuthorizedEmailsLocal(emails);
+  safeSetLocalStorage(STORAGE_KEYS.AUTHORIZED_EMAILS, JSON.stringify(clean));
 }
 
 export function addOrUpdateAuthorizedEmail(emailData: AuthorizedUserEmail): AuthorizedUserEmail {

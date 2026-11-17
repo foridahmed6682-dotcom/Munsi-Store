@@ -45,6 +45,7 @@ import {
   getDeletedProductIds,
   getDeletedShopIds,
   getDeletedOrderIds,
+  addDeletedOrderId,
   getDeletedCategoryIds,
   getDeletedRouteIds,
   getAuthorizedEmails,
@@ -58,6 +59,7 @@ import {
   saveCategories,
   getRoutes,
   saveRoutes,
+  deduplicateRoutes,
   getDueCollections,
   saveDueCollections,
   getDailyExpenses,
@@ -1439,11 +1441,19 @@ export function subscribeToCloudProducts(onData: (products: Product[]) => void) 
   };
 }
 
+const remoteTombstoneOrderIds = new Set<string>();
+
 export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
+  const getCombinedDeletedOrderIds = () => {
+    const deleted = getDeletedOrderIds();
+    remoteTombstoneOrderIds.forEach((id) => deleted.add(id));
+    return deleted;
+  };
+
   const syncFromLocalMirror = async (extraOrders: Order[] = []) => {
     if (isRestoreCooldownActive()) return;
     const mirror = await fetchServerDatabaseMirror();
-    const deletedIds = getDeletedOrderIds();
+    const deletedIds = getCombinedDeletedOrderIds();
     const mirrorOrders: Order[] = Array.isArray(mirror?.orders) ? mirror.orders : [];
     const combinedRemote = mergeLocalAndCloud(
       mirrorOrders,
@@ -1464,6 +1474,39 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
   const unsubs: (() => void)[] = [];
 
   if (!isFirestoreQuotaExhausted()) {
+    // 0. Live tombstones listener so deleted memos never resurrect across devices
+    try {
+      const unsubTombs = onSnapshot(
+        collection(db, 'tombstones'),
+        (tSnap) => {
+          if (tSnap.empty) return;
+          let addedNew = false;
+          tSnap.forEach((d) => {
+            const data = d.data() as any;
+            if (!data?.collection || data.collection === 'orders') {
+              const tid = data?.id || d.id;
+              if (tid) {
+                if (!remoteTombstoneOrderIds.has(tid)) {
+                  remoteTombstoneOrderIds.add(tid);
+                  addedNew = true;
+                }
+                addDeletedOrderId(tid);
+              }
+            }
+          });
+          if (addedNew) {
+            const deletedIds = getCombinedDeletedOrderIds();
+            const filtered = getOrders().filter((o) => o && !deletedIds.has(o.id));
+            saveOrders(filtered);
+            onData(filtered);
+            pushBulkDataToServerMirror({ orders: filtered }).catch(() => {});
+          }
+        },
+        () => {}
+      );
+      unsubs.push(unsubTombs);
+    } catch {}
+
     // 1. Live catalog listener
     const unsubCatalog = onSnapshot(
       doc(db, 'settings', 'cloud_catalog_orders'),
@@ -1473,8 +1516,8 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
           const data = snapshot.data();
           if (data && typeof data.itemsJson === 'string') {
             const rawOrders: Order[] = JSON.parse(data.itemsJson);
-            const deletedIds = getDeletedOrderIds();
-            const clean = rawOrders.filter((o) => !deletedIds.has(o.id));
+            const deletedIds = getCombinedDeletedOrderIds();
+            const clean = rawOrders.filter((o) => o && !deletedIds.has(o.id));
             const merged = mergeLocalAndCloud(getOrders(), clean, deletedIds, 'id', true).sort(
               (a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime()
             );
@@ -1505,8 +1548,8 @@ export function subscribeToCloudOrders(onData: (orders: Order[]) => void) {
             if (ord && ord.id) directOrders.push(ord);
           });
           if (directOrders.length > 0) {
-            const deletedIds = getDeletedOrderIds();
-            const clean = directOrders.filter((o) => !deletedIds.has(o.id));
+            const deletedIds = getCombinedDeletedOrderIds();
+            const clean = directOrders.filter((o) => o && !deletedIds.has(o.id));
             const merged = mergeLocalAndCloud(getOrders(), clean, deletedIds, 'id', true).sort(
               (a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime()
             );
@@ -1682,14 +1725,24 @@ export async function saveOrderToCloud(order: Order) {
 
 export async function deleteOrderFromCloud(orderId: string) {
   const path = `orders/${orderId}`;
+  addDeletedOrderId(orderId);
+  remoteTombstoneOrderIds.add(orderId);
 
   // Always record delete action so it cannot be undone by stale caches
   enqueueOfflineAction('delete', 'orders', orderId);
 
-  // 1. Direct real-time Firestore deletion
+  // 1. Direct real-time Firestore deletion + Tombstone
   if (!isFirestoreQuotaExhausted()) {
     try {
-      await deleteDoc(doc(db, 'orders', orderId));
+      await Promise.allSettled([
+        deleteDoc(doc(db, 'orders', orderId)),
+        setDoc(doc(db, 'tombstones', orderId), {
+          id: orderId,
+          collection: 'orders',
+          deletedAtMs: Date.now(),
+          deletedAtIso: new Date().toISOString(),
+        }),
+      ]);
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
     }
@@ -1732,18 +1785,21 @@ export async function saveDueCollectionToCloud(record: DueCollectionRecord) {
 
 // Category Cloud Methods
 export function subscribeToCloudCategories(onData: (categories: Category[]) => void) {
-  const path = 'categories';
   const pollFirebaseDirect = async () => {
+    if (isRestoreCooldownActive()) return;
     const mirror = await fetchServerDatabaseMirror();
     const mirrorCats: Category[] = Array.isArray(mirror?.categories) ? mirror.categories : [];
-    const directCats = isFirestoreWriteQuotaExhausted()
+    const directCats = isFirestoreQuotaExhausted()
       ? []
       : await readFirestoreCatalogDirect<Category>('categories');
     const deletedIds = getDeletedCategoryIds();
-    const combined = mergeLocalAndCloud(mirrorCats, directCats, deletedIds);
-    const filtered = combined.filter((c) => c && !deletedIds.has(c.id));
-    if (filtered.length > 0) {
-      onData(filtered);
+    const combinedRemote = mergeLocalAndCloud(mirrorCats, directCats, deletedIds, 'id', false);
+    const merged = mergeLocalAndCloud(getCategories(), combinedRemote, deletedIds, 'id', false).filter(
+      (c) => c && !deletedIds.has(c.id)
+    );
+    if (merged.length > 0) {
+      saveCategories(merged);
+      onData(merged);
     }
   };
 
@@ -1753,7 +1809,9 @@ export function subscribeToCloudCategories(onData: (categories: Category[]) => v
     return () => {};
   }
 
-  const unsub = onSnapshot(
+  const unsubs: (() => void)[] = [];
+
+  const unsubCatalog = onSnapshot(
     doc(db, 'settings', 'cloud_catalog_categories'),
     (snapshot) => {
       if (isRestoreCooldownActive() || !snapshot.exists()) return;
@@ -1777,9 +1835,40 @@ export function subscribeToCloudCategories(onData: (categories: Category[]) => v
       pollFirebaseDirect();
     }
   );
+  unsubs.push(unsubCatalog);
+
+  try {
+    const unsubCol = onSnapshot(
+      collection(db, 'categories'),
+      (colSnap) => {
+        if (isRestoreCooldownActive() || colSnap.empty) return;
+        const directCats: Category[] = [];
+        colSnap.forEach((d) => {
+          const c = d.data() as Category;
+          if (c && c.id) directCats.push(c);
+        });
+        if (directCats.length > 0) {
+          const deletedIds = getDeletedCategoryIds();
+          const clean = directCats.filter((c) => !deletedIds.has(c.id));
+          const merged = mergeLocalAndCloud(getCategories(), clean, deletedIds, 'id', true);
+          saveCategories(merged);
+          onData(merged);
+          pushBulkDataToServerMirror({ categories: merged }).catch(() => {});
+        }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, 'categories');
+      }
+    );
+    unsubs.push(unsubCol);
+  } catch {
+    // ignore
+  }
 
   return () => {
-    unsub();
+    unsubs.forEach((fn) => {
+      try { fn(); } catch {}
+    });
   };
 }
 
@@ -1833,15 +1922,23 @@ export async function deleteCategoryFromCloud(categoryId: string) {
 // Route Cloud Methods
 export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
   const pollFirebaseDirect = async () => {
+    if (isRestoreCooldownActive()) return;
     const mirror = await fetchServerDatabaseMirror();
     const mirrorRoutes: Route[] = Array.isArray(mirror?.routes) ? mirror.routes : [];
-    const directRoutes = isFirestoreWriteQuotaExhausted()
+    const directRoutes = isFirestoreQuotaExhausted()
       ? []
       : await readFirestoreCatalogDirect<Route>('routes');
     const deletedIds = getDeletedRouteIds();
-    const combined = mergeLocalAndCloud(mirrorRoutes, directRoutes, deletedIds, 'id', false);
-    const filtered = combined.filter((r) => r && !deletedIds.has(r.id));
-    onData(filtered);
+    const combinedRemote = mergeLocalAndCloud(mirrorRoutes, directRoutes, deletedIds, 'id', false);
+    const merged = deduplicateRoutes(
+      mergeLocalAndCloud(getRoutes(), combinedRemote, deletedIds, 'id', false).filter(
+        (r) => r && !deletedIds.has(r.id)
+      )
+    );
+    if (merged.length > 0) {
+      saveRoutes(merged);
+      onData(merged);
+    }
   };
 
   pollFirebaseDirect();
@@ -1850,7 +1947,9 @@ export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
     return () => {};
   }
 
-  const unsub = onSnapshot(
+  const unsubs: (() => void)[] = [];
+
+  const unsubCatalog = onSnapshot(
     doc(db, 'settings', 'cloud_catalog_routes'),
     (snapshot) => {
       if (isRestoreCooldownActive() || !snapshot.exists()) return;
@@ -1860,10 +1959,12 @@ export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
           const list: Route[] = JSON.parse(data.itemsJson);
           const deletedIds = getDeletedRouteIds();
           const clean = list.filter((r) => !deletedIds.has(r.id));
-          const merged = mergeLocalAndCloud(getRoutes(), clean, deletedIds, 'id', true);
-          saveRoutes(merged);
-          onData(merged);
-          pushBulkDataToServerMirror({ routes: merged }).catch(() => {});
+          const merged = deduplicateRoutes(mergeLocalAndCloud(getRoutes(), clean, deletedIds, 'id', true));
+          if (merged.length > 0) {
+            saveRoutes(merged);
+            onData(merged);
+            pushBulkDataToServerMirror({ routes: merged }).catch(() => {});
+          }
         }
       } catch {
         pollFirebaseDirect();
@@ -1874,9 +1975,40 @@ export function subscribeToCloudRoutes(onData: (routes: Route[]) => void) {
       pollFirebaseDirect();
     }
   );
+  unsubs.push(unsubCatalog);
+
+  try {
+    const unsubCol = onSnapshot(
+      collection(db, 'routes'),
+      (colSnap) => {
+        if (isRestoreCooldownActive() || colSnap.empty) return;
+        const directRoutes: Route[] = [];
+        colSnap.forEach((d) => {
+          const r = d.data() as Route;
+          if (r && r.id) directRoutes.push(r);
+        });
+        if (directRoutes.length > 0) {
+          const deletedIds = getDeletedRouteIds();
+          const clean = deduplicateRoutes(directRoutes.filter((r) => !deletedIds.has(r.id)));
+          const merged = deduplicateRoutes(mergeLocalAndCloud(getRoutes(), clean, deletedIds, 'id', true));
+          saveRoutes(merged);
+          onData(merged);
+          pushBulkDataToServerMirror({ routes: merged }).catch(() => {});
+        }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, 'routes');
+      }
+    );
+    unsubs.push(unsubCol);
+  } catch {
+    // ignore
+  }
 
   return () => {
-    unsub();
+    unsubs.forEach((fn) => {
+      try { fn(); } catch {}
+    });
   };
 }
 
@@ -1927,24 +2059,52 @@ export async function deleteRouteFromCloud(routeId: string) {
   }
 }
 
+export function deduplicateAuthorizedEmails(list: AuthorizedUserEmail[]): AuthorizedUserEmail[] {
+  const mockEmails = new Set(['sr.karim@munsistore.com', 'dsr.habib@munsistore.com']);
+  const map = new Map<string, AuthorizedUserEmail>();
+  for (const item of list || []) {
+    const emailKey = (item?.email || '').toLowerCase().trim();
+    if (!emailKey || mockEmails.has(emailKey)) continue;
+    const slugId = emailKey.replace(/[@.]/g, '_');
+    const existing = map.get(emailKey);
+    if (!existing) {
+      map.set(emailKey, { ...item, email: emailKey, id: slugId });
+      continue;
+    }
+    const itemHasSlug = item.id === slugId;
+    const existingHasSlug = existing.id === slugId;
+    const itemNonCustomer = Boolean(item.role && item.role !== 'customer');
+    const existingNonCustomer = Boolean(existing.role && existing.role !== 'customer');
+    const itemTime = new Date((item as any).updatedAt || item.addedAt || (item as any).createdAt || 0).getTime();
+    const existingTime = new Date((existing as any).updatedAt || existing.addedAt || (existing as any).createdAt || 0).getTime();
+    const shouldReplace =
+      (itemNonCustomer && !existingNonCustomer) ||
+      (itemNonCustomer === existingNonCustomer && itemHasSlug && !existingHasSlug) ||
+      (itemNonCustomer === existingNonCustomer && itemHasSlug === existingHasSlug && itemTime >= existingTime);
+    if (shouldReplace) {
+      map.set(emailKey, { ...existing, ...item, email: emailKey, id: slugId });
+    }
+  }
+  return Array.from(map.values());
+}
+
 // Authorized Email Whitelist Cloud Methods
 export function subscribeToAuthorizedEmails(onData: (emails: AuthorizedUserEmail[]) => void) {
   const path = 'authorizedEmails';
-  const mockEmails = new Set(['sr.karim@munsistore.com', 'dsr.habib@munsistore.com']);
   const pollFirebaseDirect = async () => {
     const mirror = await fetchServerDatabaseMirror();
     const mirrorAuths: AuthorizedUserEmail[] = Array.isArray(mirror?.authorizedEmails) ? mirror.authorizedEmails : [];
-    const directAuths = isFirestoreWriteQuotaExhausted()
+    const directAuths = isFirestoreQuotaExhausted()
       ? []
       : await readFirestoreCatalogDirect<AuthorizedUserEmail>('authorizedEmails');
-    const mainAdmin = isFirestoreWriteQuotaExhausted()
+    const mainAdmin = isFirestoreQuotaExhausted()
       ? null
       : await readFirestoreDocDirect('authorizedEmails/foridahmed6682_gmail_com');
     const combined = mergeLocalAndCloud(mirrorAuths, directAuths, new Set(), 'email');
-    if (mainAdmin && mainAdmin.email && !combined.some((x) => x.email?.toLowerCase() === String(mainAdmin.email).toLowerCase())) {
+    if (mainAdmin && mainAdmin.email) {
       combined.push(mainAdmin as AuthorizedUserEmail);
     }
-    const filtered = combined.filter((item) => item && item.email && !mockEmails.has(item.email.toLowerCase()));
+    const filtered = deduplicateAuthorizedEmails(combined);
     if (filtered.length > 0) {
       onData(filtered);
     }
@@ -1966,12 +2126,14 @@ export function subscribeToAuthorizedEmails(onData: (emails: AuthorizedUserEmail
       const list: AuthorizedUserEmail[] = [];
       snapshot.forEach((d) => {
         const item = d.data() as AuthorizedUserEmail;
-        if (!mockEmails.has(item.email.toLowerCase())) {
-          list.push(item);
+        if (item?.email) {
+          list.push({ ...item, id: d.id });
         }
       });
-      if (list.length > 0) {
-        onData(list);
+      const deduped = deduplicateAuthorizedEmails(list);
+      if (deduped.length > 0) {
+        onData(deduped);
+        pushBulkDataToServerMirror({ authorizedEmails: deduped }).catch(() => {});
       }
     },
     (error) => {
@@ -1993,12 +2155,24 @@ export async function saveAuthorizedEmailToCloud(authEmail: AuthorizedUserEmail)
     ...authEmail,
     email: emailClean,
     id: safeDocId,
+    updatedAt: new Date().toISOString(),
   });
   syncItemToServerMirror('authorizedEmails', cleaned);
   if (isFirestoreQuotaExhausted()) return;
   try {
     await setDoc(doc(db, 'authorizedEmails', safeDocId), cleaned);
-    await upsertItemInFirebaseCatalog('authorizedEmails', cleaned, 'email');
+    await upsertItemInFirebaseCatalog('authorizedEmails', cleaned, 'email', true);
+
+    // Clean up any legacy auto-ID duplicate docs for the same email
+    try {
+      const authSnap = await getDocs(collection(db, 'authorizedEmails'));
+      for (const d of authSnap.docs) {
+        const data = d.data() as AuthorizedUserEmail;
+        if (data?.email && data.email.toLowerCase().trim() === emailClean && d.id !== safeDocId) {
+          await deleteDoc(doc(db, 'authorizedEmails', d.id)).catch(() => {});
+        }
+      }
+    } catch {}
 
     // Synchronize to /users collection if user document exists for this email
     try {
@@ -2050,6 +2224,16 @@ export async function deleteAuthorizedEmailFromCloud(email: string) {
   if (isFirestoreQuotaExhausted()) return;
   try {
     await deleteDoc(doc(db, 'authorizedEmails', safeDocId));
+    // Also remove any legacy auto-ID docs matching this email
+    try {
+      const authSnap = await getDocs(collection(db, 'authorizedEmails'));
+      for (const d of authSnap.docs) {
+        const data = d.data() as AuthorizedUserEmail;
+        if (data?.email && data.email.toLowerCase().trim() === emailClean) {
+          await deleteDoc(doc(db, 'authorizedEmails', d.id)).catch(() => {});
+        }
+      }
+    } catch {}
     await removeItemFromFirebaseCatalog('authorizedEmails', emailClean, 'email');
 
     // Also update any matching user in /users to 'customer' role immediately
@@ -2150,12 +2334,17 @@ export function subscribeToCloudDueCollections(onData: (collections: DueCollecti
     if (isRestoreCooldownActive()) return;
     const mirror = await fetchServerDatabaseMirror();
     const mirrorCols: DueCollectionRecord[] = Array.isArray(mirror?.dueCollections) ? mirror.dueCollections : [];
-    const directCols = isFirestoreWriteQuotaExhausted()
+    const directCols = isFirestoreQuotaExhausted()
       ? []
       : await readFirestoreCatalogDirect<DueCollectionRecord>('dueCollections');
-    const combined = mergeLocalAndCloud(mirrorCols, [...directCols, ...extraCols], new Set());
-    const sorted = [...combined].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    onData(sorted);
+    const combinedRemote = mergeLocalAndCloud(mirrorCols, [...directCols, ...extraCols], new Set(), 'id', false);
+    const merged = mergeLocalAndCloud(getDueCollections(), combinedRemote, new Set(), 'id', false).sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+    if (merged.length > 0) {
+      saveDueCollections(merged);
+      onData(merged);
+    }
   };
 
   syncFromLocalMirror();
@@ -2172,10 +2361,12 @@ export function subscribeToCloudDueCollections(onData: (collections: DueCollecti
           const data = snapshot.data();
           if (data && typeof data.itemsJson === 'string') {
             const list: DueCollectionRecord[] = JSON.parse(data.itemsJson);
-            list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-            saveDueCollections(list); // Saves to IndexedDB
-            onData(list);            // Updates UI
-            pushBulkDataToServerMirror({ dueCollections: list }).catch(() => {}); // Saves to Server Disk Mirror
+            const merged = mergeLocalAndCloud(getDueCollections(), list, new Set(), 'id', true).sort(
+              (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+            );
+            saveDueCollections(merged); // Saves to IndexedDB
+            onData(merged);            // Updates UI
+            pushBulkDataToServerMirror({ dueCollections: merged }).catch(() => {}); // Saves to Server Disk Mirror
           }
         } catch {
           syncFromLocalMirror();
@@ -2234,9 +2425,14 @@ export function subscribeToCloudDailyExpenses(onData: (expenses: DailyExpenseRec
     const directExps = isFirestoreQuotaExhausted()
       ? []
       : await readFirestoreCatalogDirect<DailyExpenseRecord>('dailyExpenses');
-    const combined = mergeLocalAndCloud(mirrorExps, [...directExps, ...extraExps], new Set());
-    const sorted = [...combined].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    onData(sorted);
+    const combinedRemote = mergeLocalAndCloud(mirrorExps, [...directExps, ...extraExps], new Set(), 'id', false);
+    const merged = mergeLocalAndCloud(getDailyExpenses(), combinedRemote, new Set(), 'id', false).sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+    if (merged.length > 0) {
+      saveDailyExpenses(merged);
+      onData(merged);
+    }
   };
 
   syncFromLocalMirror();
@@ -2684,20 +2880,25 @@ export async function flushOfflinePendingActionsToFirebase(): Promise<number> {
 export async function reconcileAllPendingOfflineWithFirebase(): Promise<{
   success: boolean;
   syncedActions: number;
-  counts: { products: number; shops: number; orders: number };
+  counts: { products: number; shops: number; orders: number; routes: number };
 }> {
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
     return {
       success: false,
       syncedActions: 0,
-      counts: { products: getProducts().length, shops: getShops().length, orders: getOrders().length },
+      counts: {
+        products: getProducts().length,
+        shops: getShops().length,
+        orders: getOrders().length,
+        routes: getRoutes().length,
+      },
     };
   }
 
   // 1. Flush any queued offline actions (Add, Update, Delete) first
   const syncedActions = await flushOfflinePendingActionsToFirebase();
 
-  // 2. Fetch authoritative cloud data directly from Firestore
+  // 2. Fetch authoritative cloud data directly from Firestore (catalogs + root collections + tombstones)
   let remoteOrders: Order[] = [];
   let remoteShops: Shop[] = [];
   let remoteProds: Product[] = [];
@@ -2705,9 +2906,25 @@ export async function reconcileAllPendingOfflineWithFirebase(): Promise<{
   let remoteRoutes: Route[] = [];
   let remoteDues: DueCollectionRecord[] = [];
   let remoteExps: DailyExpenseRecord[] = [];
+  let remoteAuths: AuthorizedUserEmail[] = [];
+  const tombstoneOrderIds = new Set<string>();
 
   try {
-    const [cOrders, cShops, cProds, cCats, cRoutes, cDues, cExps] = await Promise.all([
+    const [
+      cOrders,
+      cShops,
+      cProds,
+      cCats,
+      cRoutes,
+      cDues,
+      cExps,
+      cAuths,
+      routesColSnap,
+      authsColSnap,
+      snapDues,
+      snapExps,
+      tombSnap,
+    ] = await Promise.all([
       readFirestoreCatalogDirect<Order>('orders'),
       readFirestoreCatalogDirect<Shop>('shops'),
       readFirestoreCatalogDirect<Product>('products'),
@@ -2715,14 +2932,69 @@ export async function reconcileAllPendingOfflineWithFirebase(): Promise<{
       readFirestoreCatalogDirect<Route>('routes'),
       readFirestoreCatalogDirect<DueCollectionRecord>('dueCollections'),
       readFirestoreCatalogDirect<DailyExpenseRecord>('dailyExpenses'),
+      readFirestoreCatalogDirect<AuthorizedUserEmail>('authorizedEmails'),
+      getDocs(collection(db, 'routes')).catch(() => null),
+      getDocs(collection(db, 'authorizedEmails')).catch(() => null),
+      getDocs(collection(db, 'dueCollections')).catch(() => null),
+      getDocs(collection(db, 'dailyExpenses')).catch(() => null),
+      getDocs(collection(db, 'tombstones')).catch(() => null),
     ]);
+
+    if (tombSnap && !tombSnap.empty) {
+      tombSnap.forEach((d) => {
+        const data = d.data() as any;
+        if (!data?.collection || data.collection === 'orders') {
+          const tid = data?.id || d.id;
+          if (tid) {
+            tombstoneOrderIds.add(tid);
+            addDeletedOrderId(tid);
+          }
+        }
+      });
+    }
+
+    const rootRoutes: Route[] = [];
+    if (routesColSnap && !routesColSnap.empty) {
+      routesColSnap.forEach((d) => {
+        const r = d.data() as Route;
+        if (r && r.id) rootRoutes.push(r);
+      });
+    }
+
+    const rootAuths: AuthorizedUserEmail[] = [];
+    if (authsColSnap && !authsColSnap.empty) {
+      authsColSnap.forEach((d) => {
+        const a = d.data() as AuthorizedUserEmail;
+        if (a && a.email) rootAuths.push({ ...a, id: d.id });
+      });
+    }
+
+    const rootDues: DueCollectionRecord[] = [];
+    if (snapDues && !snapDues.empty) {
+      snapDues.forEach((d) => {
+        const rec = d.data() as DueCollectionRecord;
+        if (rec && rec.id) rootDues.push(rec);
+      });
+    }
+
+    const rootExps: DailyExpenseRecord[] = [];
+    if (snapExps && !snapExps.empty) {
+      snapExps.forEach((d) => {
+        const rec = d.data() as DailyExpenseRecord;
+        if (rec && rec.id) rootExps.push(rec);
+      });
+    }
+
     remoteOrders = cOrders || [];
     remoteShops = cShops || [];
     remoteProds = cProds || [];
     remoteCats = cCats || [];
-    remoteRoutes = cRoutes || [];
-    remoteDues = cDues || [];
-    remoteExps = cExps || [];
+    remoteRoutes = deduplicateRoutes(
+      mergeLocalAndCloud(cRoutes || [], rootRoutes, getDeletedRouteIds(), 'id', false)
+    );
+    remoteDues = mergeLocalAndCloud(cDues || [], rootDues, new Set(), 'id', false);
+    remoteExps = mergeLocalAndCloud(cExps || [], rootExps, new Set(), 'id', false);
+    remoteAuths = deduplicateAuthorizedEmails([...(cAuths || []), ...rootAuths]);
   } catch {
     // If direct read failed, try server mirror
     const mirror = await fetchServerDatabaseMirror().catch(() => null);
@@ -2731,14 +3003,16 @@ export async function reconcileAllPendingOfflineWithFirebase(): Promise<{
       remoteShops = mirror.shops || [];
       remoteProds = mirror.products || [];
       remoteCats = mirror.categories || [];
-      remoteRoutes = mirror.routes || [];
+      remoteRoutes = deduplicateRoutes(mirror.routes || []);
       remoteDues = mirror.dueCollections || [];
       remoteExps = mirror.dailyExpenses || [];
+      remoteAuths = deduplicateAuthorizedEmails(mirror.authorizedEmails || []);
     }
   }
 
-  // 3. ENFORCE DELETIONS: If an item was deleted locally, delete it from Firestore & Server Mirror!
+  // 3. ENFORCE DELETIONS: Combine local deleted sets + remote tombstones
   const deletedOrders = getDeletedOrderIds();
+  tombstoneOrderIds.forEach((id) => deletedOrders.add(id));
   const deletedShops = getDeletedShopIds();
   const deletedProds = getDeletedProductIds();
   const deletedCats = getDeletedCategoryIds();
@@ -2788,16 +3062,19 @@ export async function reconcileAllPendingOfflineWithFirebase(): Promise<{
   remoteRoutes = remoteRoutes.filter((r) => r && !deletedRoutes.has(r.id));
 
   // 4. Merge local with authoritative remote
-  const finalOrders = mergeLocalAndCloud(getOrders(), remoteOrders, getDeletedOrderIds(), 'id', true)
+  const finalOrders = mergeLocalAndCloud(getOrders(), remoteOrders, deletedOrders, 'id', true)
     .sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
-  const finalShops = mergeLocalAndCloud(getShops(), remoteShops, getDeletedShopIds(), 'id', true);
-  const finalProds = mergeLocalAndCloud(getProducts(), remoteProds, getDeletedProductIds(), 'id', true);
-  const finalCats = mergeLocalAndCloud(getCategories(), remoteCats, getDeletedCategoryIds(), 'id', true);
-  const finalRoutes = mergeLocalAndCloud(getRoutes(), remoteRoutes, getDeletedRouteIds(), 'id', true);
+  const finalShops = mergeLocalAndCloud(getShops(), remoteShops, deletedShops, 'id', true);
+  const finalProds = mergeLocalAndCloud(getProducts(), remoteProds, deletedProds, 'id', true);
+  const finalCats = mergeLocalAndCloud(getCategories(), remoteCats, deletedCats, 'id', true);
+  const finalRoutes = deduplicateRoutes(
+    mergeLocalAndCloud(getRoutes(), remoteRoutes, deletedRoutes, 'id', true)
+  );
   const finalDues = mergeLocalAndCloud(getDueCollections(), remoteDues, new Set(), 'id', true)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   const finalExps = mergeLocalAndCloud(getDailyExpenses(), remoteExps, new Set(), 'id', true)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const finalAuths = deduplicateAuthorizedEmails([...getAuthorizedEmails(), ...remoteAuths]);
 
   // 5. Save directly to local memory cache and IndexedDB
   saveOrders(finalOrders);
@@ -2817,6 +3094,7 @@ export async function reconcileAllPendingOfflineWithFirebase(): Promise<{
     writeFirestoreCatalogDirect('routes', finalRoutes, true),
     writeFirestoreCatalogDirect('dueCollections', finalDues, true),
     writeFirestoreCatalogDirect('dailyExpenses', finalExps, true),
+    writeFirestoreCatalogDirect('authorizedEmails', finalAuths, true),
   ]);
 
   // 7. Update Server Database Mirror disk vault
@@ -2833,6 +3111,7 @@ export async function reconcileAllPendingOfflineWithFirebase(): Promise<{
         routes: finalRoutes,
         dueCollections: finalDues,
         dailyExpenses: finalExps,
+        authorizedEmails: finalAuths,
       }),
     });
   } catch (err) {
@@ -2854,7 +3133,7 @@ export async function reconcileAllPendingOfflineWithFirebase(): Promise<{
     severity: 'info',
     category: 'recovery',
     titleBn: 'অফলাইন ও ক্লাউড ডাটাবেজ সমতা সফল',
-    detailsBn: `ফায়ারবেজ, সার্ভার ডিস্ক মিরর ও লোকাল মেমোরি ১০০% সিঙ্ক সম্পন্ন হয়েছে। মোট পণ্য: ${finalProds.length}টি, দোকান: ${finalShops.length}টি, মেমো: ${finalOrders.length}টি।`,
+    detailsBn: `ফায়ারবেজ, সার্ভার ডিস্ক মিরর ও লোকাল মেমোরি ১০০% সিঙ্ক সম্পন্ন হয়েছে। মোট পণ্য: ${finalProds.length}টি, দোকান: ${finalShops.length}টি, মেমো: ${finalOrders.length}টি, রুট: ${finalRoutes.length}টি।`,
   });
 
   return {
@@ -2864,6 +3143,7 @@ export async function reconcileAllPendingOfflineWithFirebase(): Promise<{
       products: finalProds.length,
       shops: finalShops.length,
       orders: finalOrders.length,
+      routes: finalRoutes.length,
     },
   };
 }
@@ -3112,10 +3392,23 @@ export async function fetchFirebaseCloudInspection(): Promise<FirebaseCloudInspe
   const databaseId = cfg.firestoreDatabaseId || 'ai-studio-shoporderbookeri-a050f7ec-14f6-48a4-a13f-2a1a58a6df8b';
   const nowIso = new Date().toISOString();
 
-  // Try direct firestore catalogs first if quota is not exhausted
+  // Try direct firestore catalogs + root collections first if quota is not exhausted
   if (!isFirestoreQuotaExhausted()) {
     try {
-      const [orders, shops, products, categories, routes, dueCollections, dailyExpenses, authorizedEmails, bizDoc] = await Promise.all([
+      const [
+        rawOrders,
+        shops,
+        products,
+        categories,
+        catRoutes,
+        dueCollections,
+        dailyExpenses,
+        catAuthEmails,
+        bizDoc,
+        routesColSnap,
+        authColSnap,
+        tombSnap,
+      ] = await Promise.all([
         readFirestoreCatalogDirect<Order>('orders'),
         readFirestoreCatalogDirect<Shop>('shops'),
         readFirestoreCatalogDirect<Product>('products'),
@@ -3125,7 +3418,42 @@ export async function fetchFirebaseCloudInspection(): Promise<FirebaseCloudInspe
         readFirestoreCatalogDirect<DailyExpenseRecord>('dailyExpenses'),
         readFirestoreCatalogDirect<AuthorizedUserEmail>('authorizedEmails'),
         readFirestoreDocDirect('settings/businessInfo'),
+        getDocs(collection(db, 'routes')).catch(() => null),
+        getDocs(collection(db, 'authorizedEmails')).catch(() => null),
+        getDocs(collection(db, 'tombstones')).catch(() => null),
       ]);
+
+      const tombOrderIds = new Set<string>();
+      if (tombSnap && !tombSnap.empty) {
+        tombSnap.forEach((d) => {
+          const data = d.data() as any;
+          if (!data?.collection || data.collection === 'orders') {
+            const tid = data?.id || d.id;
+            if (tid) tombOrderIds.add(tid);
+          }
+        });
+      }
+      const orders = rawOrders.filter((o) => o && !tombOrderIds.has(o.id));
+
+      const rootRoutes: Route[] = [];
+      if (routesColSnap && !routesColSnap.empty) {
+        routesColSnap.forEach((d) => {
+          const r = d.data() as Route;
+          if (r && r.id) rootRoutes.push(r);
+        });
+      }
+      const routes = deduplicateRoutes(
+        mergeLocalAndCloud(catRoutes, rootRoutes, getDeletedRouteIds(), 'id', false)
+      );
+
+      const rootAuths: AuthorizedUserEmail[] = [];
+      if (authColSnap && !authColSnap.empty) {
+        authColSnap.forEach((d) => {
+          const a = d.data() as AuthorizedUserEmail;
+          if (a && a.email) rootAuths.push({ ...a, id: d.id });
+        });
+      }
+      const authorizedEmails = deduplicateAuthorizedEmails([...catAuthEmails, ...rootAuths]);
 
       return {
         projectId,
@@ -3164,6 +3492,12 @@ export async function fetchFirebaseCloudInspection(): Promise<FirebaseCloudInspe
   try {
     const mirror = await fetchServerDatabaseMirror();
     if (mirror) {
+      const delOrders = getDeletedOrderIds();
+      const mirrorOrders = (Array.isArray(mirror.orders) ? (mirror.orders as Order[]) : []).filter(
+        (o: Order) => o && !delOrders.has(o.id)
+      );
+      const dedupedMirrorRoutes = deduplicateRoutes(Array.isArray(mirror.routes) ? mirror.routes : []);
+      const dedupedMirrorAuths = deduplicateAuthorizedEmails(mirror.authorizedEmails || []);
       return {
         projectId,
         databaseId,
@@ -3171,22 +3505,22 @@ export async function fetchFirebaseCloudInspection(): Promise<FirebaseCloudInspe
         source: 'server_mirror',
         lastCheckedTime: nowIso,
         catalogCounts: {
-          orders: Array.isArray(mirror.orders) ? mirror.orders.length : 0,
+          orders: mirrorOrders.length,
           shops: Array.isArray(mirror.shops) ? mirror.shops.length : 0,
           products: Array.isArray(mirror.products) ? mirror.products.length : 0,
           categories: Array.isArray(mirror.categories) ? mirror.categories.length : 0,
-          routes: Array.isArray(mirror.routes) ? mirror.routes.length : 0,
-          authorizedEmails: Array.isArray(mirror.authorizedEmails) ? mirror.authorizedEmails.length : 0,
+          routes: dedupedMirrorRoutes.length,
+          authorizedEmails: dedupedMirrorAuths.length,
           dueCollections: Array.isArray(mirror.dueCollections) ? mirror.dueCollections.length : 0,
           dailyExpenses: Array.isArray(mirror.dailyExpenses) ? mirror.dailyExpenses.length : 0,
         },
         remoteData: {
-          orders: mirror.orders || [],
+          orders: mirrorOrders,
           shops: mirror.shops || [],
           products: mirror.products || [],
           categories: mirror.categories || [],
-          routes: mirror.routes || [],
-          authorizedEmails: mirror.authorizedEmails || [],
+          routes: dedupedMirrorRoutes,
+          authorizedEmails: dedupedMirrorAuths,
           dueCollections: mirror.dueCollections || [],
           dailyExpenses: mirror.dailyExpenses || [],
           businessInfo: mirror.businessInfo || null,
@@ -3211,8 +3545,8 @@ export async function fetchFirebaseCloudInspection(): Promise<FirebaseCloudInspe
       categories: getCategories().length,
       routes: getRoutes().length,
       authorizedEmails: getAuthorizedEmails().length,
-      dueCollections: 0,
-      dailyExpenses: 0,
+      dueCollections: getDueCollections().length,
+      dailyExpenses: getDailyExpenses().length,
     },
     remoteData: {
       orders: getOrders(),
@@ -3221,8 +3555,8 @@ export async function fetchFirebaseCloudInspection(): Promise<FirebaseCloudInspe
       categories: getCategories(),
       routes: getRoutes(),
       authorizedEmails: getAuthorizedEmails(),
-      dueCollections: [],
-      dailyExpenses: [],
+      dueCollections: getDueCollections(),
+      dailyExpenses: getDailyExpenses(),
       businessInfo: null,
     },
   };
