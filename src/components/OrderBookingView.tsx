@@ -311,7 +311,7 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
   };
 
   // Helper to get available units for a product in dropdown
-  const getAvailableUnitsForProduct = (prod: Product): string[] => {
+  const getAvailableUnitsForProduct = (prod: Product, currentUnit?: string): string[] => {
     const base = prod.unit || 'পিস';
     const list: string[] = [base];
 
@@ -323,6 +323,10 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
     // If not 'ডজন', give 'ডজন' option
     if (base !== 'ডজন') {
       list.push('ডজন');
+    }
+
+    if (currentUnit && !list.includes(currentUnit)) {
+      list.push(currentUnit);
     }
 
     return Array.from(new Set(list));
@@ -416,18 +420,19 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
         if (isMatch) {
           const itRaw = (Number(it.quantity) || 0) + (Number(it.tradeOfferQty) || 0);
           const itUnit = it.unit || baseUnit;
+          const unitPieces = (u: string): number => {
+            if (u === baseUnit) return piecesPerBase;
+            if (u === 'ডজন' || u === 'প্যাকেট') return 12;
+            if (u === 'পাতা') return 10;
+            if (u === 'বক্স' || u === 'কার্টুন') return 24;
+            if (u === 'পিস') return 1;
+            return prod.piecesPerUnit && prod.piecesPerUnit > 0 ? prod.piecesPerUnit : 1;
+          };
           if (itUnit === baseUnit) {
             reservedBaseUnits += itRaw;
-          } else if (baseUnit !== 'পিস' && piecesPerBase > 1) {
-            if (itUnit === 'পিস') reservedBaseUnits += itRaw / piecesPerBase;
-            else if (itUnit === 'ডজন') reservedBaseUnits += (itRaw * 12) / piecesPerBase;
-            else reservedBaseUnits += itRaw;
-          } else if (baseUnit === 'পিস') {
-            if (itUnit === 'ডজন') reservedBaseUnits += itRaw * 12;
-            else if (prod.piecesPerUnit && prod.piecesPerUnit > 1) reservedBaseUnits += itRaw * prod.piecesPerUnit;
-            else reservedBaseUnits += itRaw;
           } else {
-            reservedBaseUnits += itRaw;
+            const totalItemPieces = itRaw * unitPieces(itUnit);
+            reservedBaseUnits += totalItemPieces / piecesPerBase;
           }
         }
       }
@@ -628,10 +633,10 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
 
         const unit = data.selectedUnit || getEffectiveUnit(productId, prod);
 
-        // Trade offer logic: e.g. 1 free every 10 (or preserve original trade offer if custom)
+        // Trade offer logic: e.g. 1 free every 10 (or preserve manual trade offer when product has no auto-10 rule)
         let tradeOfferQty = 0;
-        if (prod.tradeOfferDesc?.includes('১০') && qty >= 10) {
-          tradeOfferQty = Math.floor(qty / 10);
+        if (prod.tradeOfferDesc?.includes('১০')) {
+          tradeOfferQty = qty >= 10 ? Math.floor(qty / 10) : 0;
         } else if (data.fallbackTradeOfferQty && editingOrder) {
           tradeOfferQty = data.fallbackTradeOfferQty;
         }
@@ -1416,7 +1421,7 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                         className="text-xs font-bold bg-neutral-100 hover:bg-neutral-200/70 text-neutral-800 py-1.5 px-2 rounded-xl border border-neutral-300 focus:outline-hidden focus:ring-1 focus:ring-emerald-500 cursor-pointer shadow-2xs transition-colors"
                         title="একক নির্বাচন করুন (বক্স / পাতা / প্যাকেট / ডজন / পিস)"
                       >
-                        {getAvailableUnitsForProduct(prod).map((u) => {
+                        {getAvailableUnitsForProduct(prod, currentUnit).map((u) => {
                           const uPrice = getDefaultPriceForUnit(prod, u);
                           return (
                             <option key={u} value={u}>
@@ -1810,7 +1815,9 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                             >
                               {(() => {
                                 const matchedProd = products.find((p) => p.id === item.productId);
-                                const available = matchedProd ? getAvailableUnitsForProduct(matchedProd) : [item.unit, 'পিস', 'ডজন'];
+                                const available = matchedProd
+                                  ? getAvailableUnitsForProduct(matchedProd, item.unit)
+                                  : Array.from(new Set([item.unit, 'পিস', 'ডজন']));
                                 return available.map((u) => (
                                   <option key={u} value={u}>
                                     {u} {matchedProd ? `(৳${getDefaultPriceForUnit(matchedProd, u)})` : ''}

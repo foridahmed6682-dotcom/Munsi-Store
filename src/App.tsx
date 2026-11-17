@@ -903,52 +903,33 @@ export default function App() {
     const baseUnit = prod.unit || 'পিস';
     if (itemUnit === baseUnit) return itemQty;
 
-    const piecesPerBase =
-      prod.piecesPerUnit && prod.piecesPerUnit > 0
-        ? prod.piecesPerUnit
-        : baseUnit === 'ডজন'
-        ? 12
-        : 1;
+    const getPiecesForUnit = (u: string): number => {
+      if (u === baseUnit && prod.piecesPerUnit && prod.piecesPerUnit > 0) return prod.piecesPerUnit;
+      if (u === 'ডজন' || u === 'প্যাকেট') return 12;
+      if (u === 'পাতা') return 10;
+      if (u === 'বক্স' || u === 'কার্টুন') return 24;
+      if (u === 'পিস') return 1;
+      return prod.piecesPerUnit && prod.piecesPerUnit > 0 ? prod.piecesPerUnit : 1;
+    };
 
-    // If base unit is composed of multiple pieces (like বক্স, পাতা, প্যাকেট, কার্টুন, ডজন)
-    if (piecesPerBase > 1 && baseUnit !== 'পিস') {
-      if (itemUnit === 'পিস') {
-        return +(itemQty / piecesPerBase).toFixed(2);
-      }
-      if (itemUnit === 'ডজন') {
-        return +((itemQty * 12) / piecesPerBase).toFixed(2);
-      }
-    }
-
-    // If base unit is 'পিস'
-    if (baseUnit === 'পিস') {
-      if (itemUnit === 'ডজন') {
-        return itemQty * 12;
-      }
-      if (prod.piecesPerUnit && prod.piecesPerUnit > 1) {
-        return itemQty * prod.piecesPerUnit;
-      }
-    }
-
-    if (itemUnit === 'ডজন' && baseUnit !== 'ডজন') {
-      return itemQty * 12;
-    }
-    if (itemUnit !== 'ডজন' && baseUnit === 'ডজন') {
-      return +(itemQty / 12).toFixed(2);
-    }
-
-    return itemQty;
+    const piecesPerBase = getPiecesForUnit(baseUnit);
+    const itemPieces = itemQty * getPiecesForUnit(itemUnit);
+    if (piecesPerBase <= 1) return +(itemPieces.toFixed(2));
+    return +(itemPieces / piecesPerBase).toFixed(2);
   };
 
   // Order Creation Handler
   const handleOrderCreated = async (orderData: any) => {
     try {
       const isCurrentlyOffline = typeof navigator !== 'undefined' && !navigator.onLine;
-      const memoNumber = orderData.memoNumber || `MS-${Date.now().toString().slice(-6)}`;
+      const nowIso = new Date().toISOString();
+      const nowMs = Date.now();
+      const memoNumber = orderData.memoNumber || `MS-${nowMs.toString().slice(-6)}`;
       const newOrder: Order = {
-        id: orderData.id || `ord-${Date.now()}`,
-        orderDate: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        id: orderData.id || `ord-${nowMs}`,
+        orderDate: nowIso,
+        updatedAt: nowIso,
+        updatedAtMs: nowMs,
         syncedWithSheets: false,
         bookedByUid: userProfile?.uid || orderData.bookedByUid || 'usr-local',
         bookedByName: userProfile?.displayName || orderData.bookedByName || (activeSimulatedRole === 'dsr' ? 'হাবিবুর রহমান (DSR)' : activeSimulatedRole === 'customer' ? 'অনলাইন কাস্টমার' : 'এডমিন অফিসার'),
@@ -962,31 +943,58 @@ export default function App() {
       saveOrder(newOrder);
       smartSaveOrder(newOrder).catch((err) => console.log('smartSaveOrder deferred:', err));
 
-      // 2. Automatically deduct inventory stock for each ordered item
+      // 2. Automatically deduct inventory stock for each ordered item (accumulated cleanly per product)
+      const latestProducts = getProducts();
+      const deductionMap = new Map<string, number>();
       for (const item of newOrder.items) {
-        const prod = products.find((p) => p.id === item.productId);
-        const rawQty = item.quantity + (item.tradeOfferQty || 0);
+        const prod = latestProducts.find(
+          (p) =>
+            p.id === item.productId ||
+            p.banglaName === item.productName ||
+            p.name === item.productName
+        );
+        const prodId = prod?.id || item.productId;
+        const rawQty = (Number(item.quantity) || 0) + (Number(item.tradeOfferQty) || 0);
         const totalDeducted = prod ? calcStockDeductionInBaseUnit(prod, rawQty, item.unit) : rawQty;
+        deductionMap.set(prodId, (deductionMap.get(prodId) || 0) + totalDeducted);
+      }
 
-        adjustProductStock(item.productId, -totalDeducted);
+      const updatedProdsMap = new Map<string, Product>();
+      deductionMap.forEach((totalDeducted, prodId) => {
+        if (totalDeducted === 0) return;
+        adjustProductStock(prodId, -totalDeducted);
+        const prod = latestProducts.find((p) => p.id === prodId);
         if (prod) {
-          const updatedProd = { ...prod, stock: Math.max(0, prod.stock - totalDeducted) };
+          const updatedProd: Product = {
+            ...prod,
+            stock: Math.max(0, +(Number(prod.stock || 0) - totalDeducted).toFixed(2)),
+            updatedAt: nowIso,
+            _isOfflinePending: isCurrentlyOffline,
+          };
+          saveProduct(updatedProd);
           saveProductToCloud(updatedProd).catch(() => {});
+          updatedProdsMap.set(prodId, updatedProd);
         }
+      });
+      if (updatedProdsMap.size > 0) {
+        setProducts((prev) => prev.map((p) => updatedProdsMap.get(p.id) || p));
       }
 
       // 3. Update shop's last visit date at booking time (Due is only added upon delivery!)
       if (newOrder.shopId && newOrder.shopId !== 'shop-direct-customer') {
-        const shopToUpdate = shops.find((s) => s.id === newOrder.shopId);
+        const shopToUpdate = getShops().find((s) => s.id === newOrder.shopId);
         if (shopToUpdate) {
           const addedDueNow = newOrder.deliveryStatus === 'DELIVERED' ? (newOrder.dueAmount || 0) : 0;
           const updatedShop: Shop = {
             ...shopToUpdate,
             previousDue: Math.max(0, (shopToUpdate.previousDue || 0) + addedDueNow),
-            lastVisitDate: new Date().toISOString().split('T')[0],
+            lastVisitDate: nowIso.split('T')[0],
+            updatedAt: nowIso,
+            _isOfflinePending: isCurrentlyOffline,
           };
           saveShop(updatedShop);
           saveShopToCloud(updatedShop).catch(() => {});
+          setShops((prev) => prev.map((s) => (s.id === updatedShop.id ? updatedShop : s)));
         }
       }
 

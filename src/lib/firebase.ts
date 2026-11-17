@@ -591,9 +591,9 @@ export async function removeItemFromFirebaseCatalog(catalogKey: string, idValue:
 // Server Mirror Helpers (Protects data across devices and guarantees 3-way synchronization)
 let serverBackendRetryAfter = 0;
 
-export async function syncItemToServerMirror(upsertCollection: string, item: any) {
-  if (typeof navigator !== 'undefined' && !navigator.onLine) return;
-  if (Date.now() < serverBackendRetryAfter) return;
+export async function syncItemToServerMirror(upsertCollection: string, item: any): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return false;
+  if (Date.now() < serverBackendRetryAfter) return false;
   try {
     const res = await fetch('/api/db/mirror', {
       method: 'POST',
@@ -602,17 +602,19 @@ export async function syncItemToServerMirror(upsertCollection: string, item: any
     });
     if (!res.ok) {
       serverBackendRetryAfter = Date.now() + 10000;
-    } else {
-      serverBackendRetryAfter = 0;
+      return false;
     }
+    serverBackendRetryAfter = 0;
+    return true;
   } catch {
     serverBackendRetryAfter = Date.now() + 10000;
+    return false;
   }
 }
 
-export async function deleteItemFromServerMirror(deleteCollection: string, deleteId: string) {
-  if (typeof navigator !== 'undefined' && !navigator.onLine) return;
-  if (Date.now() < serverBackendRetryAfter) return;
+export async function deleteItemFromServerMirror(deleteCollection: string, deleteId: string): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return false;
+  if (Date.now() < serverBackendRetryAfter) return false;
   try {
     const res = await fetch('/api/db/mirror', {
       method: 'POST',
@@ -621,11 +623,13 @@ export async function deleteItemFromServerMirror(deleteCollection: string, delet
     });
     if (!res.ok) {
       serverBackendRetryAfter = Date.now() + 10000;
-    } else {
-      serverBackendRetryAfter = 0;
+      return false;
     }
+    serverBackendRetryAfter = 0;
+    return true;
   } catch {
     serverBackendRetryAfter = Date.now() + 10000;
+    return false;
   }
 }
 
@@ -641,7 +645,7 @@ export async function pushBulkDataToServerMirror(payload: {
   staffTargets?: StaffTargetConfig[];
   authorizedEmails?: AuthorizedUserEmail[];
   businessInfo?: BusinessInfo;
-}) {
+}): Promise<boolean> {
   try {
     const res = await fetch('/api/db/mirror', {
       method: 'POST',
@@ -650,11 +654,13 @@ export async function pushBulkDataToServerMirror(payload: {
     });
     if (res.ok) {
       serverBackendRetryAfter = 0;
-    } else {
-      serverBackendRetryAfter = Date.now() + 10000;
+      return true;
     }
+    serverBackendRetryAfter = Date.now() + 10000;
+    return false;
   } catch {
     serverBackendRetryAfter = Date.now() + 10000;
+    return false;
   }
 }
 
@@ -2604,52 +2610,62 @@ export async function flushOfflinePendingActionsToFirebase(): Promise<number> {
   let syncedCount = 0;
   for (const act of [...actions]) {
     try {
+      let mirrorOk = false;
+      let firestoreOk = false;
+
       if (act.type === 'delete') {
-        if (act.entity === 'products') await deleteDoc(doc(db, 'products', act.entityId)).catch(() => {});
-        else if (act.entity === 'shops') await deleteDoc(doc(db, 'shops', act.entityId)).catch(() => {});
-        else if (act.entity === 'orders') await deleteDoc(doc(db, 'orders', act.entityId)).catch(() => {});
-        else if (act.entity === 'categories') await deleteDoc(doc(db, 'categories', act.entityId)).catch(() => {});
-        else if (act.entity === 'routes') await deleteDoc(doc(db, 'routes', act.entityId)).catch(() => {});
-        deleteItemFromServerMirror(act.entity, act.entityId).catch(() => {});
-        removeItemFromFirebaseCatalog(act.entity, act.entityId, 'id').catch(() => {});
+        if (!isFirestoreQuotaExhausted()) {
+          if (act.entity === 'products' || act.entity === 'shops' || act.entity === 'orders' || act.entity === 'categories' || act.entity === 'routes' || act.entity === 'dueCollections' || act.entity === 'dailyExpenses') {
+            await deleteDoc(doc(db, act.entity, act.entityId)).then(() => { firestoreOk = true; }).catch(() => {});
+          }
+        }
+        await deleteItemFromServerMirror(act.entity, act.entityId).then((ok) => { if (ok) mirrorOk = true; }).catch(() => {});
+        if (!isFirestoreWriteQuotaExhausted()) {
+          await removeItemFromFirebaseCatalog(act.entity, act.entityId, 'id').then(() => { firestoreOk = true; }).catch(() => {});
+        }
       } else if (act.type === 'upsert' && act.payload) {
         const cleaned = cleanForFirestore({ ...act.payload, _isOfflinePending: false });
-        if (act.entity === 'products') {
-          await setDoc(doc(db, 'products', act.entityId), cleaned).catch(() => {});
-          syncItemToServerMirror('products', cleaned).catch(() => {});
-          upsertItemInFirebaseCatalog('products', cleaned, 'id').catch(() => {});
-        } else if (act.entity === 'shops') {
-          await setDoc(doc(db, 'shops', act.entityId), cleaned).catch(() => {});
-          syncItemToServerMirror('shops', cleaned).catch(() => {});
-          upsertItemInFirebaseCatalog('shops', cleaned, 'id').catch(() => {});
-        } else if (act.entity === 'orders') {
-          await setDoc(doc(db, 'orders', act.entityId), cleaned).catch(() => {});
-          syncItemToServerMirror('orders', cleaned).catch(() => {});
-          upsertItemInFirebaseCatalog('orders', cleaned, 'id').catch(() => {});
-        } else if (act.entity === 'categories') {
-          await setDoc(doc(db, 'categories', act.entityId), cleaned).catch(() => {});
-          syncItemToServerMirror('categories', cleaned).catch(() => {});
-          upsertItemInFirebaseCatalog('categories', cleaned, 'id').catch(() => {});
-        } else if (act.entity === 'routes') {
-          await setDoc(doc(db, 'routes', act.entityId), cleaned).catch(() => {});
-          syncItemToServerMirror('routes', cleaned).catch(() => {});
-          upsertItemInFirebaseCatalog('routes', cleaned, 'id').catch(() => {});
-        } else if (act.entity === 'dueCollections') {
-          await setDoc(doc(db, 'dueCollections', act.entityId), cleaned).catch(() => {});
-          syncItemToServerMirror('dueCollections', cleaned).catch(() => {});
-          upsertItemInFirebaseCatalog('dueCollections', cleaned, 'id').catch(() => {});
-        } else if (act.entity === 'dailyExpenses') {
-          await setDoc(doc(db, 'dailyExpenses', act.entityId), cleaned).catch(() => {});
-          syncItemToServerMirror('dailyExpenses', cleaned).catch(() => {});
-          upsertItemInFirebaseCatalog('dailyExpenses', cleaned, 'id').catch(() => {});
-        } else if (act.entity === 'businessInfo') {
-          await setDoc(doc(db, 'settings', 'businessInfo'), cleaned).catch(() => {});
-          pushBulkDataToServerMirror({ businessInfo: cleaned }).catch(() => {});
+        if (act.entity === 'businessInfo') {
+          if (!isFirestoreQuotaExhausted()) {
+            await setDoc(doc(db, 'settings', 'businessInfo'), cleaned).then(() => { firestoreOk = true; }).catch(() => {});
+          }
+          await pushBulkDataToServerMirror({ businessInfo: cleaned }).then((ok) => { if (ok) mirrorOk = true; }).catch(() => {});
+        } else {
+          if (!isFirestoreQuotaExhausted()) {
+            await setDoc(doc(db, act.entity, act.entityId), cleaned).then(() => { firestoreOk = true; }).catch(() => {});
+          }
+          await syncItemToServerMirror(act.entity, cleaned).then((ok) => { if (ok) mirrorOk = true; }).catch(() => {});
+          if (!isFirestoreWriteQuotaExhausted()) {
+            await upsertItemInFirebaseCatalog(act.entity, cleaned, 'id', true).then(() => { firestoreOk = true; }).catch(() => {});
+          }
+
+          // Clear local _isOfflinePending flag once synced so LWW across devices works cleanly
+          if (firestoreOk || mirrorOk) {
+            if (act.entity === 'orders') {
+              const cur = getOrders();
+              if (cur.some((o) => o.id === act.entityId && (o as any)._isOfflinePending)) {
+                saveOrders(cur.map((o) => (o.id === act.entityId ? { ...o, _isOfflinePending: false } : o)));
+              }
+            } else if (act.entity === 'products') {
+              const cur = getProducts();
+              if (cur.some((p) => p.id === act.entityId && (p as any)._isOfflinePending)) {
+                saveProducts(cur.map((p) => (p.id === act.entityId ? { ...p, _isOfflinePending: false } : p)));
+              }
+            } else if (act.entity === 'shops') {
+              const cur = getShops();
+              if (cur.some((s) => s.id === act.entityId && (s as any)._isOfflinePending)) {
+                saveShops(cur.map((s) => (s.id === act.entityId ? { ...s, _isOfflinePending: false } : s)));
+              }
+            }
+          }
         }
       }
-      removeOfflineAction(act.id);
-      markEntityPendingOffline(act.entity, act.entityId, false);
-      syncedCount++;
+
+      if (firestoreOk || mirrorOk) {
+        removeOfflineAction(act.id);
+        markEntityPendingOffline(act.entity, act.entityId, false);
+        syncedCount++;
+      }
     } catch (err) {
       console.warn('Failed to flush offline action:', act, err);
     }

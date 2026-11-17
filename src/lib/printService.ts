@@ -619,10 +619,27 @@ export function printOrdersBatch(
                 <!-- Right Total Box -->
                 <table style="width: ${isCompact ? '170px' : '205px'}; border-collapse: collapse; border: 1.5px solid #334155; font-size: ${isCompact ? '10px' : '11px'}; font-weight: 800;">
                   <tbody>
+                    ${
+                      (order.discountAmount || 0) > 0
+                        ? `<tr style="border-bottom: 1px solid #cbd5e1; font-size: ${isCompact ? '9px' : '10px'};">
+                            <td style="border-right: 1px solid #cbd5e1; padding: 1.5px 6px; background: #f8fafc; color: #047857;">ছাড় (${Number(order.discountPercent || 0)}%)</td>
+                            <td style="padding: 1.5px 6px; text-align: right; color: #047857;">-৳${Number(order.discountAmount || 0).toLocaleString()}</td>
+                          </tr>`
+                        : ''
+                    }
+                    ${
+                      (order.returnAmount || 0) > 0
+                        ? `<tr style="border-bottom: 1px solid #cbd5e1; font-size: ${isCompact ? '9px' : '10px'};">
+                            <td style="border-right: 1px solid #cbd5e1; padding: 1.5px 6px; background: #f8fafc; color: #be123c;">রিটার্ন বাদ</td>
+                            <td style="padding: 1.5px 6px; text-align: right; color: #be123c;">-৳${Number(order.returnAmount || 0).toLocaleString()}</td>
+                          </tr>`
+                        : ''
+                    }
                     <tr style="border-bottom: 1.5px solid #334155;">
                       <td style="border-right: 1.5px solid #334155; padding: 2px 6px; background: #f1f5f9; width: ${isCompact ? '70px' : '82px'};">মোট বিল</td>
-                      <td style="padding: 2px 6px; text-align: right; font-size: ${isCompact ? '12px' : '14px'}; font-weight: 900; color: #000000;">৳${Number(
-                        order.netTotal || 0
+                      <td style="padding: 2px 6px; text-align: right; font-size: ${isCompact ? '12px' : '14px'}; font-weight: 900; color: #000000;">৳${Math.max(
+                        0,
+                        Number(order.netTotal || 0) - Number(order.returnAmount || 0)
                       ).toLocaleString()}</td>
                     </tr>
                     <tr style="border-bottom: 1px solid #64748b;">
@@ -795,13 +812,37 @@ export function printOrdersBatch(
               </tbody>
             </table>
 
-            <div style="display: flex; justify-content: flex-end; margin-top: 14px; padding-top: 8px; border-top: 1.5px solid #cbd5e1;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; margin-top: 14px; padding-top: 8px; border-top: 1.5px solid #cbd5e1;">
+              <div>
+                ${
+                  order.notes
+                    ? `<div style="font-size: 12px; color: #334155; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px 10px; max-width: 280px;"><strong>নোট:</strong> ${escapeHtml(order.notes)}</div>`
+                    : ''
+                }
+              </div>
               <table style="width: 270px; border-collapse: collapse; border: 2px solid #334155; font-size: 14px; font-weight: 800;">
                 <tbody>
+                  ${
+                    (order.discountAmount || 0) > 0
+                      ? `<tr style="border-bottom: 1.5px solid #cbd5e1; font-size: 12.5px;">
+                          <td style="border-right: 1.5px solid #cbd5e1; padding: 5px 12px; background: #f8fafc; color: #047857;">ছাড় (${Number(order.discountPercent || 0)}%)</td>
+                          <td style="padding: 5px 12px; text-align: right; color: #047857;">-৳${Number(order.discountAmount || 0).toLocaleString()}</td>
+                        </tr>`
+                      : ''
+                  }
+                  ${
+                    (order.returnAmount || 0) > 0
+                      ? `<tr style="border-bottom: 1.5px solid #cbd5e1; font-size: 12.5px;">
+                          <td style="border-right: 1.5px solid #cbd5e1; padding: 5px 12px; background: #f8fafc; color: #be123c;">রিটার্ন বাদ</td>
+                          <td style="padding: 5px 12px; text-align: right; color: #be123c;">-৳${Number(order.returnAmount || 0).toLocaleString()}</td>
+                        </tr>`
+                      : ''
+                  }
                   <tr style="border-bottom: 2px solid #334155;">
                     <td style="border-right: 2px solid #334155; padding: 8px 12px; background: #f1f5f9; width: 115px;">মোট বিল</td>
-                    <td style="padding: 8px 12px; text-align: right; font-size: 18px; font-weight: 900; color: #000000;">৳${Number(
-                      order.netTotal || 0
+                    <td style="padding: 8px 12px; text-align: right; font-size: 18px; font-weight: 900; color: #000000;">৳${Math.max(
+                      0,
+                      Number(order.netTotal || 0) - Number(order.returnAmount || 0)
                     ).toLocaleString()}</td>
                   </tr>
                   <tr style="border-bottom: 1.5px solid #64748b;">

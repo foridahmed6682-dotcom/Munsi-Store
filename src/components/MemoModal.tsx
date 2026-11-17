@@ -123,6 +123,8 @@ export const MemoModal: React.FC<MemoModalProps> = ({
   };
 
   const getMemoShareText = () => {
+    const returnAmt = Number(order.returnAmount || 0);
+    const finalBill = Math.max(0, Number(order.netTotal || 0) - returnAmt);
     const lines = [
       `*${biz.banglaName} - সেলস অর্ডার মেমো*`,
       `মেমো নং: ${order.memoNumber}`,
@@ -130,17 +132,20 @@ export const MemoModal: React.FC<MemoModalProps> = ({
       `---------------------------------`,
       `দোকান/ক্রেতা: ${order.shopName}`,
       `মোবাইল: ${order.shopPhone}`,
-      `ঠিকানা: ${order.shopAddress}`,
+      `ঠিকানা: ${order.shopAddress}${order.shopRoute ? ` (${order.shopRoute})` : ''}`,
       `---------------------------------`,
       `পণ্যসমূহ:`,
       ...order.items.map(
         (it, idx) =>
-          `${idx + 1}. ${it.productName} - ${it.quantity} ${it.unit} @ ৳${it.unitPrice} = ৳${it.lineTotal}`
+          `${idx + 1}. ${it.productName} - ${it.quantity} ${it.unit}${it.tradeOfferQty ? ` (+${it.tradeOfferQty} ফ্রি)` : ''} @ ৳${it.unitPrice} = ৳${it.lineTotal}`
       ),
       `---------------------------------`,
-      `*মোট: ৳${order.netTotal}*`,
-      `অগ্রিম: ${order.deliveryStatus === 'DELIVERED' ? `৳${order.paidAmount}` : ''}`,
+      (order.discountAmount || 0) > 0 ? `ডিসকাউন্ট ছাড় (${order.discountPercent}%): -৳${order.discountAmount}` : '',
+      returnAmt > 0 ? `রিটার্ন/ফেরত বাদ: -৳${returnAmt}` : '',
+      `*মোট বিল: ৳${finalBill}*`,
+      `অগ্রিম / জমা: ${order.deliveryStatus === 'DELIVERED' ? `৳${order.paidAmount}` : ''}`,
       `বাঁকী: ${order.deliveryStatus === 'DELIVERED' ? `৳${order.dueAmount}` : ''}`,
+      order.notes ? `নোট: ${order.notes}` : '',
     ].filter(Boolean);
 
     return lines.join('\n');
@@ -790,17 +795,44 @@ export const MemoModal: React.FC<MemoModalProps> = ({
               </table>
             </div>
 
-            {/* Financial Breakdown: Only Total calculated, Advance & Due blank */}
+            {/* Financial Breakdown */}
             <div className="border-t-2 border-neutral-300 pt-3 text-sm">
-              <div className="flex justify-end">
-                <table className="w-64 border-collapse border-2 border-neutral-400 text-sm font-bold">
+              <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+                {order.notes ? (
+                  <div className="text-xs text-neutral-700 bg-neutral-50 border border-neutral-200 rounded-lg px-2.5 py-1.5 max-w-xs">
+                    <span className="font-bold text-neutral-900">নোট:</span> {order.notes}
+                  </div>
+                ) : (
+                  <div></div>
+                )}
+                <table className="w-64 border-collapse border-2 border-neutral-400 text-sm font-bold ml-auto">
                   <tbody>
+                    {(order.discountAmount || 0) > 0 && (
+                      <tr className="border-b border-neutral-300 text-xs">
+                        <td className="border-r border-neutral-300 px-3 py-1 bg-neutral-50 text-emerald-800 text-left font-bold">
+                          ছাড় ({order.discountPercent}%)
+                        </td>
+                        <td className="px-3 py-1 text-right font-mono text-emerald-700 font-bold">
+                          -৳{Number(order.discountAmount || 0).toLocaleString()}
+                        </td>
+                      </tr>
+                    )}
+                    {(order.returnAmount || 0) > 0 && (
+                      <tr className="border-b border-neutral-300 text-xs">
+                        <td className="border-r border-neutral-300 px-3 py-1 bg-neutral-50 text-rose-700 text-left font-bold">
+                          রিটার্ন বাদ
+                        </td>
+                        <td className="px-3 py-1 text-right font-mono text-rose-700 font-bold">
+                          -৳{Number(order.returnAmount || 0).toLocaleString()}
+                        </td>
+                      </tr>
+                    )}
                     <tr className="border-b border-neutral-400">
                       <td className="border-r border-neutral-400 px-3 py-2 bg-neutral-100 text-neutral-900 text-left w-28 font-bold">
                         মোট বিল
                       </td>
                       <td className="px-3 py-2 text-right font-mono text-neutral-950 text-base sm:text-xl font-black">
-                        ৳{Number(order.netTotal || 0).toLocaleString()}
+                        ৳{Math.max(0, Number(order.netTotal || 0) - Number(order.returnAmount || 0)).toLocaleString()}
                       </td>
                     </tr>
                     <tr className="border-b border-neutral-400">
