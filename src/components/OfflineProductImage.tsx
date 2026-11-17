@@ -1,8 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Package } from 'lucide-react';
 import {
+  deleteItemFromIndexedDB,
+  getCachedImageSourceUrl,
   getCachedOfflineObjectUrl,
   getProductImageFromIndexedDB,
+  invalidateCachedOfflineObjectUrl,
+  saveProductImageToIndexedDB,
   subscribeOfflineImageCache,
 } from '../lib/indexedDb';
 
@@ -30,22 +34,24 @@ export const OfflineProductImage: React.FC<OfflineProductImageProps> = ({
   fallback,
 }) => {
   const productId = product?.id || '';
-  const rawUrl = product?.imageUrl && !product.imageUrl.startsWith('blob:') ? product.imageUrl : '';
-  const initialBlobUrl =
-    product?._offlineBlobUrl || (productId ? getCachedOfflineObjectUrl(productId) : undefined) || '';
+  const rawUrl = product?.imageUrl && !product.imageUrl.startsWith('blob:') ? product.imageUrl.trim() : '';
 
   const [isOnline, setIsOnline] = useState<boolean>(
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
-  const [idbBlobUrl, setIdbBlobUrl] = useState<string>(initialBlobUrl);
-  const [preferBlob, setPreferBlob] = useState<boolean>(false);
-  const [failedAll, setFailedAll] = useState<boolean>(false);
+  const [idbBlobUrl, setIdbBlobUrl] = useState<string>(() =>
+    (productId ? getCachedOfflineObjectUrl(productId) : undefined) || product?._offlineBlobUrl || ''
+  );
+  const [failedSrcs, setFailedSrcs] = useState<string[]>([]);
+  const lastKeyRef = useRef<string>(`${productId}::${rawUrl}`);
+  const recoveredBlobOnceRef = useRef<boolean>(false);
 
   // Sync network online/offline status
   useEffect(() => {
     const onOnline = () => {
       setIsOnline(true);
-      setFailedAll(false);
+      setFailedSrcs([]);
+      recoveredBlobOnceRef.current = false;
     };
     const onOffline = () => {
       setIsOnline(false);
@@ -58,85 +64,122 @@ export const OfflineProductImage: React.FC<OfflineProductImageProps> = ({
     };
   }, []);
 
-  // Keep in sync with product props & IndexedDB background Blob cache
+  // Reset error tracking only when productId or rawUrl genuinely changes
   useEffect(() => {
-    setFailedAll(false);
-    setPreferBlob(false);
+    const nextKey = `${productId}::${rawUrl}`;
+    if (lastKeyRef.current !== nextKey) {
+      lastKeyRef.current = nextKey;
+      setFailedSrcs([]);
+      recoveredBlobOnceRef.current = false;
+    }
+  }, [productId, rawUrl]);
 
+  // Hydrate from in-memory cache or IndexedDB, and proactively cache visible product if online
+  useEffect(() => {
+    let active = true;
     const memUrl =
-      product?._offlineBlobUrl || (productId ? getCachedOfflineObjectUrl(productId) : undefined) || '';
-    if (memUrl) {
+      (productId ? getCachedOfflineObjectUrl(productId) : undefined) || product?._offlineBlobUrl || '';
+    if (memUrl && !failedSrcs.includes(memUrl)) {
       setIdbBlobUrl(memUrl);
-    } else if (productId) {
-      let active = true;
+    }
+
+    if (productId) {
       getProductImageFromIndexedDB(productId).then((url) => {
-        if (active && url) {
+        if (!active) return;
+        if (url) {
           setIdbBlobUrl(url);
+          setFailedSrcs((prev) => prev.filter((s) => s !== url));
+        } else if (isOnline && rawUrl) {
+          // Proactively cache visible image in IndexedDB right away
+          saveProductImageToIndexedDB(productId, rawUrl).then((ok) => {
+            if (!active || !ok) return;
+            const latest = getCachedOfflineObjectUrl(productId);
+            if (latest) {
+              setIdbBlobUrl(latest);
+              setFailedSrcs((prev) => prev.filter((s) => s !== latest));
+            }
+          });
         }
       });
-      return () => {
-        active = false;
-      };
     }
-  }, [productId, rawUrl, product?._offlineBlobUrl]);
 
+    return () => {
+      active = false;
+    };
+  }, [productId, rawUrl, product?._offlineBlobUrl, isOnline]);
+
+  // Listen for background precacher completion
   useEffect(() => {
     if (!productId) return;
     return subscribeOfflineImageCache(() => {
       const latest = getCachedOfflineObjectUrl(productId);
       if (latest) {
+        recoveredBlobOnceRef.current = false;
         setIdbBlobUrl(latest);
-        setFailedAll(false);
+        setFailedSrcs((prev) => prev.filter((s) => s !== latest));
       }
     });
   }, [productId]);
 
-  const effectiveBlob =
-    idbBlobUrl || product?._offlineBlobUrl || (productId ? getCachedOfflineObjectUrl(productId) : '') || '';
+  const memCachedBlob = productId ? getCachedOfflineObjectUrl(productId) || '' : '';
+  const propBlob = product?._offlineBlobUrl || '';
+  const candidateBlob = [memCachedBlob, idbBlobUrl, propBlob].find(
+    (b) => b && !failedSrcs.includes(b)
+  ) || '';
 
-  let activeSrc = '';
-  if (!isOnline || preferBlob) {
-    activeSrc = effectiveBlob || (isOnline ? rawUrl : '');
+  const cachedSource = productId ? getCachedImageSourceUrl(productId) : undefined;
+  const sourceChangedWhileOnline =
+    Boolean(isOnline && rawUrl && cachedSource && cachedSource !== rawUrl);
+
+  // Blob-first strategy: use local binary Blob whenever valid, fall back to rawUrl if online
+  const candidates: string[] = [];
+  if (sourceChangedWhileOnline) {
+    if (rawUrl) candidates.push(rawUrl);
+    if (candidateBlob) candidates.push(candidateBlob);
   } else {
-    activeSrc = rawUrl || effectiveBlob;
+    if (candidateBlob) candidates.push(candidateBlob);
+    if (isOnline && rawUrl) candidates.push(rawUrl);
   }
 
-  // If offline and blob isn't loaded into state yet, try fetching from IndexedDB directly
-  useEffect(() => {
-    if (!isOnline && !effectiveBlob && productId) {
-      let active = true;
-      getProductImageFromIndexedDB(productId).then((url) => {
-        if (active && url) {
-          setIdbBlobUrl(url);
-          setFailedAll(false);
-        }
-      });
-      return () => {
-        active = false;
-      };
+  const activeSrc = candidates.find((src) => src && !failedSrcs.includes(src)) || '';
+
+  const handleImgLoad = () => {
+    if (productId && rawUrl && activeSrc === rawUrl && isOnline) {
+      saveProductImageToIndexedDB(productId, rawUrl).catch(() => {});
     }
-  }, [isOnline, effectiveBlob, productId]);
+  };
 
   const handleImgError = async () => {
-    // If we were trying remote/raw URL and haven't tried the offline Blob yet
-    if (activeSrc && activeSrc !== effectiveBlob) {
-      if (effectiveBlob) {
-        setPreferBlob(true);
-        return;
-      }
-      if (productId) {
-        const fetchedBlob = await getProductImageFromIndexedDB(productId);
-        if (fetchedBlob) {
-          setIdbBlobUrl(fetchedBlob);
-          setPreferBlob(true);
+    if (!activeSrc) return;
+    setFailedSrcs((prev) => (prev.includes(activeSrc) ? prev : [...prev, activeSrc]));
+
+    if (activeSrc.startsWith('blob:') && productId) {
+      invalidateCachedOfflineObjectUrl(productId);
+      setIdbBlobUrl('');
+
+      if (!recoveredBlobOnceRef.current) {
+        recoveredBlobOnceRef.current = true;
+        const refreshed = await getProductImageFromIndexedDB(productId);
+        if (refreshed && refreshed !== activeSrc) {
+          setIdbBlobUrl(refreshed);
           return;
         }
       }
+
+      // Blob stored in IndexedDB is unreadable or corrupt; remove it so online fetch can replace it cleanly
+      await deleteItemFromIndexedDB('productImages', productId).catch(() => false);
+      if (isOnline && rawUrl) {
+        saveProductImageToIndexedDB(productId, rawUrl).catch(() => {});
+      }
+    } else if (productId) {
+      const fetchedBlob = await getProductImageFromIndexedDB(productId);
+      if (fetchedBlob && !failedSrcs.includes(fetchedBlob)) {
+        setIdbBlobUrl(fetchedBlob);
+      }
     }
-    setFailedAll(true);
   };
 
-  if (!activeSrc || failedAll) {
+  if (!activeSrc) {
     return (
       <>
         {fallback !== undefined ? (
@@ -156,6 +199,7 @@ export const OfflineProductImage: React.FC<OfflineProductImageProps> = ({
       loading={loading}
       draggable={draggable}
       referrerPolicy="no-referrer"
+      onLoad={handleImgLoad}
       onError={handleImgError}
     />
   );

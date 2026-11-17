@@ -46,10 +46,17 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       caches.open(IMAGE_CACHE_NAME).then(async (cache) => {
         const cached = await cache.match(req);
-        if (cached) return cached;
+        if (cached) {
+          const cachedType = cached.headers.get('content-type') || '';
+          if (!cachedType || cachedType.startsWith('image/')) {
+            return cached;
+          }
+          await cache.delete(req).catch(() => {});
+        }
         try {
           const networkRes = await fetch(req);
-          if (networkRes && networkRes.ok) {
+          const contentType = networkRes?.headers?.get('content-type') || '';
+          if (networkRes && networkRes.ok && (!contentType || contentType.startsWith('image/'))) {
             cache.put(req, networkRes.clone()).catch(() => {});
           }
           return networkRes;

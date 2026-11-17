@@ -567,7 +567,7 @@ export default function App() {
             validImage = localItem.imageUrl;
           }
 
-          const preservedOfflineBlob = localItem._offlineBlobUrl || getCachedOfflineObjectUrl(key);
+          const preservedOfflineBlob = getCachedOfflineObjectUrl(key) || localItem._offlineBlobUrl;
 
           map.set(key, {
             ...base,

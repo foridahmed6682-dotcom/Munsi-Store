@@ -878,7 +878,7 @@ export async function initializeStorageFromIndexedDB(): Promise<{
 
     // Attach offline blob images from IndexedDB cleanly without overwriting persistent imageUrl with ephemeral blob: URLs
     prods = prods.map((p) => {
-      const offlineUrl = idbImages?.[p.id] || getCachedOfflineObjectUrl(p.id) || p._offlineBlobUrl;
+      const offlineUrl = idbImages?.[p.id] || getCachedOfflineObjectUrl(p.id);
       const cleanImageUrl = p.imageUrl && !p.imageUrl.startsWith('blob:') ? p.imageUrl : '';
       return {
         ...p,
@@ -991,7 +991,7 @@ export function saveProducts(products: Product[]) {
     .filter((p) => p && !deletedIds.has(p.id))
     .map((p) => {
       const prev = prevById.get(p.id);
-      const cachedBlobUrl = p._offlineBlobUrl || getCachedOfflineObjectUrl(p.id) || prev?._offlineBlobUrl;
+      const cachedBlobUrl = getCachedOfflineObjectUrl(p.id) || prev?._offlineBlobUrl || p._offlineBlobUrl;
       const persistentImageUrl =
         p.imageUrl && !p.imageUrl.startsWith('blob:')
           ? p.imageUrl

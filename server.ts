@@ -557,6 +557,10 @@ async function startServer() {
     maxAge: '1y',
     immutable: true,
   }));
+  // Never fall through to SPA index.html for missing upload images
+  app.use('/uploads', (_req, res) => {
+    res.status(404).end();
+  });
 
   // API Routes
   // Health check endpoint

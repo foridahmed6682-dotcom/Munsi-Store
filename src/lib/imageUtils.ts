@@ -295,11 +295,26 @@ export async function urlToBlob(url: string): Promise<Blob | null> {
     return dataUrlToBlob(url);
   }
   try {
-    const isSameOrigin = url.startsWith('/') || (typeof window !== 'undefined' && url.startsWith(window.location.origin));
-    const res = await fetch(url, isSameOrigin ? { cache: 'force-cache' } : { mode: 'cors', cache: 'force-cache' });
+    const isSameOrigin =
+      url.startsWith('/') ||
+      (typeof window !== 'undefined' && url.startsWith(window.location.origin));
+    const res = await fetch(
+      url,
+      isSameOrigin
+        ? { cache: 'default' }
+        : { mode: 'cors', cache: 'no-cache' }
+    );
     if (res.ok) {
+      const headerType = (res.headers.get('content-type') || '').toLowerCase();
+      if (headerType.includes('text/html') || headerType.includes('application/json')) {
+        return null;
+      }
       const blob = await res.blob();
-      if (blob && blob.size > 0 && (!blob.type || blob.type.startsWith('image/'))) {
+      if (
+        blob &&
+        blob.size > 40 &&
+        (!blob.type || blob.type.startsWith('image/') || blob.type === 'application/octet-stream')
+      ) {
         return blob;
       }
     }

@@ -236,12 +236,31 @@ function notifyOfflineImageCacheListeners() {
         cb();
       } catch {}
     });
-  }, 120);
+  }, 80);
 }
 
 export function getCachedOfflineObjectUrl(productId?: string): string | undefined {
   if (!productId) return undefined;
   return offlineObjectUrlCache.get(productId);
+}
+
+export function getCachedImageSourceUrl(productId?: string): string | undefined {
+  if (!productId) return undefined;
+  return cachedImageSourceUrlMap.get(productId);
+}
+
+export function invalidateCachedOfflineObjectUrl(productId?: string): void {
+  if (!productId) return;
+  const old = offlineObjectUrlCache.get(productId);
+  offlineObjectUrlCache.delete(productId);
+  cachedImageSourceUrlMap.delete(productId);
+  if (old) {
+    setTimeout(() => {
+      try {
+        URL.revokeObjectURL(old);
+      } catch {}
+    }, 3000);
+  }
 }
 
 export function subscribeOfflineImageCache(listener: () => void): () => void {
@@ -251,34 +270,96 @@ export function subscribeOfflineImageCache(listener: () => void): () => void {
   };
 }
 
+function isLikelyHtmlOrJsonBuffer(buf: ArrayBuffer): boolean {
+  if (!buf || buf.byteLength < 40) return true;
+  try {
+    const head = new Uint8Array(buf, 0, Math.min(32, buf.byteLength));
+    let prefix = '';
+    for (let i = 0; i < head.length; i++) {
+      prefix += String.fromCharCode(head[i]);
+    }
+    const trimmed = prefix.trimStart().toLowerCase();
+    if (
+      trimmed.startsWith('<!doc') ||
+      trimmed.startsWith('<html') ||
+      trimmed.startsWith('<head') ||
+      trimmed.startsWith('<body') ||
+      trimmed.startsWith('{')
+    ) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+function blobFromStoredRecord(rec: any): Blob | null {
+  if (!rec) return null;
+  if (rec.bytes instanceof ArrayBuffer && !isLikelyHtmlOrJsonBuffer(rec.bytes)) {
+    return new Blob([rec.bytes], { type: rec.mimeType || 'image/jpeg' });
+  }
+  if (ArrayBuffer.isView(rec.bytes) && rec.bytes.byteLength >= 40) {
+    const ab = rec.bytes.buffer.slice(rec.bytes.byteOffset, rec.bytes.byteOffset + rec.bytes.byteLength);
+    if (!isLikelyHtmlOrJsonBuffer(ab as ArrayBuffer)) {
+      return new Blob([ab as ArrayBuffer], { type: rec.mimeType || 'image/jpeg' });
+    }
+  }
+  if (rec.blob instanceof Blob && rec.blob.size >= 40) {
+    const t = (rec.blob.type || '').toLowerCase();
+    if (!t || t.startsWith('image/') || t === 'application/octet-stream') {
+      return rec.blob;
+    }
+  }
+  if (typeof rec.dataUrl === 'string' && rec.dataUrl.startsWith('data:image/')) {
+    return dataUrlToBlob(rec.dataUrl);
+  }
+  return null;
+}
+
 /**
- * Save raw product image Blob in IndexedDB so offline mode stores pure binary files instead of URLs
+ * Save raw product image bytes in IndexedDB so offline mode never depends on external OS blob files or URLs
  */
 export async function saveProductImageBlobToIndexedDB(
   productId: string,
   blob: Blob,
   sourceUrl?: string
 ): Promise<boolean> {
-  if (!isIndexedDBSupported() || !productId || !blob || blob.size === 0) return false;
+  if (!isIndexedDBSupported() || !productId || !blob || blob.size < 40) return false;
   try {
+    const bytes = await blob.arrayBuffer();
+    if (isLikelyHtmlOrJsonBuffer(bytes)) return false;
+
+    const mimeType =
+      blob.type && blob.type.startsWith('image/') ? blob.type : 'image/jpeg';
+    const cleanSourceUrl =
+      sourceUrl && !sourceUrl.startsWith('blob:') ? sourceUrl : undefined;
+
     const db = await openOfflineDatabase();
     return new Promise((resolve) => {
       const tx = db.transaction('productImages', 'readwrite');
       const store = tx.objectStore('productImages');
       store.put({
         id: productId,
-        blob,
-        mimeType: blob.type || 'image/webp',
-        sourceUrl: sourceUrl && !sourceUrl.startsWith('blob:') ? sourceUrl : undefined,
+        bytes,
+        mimeType,
+        sourceUrl: cleanSourceUrl,
         updatedAt: Date.now(),
       });
       tx.oncomplete = () => {
         try {
           const old = offlineObjectUrlCache.get(productId);
-          if (old) URL.revokeObjectURL(old);
-          offlineObjectUrlCache.set(productId, URL.createObjectURL(blob));
-          if (sourceUrl && !sourceUrl.startsWith('blob:')) {
-            cachedImageSourceUrlMap.set(productId, sourceUrl);
+          const freshUrl = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
+          offlineObjectUrlCache.set(productId, freshUrl);
+          if (cleanSourceUrl) {
+            cachedImageSourceUrlMap.set(productId, cleanSourceUrl);
+          }
+          if (old && old !== freshUrl) {
+            setTimeout(() => {
+              try {
+                URL.revokeObjectURL(old);
+              } catch {}
+            }, 5000);
           }
           notifyOfflineImageCacheListeners();
         } catch {}
@@ -292,7 +373,7 @@ export async function saveProductImageBlobToIndexedDB(
 }
 
 /**
- * Save product image to IndexedDB. Converts Base64 Data URL or remote image into a raw Blob object for pure offline binary storage.
+ * Save product image to IndexedDB. Converts Base64 Data URL or remote image into persistent binary bytes inside IndexedDB.
  */
 export async function saveProductImageToIndexedDB(
   productId: string,
@@ -321,7 +402,7 @@ export async function saveProductImageToIndexedDB(
     return false;
   }
 
-  // If remote or server URL and browser is online, fetch and cache as raw Blob in IndexedDB
+  // If remote or server URL and browser is online, fetch and cache binary bytes in IndexedDB
   if (imageSource.startsWith('http') || imageSource.startsWith('/uploads/')) {
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       return false;
@@ -341,6 +422,7 @@ export async function saveProductImageToIndexedDB(
 
 let isPrecacheRunning = false;
 const pendingPrecacheQueue: Array<{ id: string; imageUrl: string }> = [];
+const queuedPrecacheIds = new Set<string>();
 
 function startPrecacheWorkers(): void {
   if (isPrecacheRunning || pendingPrecacheQueue.length === 0) return;
@@ -353,12 +435,16 @@ function startPrecacheWorkers(): void {
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
         while (pendingPrecacheQueue.length > 0) {
           const skipped = pendingPrecacheQueue.shift();
-          if (skipped) attemptedPrecacheKeys.delete(`${skipped.id}::${skipped.imageUrl}`);
+          if (skipped) {
+            queuedPrecacheIds.delete(skipped.id);
+            attemptedPrecacheKeys.delete(`${skipped.id}::${skipped.imageUrl}`);
+          }
         }
         break;
       }
       const task = pendingPrecacheQueue.shift();
       if (!task) break;
+      queuedPrecacheIds.delete(task.id);
       const ok = await saveProductImageToIndexedDB(task.id, task.imageUrl).catch(() => false);
       if (!ok && typeof navigator !== 'undefined' && !navigator.onLine) {
         attemptedPrecacheKeys.delete(`${task.id}::${task.imageUrl}`);
@@ -377,7 +463,7 @@ function startPrecacheWorkers(): void {
 }
 
 /**
- * Throttled background precacher that converts all product images into binary Blobs inside IndexedDB
+ * Throttled background precacher that converts all product images into binary bytes inside IndexedDB
  */
 export function precacheProductImagesToIndexedDB(
   products: Array<{ id?: string; imageUrl?: string }>
@@ -393,9 +479,11 @@ export function precacheProductImagesToIndexedDB(
     if (offlineObjectUrlCache.has(p.id) && cachedImageSourceUrlMap.get(p.id) === url) {
       continue;
     }
+    if (queuedPrecacheIds.has(p.id)) continue;
     const attemptKey = `${p.id}::${url}`;
     if (attemptedPrecacheKeys.has(attemptKey)) continue;
     attemptedPrecacheKeys.add(attemptKey);
+    queuedPrecacheIds.add(p.id);
     pendingPrecacheQueue.push({ id: p.id, imageUrl: url });
     added = true;
   }
@@ -410,7 +498,7 @@ export function clearFailedImagePrecacheHistory(): void {
 }
 
 /**
- * Retrieve raw image Blob from IndexedDB and return an offline object URL
+ * Retrieve raw image bytes from IndexedDB and return a clean offline object URL
  */
 export async function getProductImageFromIndexedDB(productId: string): Promise<string | null> {
   if (!isIndexedDBSupported() || !productId) return null;
@@ -425,13 +513,8 @@ export async function getProductImageFromIndexedDB(productId: string): Promise<s
       const req = store.get(productId);
       req.onsuccess = () => {
         if (!req.result) return resolve(null);
-        let blob: Blob | null = null;
-        if (req.result.blob instanceof Blob) {
-          blob = req.result.blob;
-        } else if (req.result.dataUrl) {
-          blob = dataUrlToBlob(req.result.dataUrl);
-        }
-        if (blob && blob.size > 0) {
+        const blob = blobFromStoredRecord(req.result);
+        if (blob && blob.size >= 40) {
           const objUrl = URL.createObjectURL(blob);
           offlineObjectUrlCache.set(productId, objUrl);
           if (req.result.sourceUrl) {
@@ -450,7 +533,7 @@ export async function getProductImageFromIndexedDB(productId: string): Promise<s
 }
 
 /**
- * Retrieves all product images as offline Object URLs from raw Blobs stored in IndexedDB
+ * Retrieves all product images as offline Object URLs from IndexedDB
  */
 export async function getAllProductImagesFromIndexedDB(): Promise<Record<string, string>> {
   if (!isIndexedDBSupported()) return {};
@@ -465,13 +548,8 @@ export async function getAllProductImagesFromIndexedDB(): Promise<Record<string,
         if (Array.isArray(req.result)) {
           for (const item of req.result) {
             if (item && item.id) {
-              let blob: Blob | null = null;
-              if (item.blob instanceof Blob) {
-                blob = item.blob;
-              } else if (item.dataUrl) {
-                blob = dataUrlToBlob(item.dataUrl);
-              }
-              if (blob && blob.size > 0) {
+              const blob = blobFromStoredRecord(item);
+              if (blob && blob.size >= 40) {
                 let objUrl = offlineObjectUrlCache.get(item.id);
                 if (!objUrl) {
                   objUrl = URL.createObjectURL(blob);

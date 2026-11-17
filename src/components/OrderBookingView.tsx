@@ -1320,7 +1320,7 @@ export const OrderBookingView: React.FC<OrderBookingViewProps> = ({
                     <div className="flex gap-3 items-start">
                       {/* Product Image Stage (Studio Contrast & Clickable Full Image) */}
                       <div
-                        onClick={() => prod.imageUrl && setLightboxProduct(prod)}
+                        onClick={() => (prod.imageUrl || prod._offlineBlobUrl) && setLightboxProduct(prod)}
                         title="ফুল ছবি বড় করে দেখতে ক্লিক করুন"
                         className="w-18 h-18 sm:w-20 sm:h-20 rounded-2xl bg-gradient-to-b from-[#FAFBFD] via-[#F4F5F8] to-[#EAEDF2] border border-[#E2E8F0] shadow-[inset_0_1px_3px_rgba(0,0,0,0.03)] overflow-hidden shrink-0 flex items-center justify-center p-1.5 cursor-pointer hover:border-emerald-500 hover:shadow-xs group/img relative transition-all"
                       >
